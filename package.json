@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "3.0.1",
+  "version": "3.1.0",
   "private": true,
-  "description": "GLOBAL MARKET - tableau de bord premium multi-entreprises pour Cloudflare Pages, KV et D1.",
+  "description": "GLOBAL MARKET - ventes avec clients servis et menu horizontal flexible pour Cloudflare Pages, KV et D1.",
   "type": "module",
   "engines": {
     "node": ">=20"

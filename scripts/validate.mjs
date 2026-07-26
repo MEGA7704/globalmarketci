@@ -92,6 +92,19 @@ for (const [needle, label] of planChecks) {
   }
 }
 
+const targetedSaleChecks = [
+  ['id="saleCartClientsServed"', 'champ Nb de Clients servis dans le formulaire de vente'],
+  ['clientsServed,unit,total', 'enregistrement du nombre de clients servis'],
+  ['r.clientsServed+=saleClientsServedValue(s)', 'comptabilisation dans le bilan détaillé'],
+  ['initFlexibleHorizontalMenu', 'menu horizontal flexible au défilement']
+];
+for (const [needle, label] of targetedSaleChecks) {
+  if (!app.includes(needle)) {
+    console.error(`[validate] Correction ciblée incomplète : ${label}.`);
+    process.exit(1);
+  }
+}
+
 if (/passwordHash|passwordSalt|derivePasswordHash/.test(app)) {
   console.error('[validate] Une logique sensible de mot de passe est présente dans le navigateur.');
   process.exit(1);
