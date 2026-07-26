@@ -143,3 +143,34 @@ Executing user command: npm run build
 ## Correction Super Admin 2.8
 
 Voir `README_CORRECTION_SUPER_ADMIN_2_8.md`. Les secrets `SUPER_ADMIN_EMAIL` et `SUPER_ADMIN_INITIAL_PASSWORD` doivent être configurés dans l’environnement Production de Cloudflare.
+
+
+## Version 3.0.0 — Tableau de bord MEGA SERVICES
+
+Correction ciblée de la section **Accueil / Tableau de bord** uniquement :
+
+- en-tête MEGA SERVICES avec plan, profil, notifications, aide et personnalisation ;
+- huit cartes d’accès rapide dynamiques en deux lignes de quatre ;
+- résumé du jour avec commandes, ventes, articles et nouveaux clients ;
+- bloc Performance avec graphique SVG des sept derniers jours ;
+- résumé annuel dynamique ;
+- design SaaS premium, responsive, avec la palette verte, dorée, violette et bleue demandée.
+
+Les autres sections, le système de connexion, l’inscription, le Super Admin, les routes API, Cloudflare KV et D1 ne sont pas modifiés.
+
+### Configuration Cloudflare
+
+```text
+Branche de production : main
+Commande de version : npm run build
+Répertoire de sortie : public
+Répertoire racine : vide
+```
+
+
+## Version 3.0.1 — Identité GLOBAL MARKET
+
+- le nouveau tableau de bord premium est disponible pour toutes les entreprises inscrites ;
+- le nom du programme affiché reste **GLOBAL MARKET** ;
+- le nom de l’entreprise connectée apparaît comme espace entreprise dynamique ;
+- aucune modification de la connexion, de l’inscription, du Super Admin, de KV, de D1 ou du Worker de sécurité.
