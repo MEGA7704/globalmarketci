@@ -88,10 +88,10 @@ Les identifiants techniques des ressources restent dans `wrangler.json` car ils 
 
 La fenêtre d’inscription est compacte et ne possède aucun défilement interne sur ordinateur. Elle est organisée en quatre blocs :
 
-1. **Informations de l’entreprise** : raison sociale, forme juridique, RCCM et compte contribuable.
+1. **Information de l’entreprise** : raison sociale, forme juridique, RCCM et compte contribuable.
 2. **Spécialité** : type de commerce et activité principale.
 3. **ID du responsable** : gérant, adresse et téléphone.
-4. **Identifiant** : e-mail et mot de passe administrateur.
+4. **Identifiant de connexion** : e-mail et mot de passe administrateur.
 
 Tous les identifiants HTML, la validation, la création de l’entreprise et la route `POST /api/register-company` sont conservés.
 
@@ -119,3 +119,22 @@ Executing user command: npm run build
 [build] Répertoire de sortie : public
 [build] Construction terminée avec succès.
 ```
+
+
+## Correction 2.5 — connexion immédiate et inscription accélérée
+
+- L'écran de connexion est rendu immédiatement, avant la vérification asynchrone de session.
+- Les réponses sécurisées `/api/login`, `/api/session` et `/api/register-company` renvoient directement les données autorisées de l'entreprise.
+- La seconde lecture complète `/api/load` est supprimée lorsque ces données sont déjà disponibles.
+- Les hashes, sels et mots de passe restent exclusivement côté Worker/KV et ne sont jamais renvoyés au navigateur.
+- Le bouton d'inscription affiche son état de chargement avant l'appel réseau et bloque les doubles clics.
+
+
+## Correction 2.7 — Connexion et inscription
+
+- La page de connexion est toujours affichée en premier.
+- La fiche d’inscription reste cachée au chargement.
+- Elle s’ouvre uniquement après clic sur le bouton **INSCRIPTION**.
+- La fenêtre est centrée horizontalement et verticalement.
+- Les champs de chaque ligne utilisent toute la largeur disponible avec un alignement justifié.
+- Les routes API, KV, D1 et les protections de sécurité restent inchangés.
