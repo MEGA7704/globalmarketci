@@ -1,10 +1,8 @@
 # GLOBAL MARKET — Projet Cloudflare Pages + GitHub
 
-Projet complet prêt à être placé à la racine du dépôt GitHub puis déployé automatiquement par Cloudflare Pages.
+Projet complet prêt à être placé à la racine du dépôt GitHub puis déployé par Cloudflare Pages.
 
 ## Configuration Cloudflare obligatoire
-
-Dans **Workers et Pages → votre projet → Paramètres → Builds**, utilisez exactement :
 
 | Paramètre | Valeur |
 |---|---|
@@ -41,22 +39,12 @@ wrangler.json
 README.md
 ```
 
-Le fichier principal de l’application est :
+Fichiers principaux :
 
 ```text
-public/assets/app.js
-```
-
-Le style principal est :
-
-```text
-public/assets/style.css
-```
-
-Le Worker Cloudflare sécurisé est :
-
-```text
-public/_worker.js
+Application : public/assets/app.js
+Styles      : public/assets/style.css
+Worker      : public/_worker.js
 ```
 
 ## Commandes disponibles
@@ -68,73 +56,44 @@ npm run dev
 npm run deploy
 ```
 
-`npm run build` :
+`npm run build` vérifie la syntaxe, la sécurité, les bindings KV/D1, puis génère des fichiers CSS et JavaScript versionnés dans `public`.
 
-1. vérifie les fichiers obligatoires ;
-2. vérifie la syntaxe JavaScript ;
-3. vérifie les routes de sécurité ;
-4. vérifie les bindings KV et D1 ;
-5. génère des fichiers CSS et JavaScript versionnés ;
-6. génère `public/version.json` ;
-7. place le résultat final dans `public`.
+## Sécurité des comptes
 
-## Cloudflare KV et D1
+Aucun identifiant de connexion ni mot de passe réel n’est inclus dans le programme, le dépôt GitHub ou les README.
 
-Le projet utilise les bindings suivants :
+Dans **Cloudflare → Workers & Pages → GLOBAL MARKET → Settings → Variables and Secrets**, créez deux secrets chiffrés :
 
 ```text
-KV binding : GLOBAL_MARKET_KV
-KV ID      : f863a50688bc4dfb89dd302a8a8bec76
-
-D1 binding : GLOBAL_MARKET_D1
-D1 name    : global_market_d1
-D1 ID      : 92ef9815-eb4e-4b49-9a03-41f8e4bc5c77
+SUPER_ADMIN_EMAIL             = <IDENTIFIANT_SECRET À CONFIGURER>
+SUPER_ADMIN_INITIAL_PASSWORD  = <MOT_DE_PASSE_SECRET FORT À CONFIGURER>
 ```
 
-## Secret Super Admin
+Ne remplacez jamais ces valeurs dans `wrangler.json`, `public/_worker.js`, `app.js` ou un README. Les valeurs réelles doivent rester uniquement dans les secrets Cloudflare.
 
-Dans Cloudflare, ajoutez un secret chiffré :
+Le mot de passe est transformé côté Worker en empreinte PBKDF2-SHA256 avec sel aléatoire. Il n’est pas transmis au navigateur dans les données de l’application.
+
+## Ressources Cloudflare
+
+Les bindings nécessaires sont :
 
 ```text
-Nom : SUPER_ADMIN_INITIAL_PASSWORD
-Valeur : Kf02071987@
+GLOBAL_MARKET_KV
+GLOBAL_MARKET_D1
 ```
 
-Le mot de passe ne doit pas être écrit dans GitHub, `wrangler.json` ou les fichiers JavaScript publics.
+Les identifiants techniques des ressources restent dans `wrangler.json` car ils sont nécessaires au déploiement et ne constituent pas des identifiants de connexion utilisateur.
 
-Identifiant Super Admin :
+## Fiche d’inscription des entreprises
 
-```text
-mega@services.local
-```
+La fenêtre d’inscription est compacte et ne possède aucun défilement interne sur ordinateur. Elle est organisée en quatre blocs :
 
-## Mise en ligne sur GitHub
+1. **Informations de l’entreprise** : raison sociale, forme juridique, RCCM et compte contribuable.
+2. **Spécialité** : type de commerce et activité principale.
+3. **ID du responsable** : gérant, adresse et téléphone.
+4. **Identifiant** : e-mail et mot de passe administrateur.
 
-1. Décompressez le ZIP.
-2. Ouvrez le dépôt GitHub `globalmarketci`.
-3. Placez le contenu décompressé directement à la racine du dépôt.
-4. Ne téléversez pas seulement le fichier ZIP.
-5. Vérifiez que `package.json`, `wrangler.json`, `public` et `scripts` sont visibles à la racine.
-6. Validez avec un nouveau commit sur la branche `main`.
-
-Le numéro de commit GitHub doit changer. Cloudflare doit afficher dans le journal :
-
-```text
-Executing user command: npm run build
-> global-market-cloudflare@2.1.0 build
-[build] Répertoire de sortie : public
-[build] Construction terminée avec succès.
-```
-
-## Vérifier la nouvelle version
-
-Après le déploiement, ouvrez :
-
-```text
-https://VOTRE-DOMAINE.pages.dev/version.json
-```
-
-Le fichier doit afficher une nouvelle valeur `build`. Le même numéro est visible en bas de l’application.
+Tous les identifiants HTML, la validation, la création de l’entreprise et la route `POST /api/register-company` sont conservés.
 
 ## Plans intégrés
 
@@ -143,38 +102,20 @@ Le fichier doit afficher une nouvelle valeur `build`. Le même numéro est visib
 - Montant Business : 26 300 FCFA.
 - Paiement Wave : `https://pay.wave.com/m/M_ci_Enx-2JNAklk-/c/ci/?amount=26300`
 
-## Important
+Pour une entreprise Free, le rappel professionnel s’affiche à l’ouverture des sections et toutes les 15 minutes.
 
-Ne configurez pas `npm run check` dans Cloudflare. La commande officielle du projet est :
+## Mise en ligne sur GitHub
 
-```text
-npm run build
-```
+1. Décompressez le ZIP.
+2. Envoyez son contenu directement à la racine de la branche `main`.
+3. Vérifiez que `package.json`, `wrangler.json`, `public/` et `scripts/` sont visibles à la racine.
+4. Créez un nouveau commit.
+5. Relancez le déploiement Cloudflare.
 
-## Fiche d’inscription des entreprises
-
-La fenêtre d’inscription existante a été conservée et habillée en modale premium :
-
-- largeur maximale de 1 500 px et largeur de 96 vw ;
-- fond vert émeraude foncé, double bordure dorée et coins arrondis ;
-- grille de trois colonnes sur ordinateur, deux sur tablette et une sur téléphone ;
-- champs avec icônes, libellés dorés et étoiles rouges ;
-- affichage ou masquage du mot de passe ;
-- bouton bloqué pendant l’enregistrement avec le texte `CRÉATION EN COURS…` ;
-- création réelle via la route existante `POST /api/register-company`.
-
-Les routes API, KV, D1, l’authentification et les données existantes ne sont pas modifiés par ce composant.
-
-## Rappel du Plan Free
-
-Pour une entreprise au Plan Free, un rappel professionnel s’affiche :
-
-- à l’ouverture de chaque section ;
-- toutes les 15 minutes ;
-- avec les boutons `Compris` et `Acheter mon plan Business`.
-
-Le bouton d’achat ouvre exactement :
+Le journal doit afficher :
 
 ```text
-https://pay.wave.com/m/M_ci_Enx-2JNAklk-/c/ci/?amount=26300
+Executing user command: npm run build
+[build] Répertoire de sortie : public
+[build] Construction terminée avec succès.
 ```

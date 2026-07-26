@@ -19,12 +19,24 @@ const SUPER_ADMIN_PROFILE = Object.freeze({
   id: SUPER_ADMIN_ID,
   companyId: null,
   name: 'Super Admin GLOBAL MARKET',
-  email: 'mega@services.local',
+  email: 'Identifiant protégé',
   role: 'superadmin',
   status: 'active',
   createdAt: '2026-07-25T00:00:00.000Z',
   mainAdmin: true
 });
+
+function configuredSuperAdminIdentifier(env) {
+  return normalizeIdentifier(env.SUPER_ADMIN_EMAIL || '');
+}
+
+function requireSuperAdminIdentifier(env) {
+  const identifier = configuredSuperAdminIdentifier(env);
+  if (!identifier) {
+    throw new HttpError(503, 'Initialisation de sécurité requise : ajoutez le secret Cloudflare SUPER_ADMIN_EMAIL.', 'SETUP_REQUIRED');
+  }
+  return identifier;
+}
 
 class HttpError extends Error {
   constructor(status, message, code = 'REQUEST_ERROR', headers = {}) {
@@ -299,7 +311,7 @@ function normalizeState(value) {
     company.subscriptionEnd = dateOnlyPlusDays(start, duration);
     return company;
   });
-  const index = data.users.findIndex(u => u && (u.id === SUPER_ADMIN_ID || normalizeIdentifier(u.email) === normalizeIdentifier(SUPER_ADMIN_PROFILE.email)));
+  const index = data.users.findIndex(u => u && (u.id === SUPER_ADMIN_ID || u.role === 'superadmin'));
   if (index < 0) data.users.unshift({ ...SUPER_ADMIN_PROFILE });
   else data.users[index] = { ...data.users[index], ...SUPER_ADMIN_PROFILE };
   delete data.loginAttempts;
@@ -473,9 +485,16 @@ async function loadState(env) {
 }
 
 async function ensureSuperAdminCredential(env, state) {
+  const identifier = requireSuperAdminIdentifier(env);
   const existing = await getAuth(env, SUPER_ADMIN_ID);
   if (existing?.hash) {
-    await env.GLOBAL_MARKET_KV.put(authIndexKey(SUPER_ADMIN_PROFILE.email), SUPER_ADMIN_ID);
+    if (existing.identifier && existing.identifier !== identifier) await env.GLOBAL_MARKET_KV.delete(authIndexKey(existing.identifier));
+    if (existing.identifier !== identifier) {
+      existing.identifier = identifier;
+      existing.updatedAt = new Date().toISOString();
+      await env.GLOBAL_MARKET_KV.put(authKey(SUPER_ADMIN_ID), JSON.stringify(existing));
+    }
+    await env.GLOBAL_MARKET_KV.put(authIndexKey(identifier), SUPER_ADMIN_ID);
     if (!(await env.GLOBAL_MARKET_KV.get(AUTH_INIT_KEY))) await env.GLOBAL_MARKET_KV.put(AUTH_INIT_KEY, new Date().toISOString());
     return existing;
   }
@@ -483,8 +502,9 @@ async function ensureSuperAdminCredential(env, state) {
   if (!initialPassword) {
     throw new HttpError(503, 'Initialisation de sécurité requise : ajoutez le secret Cloudflare SUPER_ADMIN_INITIAL_PASSWORD.', 'SETUP_REQUIRED');
   }
-  const profile = state.users.find(u => u.id === SUPER_ADMIN_ID) || { ...SUPER_ADMIN_PROFILE };
-  const auth = await writeUserCredential(env, profile, initialPassword, { mustChangePassword: false });
+  const publicProfile = state.users.find(u => u.id === SUPER_ADMIN_ID) || { ...SUPER_ADMIN_PROFILE };
+  const credentialProfile = { ...publicProfile, email: identifier };
+  const auth = await writeUserCredential(env, credentialProfile, initialPassword, { mustChangePassword: false });
   await env.GLOBAL_MARKET_KV.put(AUTH_INIT_KEY, new Date().toISOString());
   await audit(env, 'SUPERADMIN_INITIALIZED', SUPER_ADMIN_ID, null, 'Initialisation unique du compte Super Admin', '');
   return auth;
@@ -809,7 +829,8 @@ async function handleLogin(request, env) {
   const ip = requestIp(request);
   const rate = await assertLoginRateAllowed(env, ip, identifier);
   const state = await loadState(env);
-  if (identifier === normalizeIdentifier(SUPER_ADMIN_PROFILE.email)) await ensureSuperAdminCredential(env, state);
+  const superIdentifier = configuredSuperAdminIdentifier(env);
+  if (superIdentifier && identifier === superIdentifier) await ensureSuperAdminCredential(env, state);
   const indexedId = await env.GLOBAL_MARKET_KV.get(authIndexKey(identifier));
   const user = state.users.find(u => u.id === indexedId) || state.users.find(u => normalizeIdentifier(u.email || u.username) === identifier);
   const auth = user ? await getAuth(env, user.id) : null;

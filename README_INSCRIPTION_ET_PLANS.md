@@ -1,15 +1,28 @@
-# GLOBAL MARKET — Inscription premium et deux plans
+# GLOBAL MARKET — Inscription compacte et sécurité des comptes
 
-## Périmètre de la correction
+## Correction de la fiche d’inscription
 
-Cette livraison conserve le projet Cloudflare Pages existant et modifie uniquement :
+La modale est réduite et organisée sans défilement interne sur ordinateur :
 
-- le composant visuel de la fiche d’inscription des entreprises ;
-- les options du champ Type de commerce ;
-- l’interface des deux plans Free et Business ;
-- le popup de rappel du Plan Free.
+- Informations de l’entreprise : 4 champs alignés horizontalement ;
+- Spécialité : 2 champs alignés et centrés ;
+- ID du responsable : 3 champs alignés horizontalement ;
+- Identifiant : 2 champs alignés et centrés.
 
-Aucune route API, aucune liaison KV/D1 et aucune règle de sécurité du Worker n’a été supprimée.
+Le responsive conserve deux colonnes sur tablette et une colonne sur les petits téléphones.
+
+## Sécurité
+
+Aucun identifiant de connexion ni mot de passe réel n’est présent dans ce projet ou dans les documents.
+
+Les deux valeurs suivantes doivent être créées uniquement comme **secrets chiffrés Cloudflare** :
+
+```text
+SUPER_ADMIN_EMAIL
+SUPER_ADMIN_INITIAL_PASSWORD
+```
+
+Utilisez des valeurs personnelles fortes dans Cloudflare et ne les ajoutez jamais au dépôt GitHub.
 
 ## Plans
 
@@ -33,11 +46,3 @@ Répertoire de sortie   : public
 Répertoire racine      : vide
 Infrastructure         : Aucun
 ```
-
-## Déploiement
-
-1. Décompresser le ZIP.
-2. Envoyer son contenu à la racine de la branche `main`.
-3. Vérifier que `package.json`, `wrangler.json`, `public/` et `scripts/` sont directement à la racine.
-4. Relancer le déploiement Cloudflare du nouveau commit.
-5. Le journal doit afficher `global-market-cloudflare@2.1.0 build`.

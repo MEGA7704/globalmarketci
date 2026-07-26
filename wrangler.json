@@ -17,7 +17,6 @@
     }
   ],
   "vars": {
-    "APP_NAME": "GLOBAL MARKET",
-    "SUPER_ADMIN_EMAIL": "mega@services.local"
+    "APP_NAME": "GLOBAL MARKET"
   }
 }
