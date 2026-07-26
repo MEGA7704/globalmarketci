@@ -42,6 +42,16 @@ if (!worker.includes("url.pathname === '/api/save'")) {
   process.exit(1);
 }
 
+
+if (!worker.includes("url.pathname === '/api/companies/delete'")) {
+  console.error('[validate] Route sécurisée de suppression entreprise absente.');
+  process.exit(1);
+}
+if (!app.includes('deleteCompanyAccount') || !app.includes('Supprimer le compte')) {
+  console.error('[validate] Action Super Admin de suppression entreprise absente.');
+  process.exit(1);
+}
+
 const registrationChecks = [
   ['FICHE D’INSCRIPTION DES ENTREPRISES', 'titre de la fiche d’inscription'],
   ['id="cName"', 'champ raison sociale'],

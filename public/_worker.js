@@ -795,6 +795,90 @@ function mergeScopedState(globalState, incoming, user) {
   return merged;
 }
 
+
+async function deleteKvSessionsForCompany(env, companyId) {
+  for (const prefix of ['session:', 'client-session:']) {
+    let cursor;
+    do {
+      const page = await env.GLOBAL_MARKET_KV.list({ prefix, cursor });
+      const matching = [];
+      for (const key of page.keys || []) {
+        const session = await env.GLOBAL_MARKET_KV.get(key.name, 'json');
+        if (session?.companyId === companyId) matching.push(key.name);
+      }
+      await Promise.all(matching.map(key => env.GLOBAL_MARKET_KV.delete(key)));
+      cursor = page.list_complete ? undefined : page.cursor;
+    } while (cursor);
+  }
+}
+
+function removeCompanyDataFromState(state, companyId) {
+  const clientIds = new Set((state.marketClients || []).filter(client => client?.companyId === companyId).map(client => client.id));
+  for (const [key, value] of Object.entries(state)) {
+    if (Array.isArray(value)) {
+      if (key === 'companies') state[key] = value.filter(company => company?.id !== companyId);
+      else if (key === 'users') state[key] = value.filter(user => user?.role === 'superadmin' || user?.companyId !== companyId);
+      else state[key] = value.filter(row => row?.companyId !== companyId);
+      continue;
+    }
+    if (!value || typeof value !== 'object' || key === 'app') continue;
+    if (Object.prototype.hasOwnProperty.call(value, companyId)) delete value[companyId];
+    if (key === 'clientDeletedOrders') {
+      for (const clientId of clientIds) delete value[clientId];
+    }
+  }
+  return state;
+}
+
+async function handleDeleteCompany(request, env) {
+  const ctx = await getEmployeeSession(request, env, true);
+  requireRole(ctx.user, ['superadmin']);
+  const body = await readJson(request, 30_000);
+  const companyId = String(body.companyId || '').trim();
+  const company = ctx.state.companies.find(item => item?.id === companyId);
+  if (!company) throw new HttpError(404, 'Entreprise introuvable.', 'COMPANY_NOT_FOUND');
+
+  const expectedName = String(company.name || '').trim();
+  const providedName = String(body.companyName || '').trim();
+  if (!expectedName || providedName !== expectedName || String(body.confirmation || '').trim().toUpperCase() !== 'SUPPRIMER') {
+    throw new HttpError(400, 'Confirmation de suppression incorrecte.', 'DELETE_CONFIRMATION_INVALID');
+  }
+
+  const companyUsers = (ctx.state.users || []).filter(user => user?.companyId === companyId && user.role !== 'superadmin');
+  const companyClients = (ctx.state.marketClients || []).filter(client => client?.companyId === companyId);
+
+  for (const user of companyUsers) {
+    const auth = await getAuth(env, user.id);
+    if (auth?.identifier) await env.GLOBAL_MARKET_KV.delete(authIndexKey(auth.identifier));
+    await env.GLOBAL_MARKET_KV.delete(authKey(user.id));
+  }
+  for (const client of companyClients) {
+    const auth = await getClientAuth(env, client.id);
+    const phone = auth?.phone || normalizePhone(client.phone);
+    if (phone) await env.GLOBAL_MARKET_KV.delete(clientIndexKey(companyId, phone));
+    await env.GLOBAL_MARKET_KV.delete(clientAuthKey(client.id));
+  }
+
+  removeCompanyDataFromState(ctx.state, companyId);
+  const saved = await saveState(env, ctx.state);
+  await deleteKvSessionsForCompany(env, companyId);
+  await audit(
+    env,
+    'COMPANY_DELETED',
+    ctx.user.id,
+    companyId,
+    `Compte entreprise supprimé : ${expectedName}. Utilisateurs : ${companyUsers.length}. Clients boutique : ${companyClients.length}.`,
+    requestIp(request)
+  );
+
+  return json({
+    success: true,
+    message: `Le compte entreprise « ${expectedName} » a été supprimé.`,
+    deleted: { companyId, companyName: expectedName, users: companyUsers.length, marketClients: companyClients.length },
+    data: scopeState(saved.state, ctx.user)
+  });
+}
+
 function publicCompany(company) {
   if (!company) return null;
   const allowed = ['id', 'name', 'activity', 'phone', 'email', 'address', 'businessType', 'shopSlug', 'shopBanner', 'shopColor', 'marketWaveBusinessLink', 'marketUsdtTrc20', 'status', 'plan', 'planCode', 'subscriptionEnd'];
@@ -1235,6 +1319,8 @@ async function handleApi(request, env) {
       const result = await saveState(env, merged);
       return json({ success: true, message: 'Sauvegarde sécurisée effectuée dans KV et D1.', d1: result.d1 });
     }
+
+    if (url.pathname === '/api/companies/delete' && request.method === 'POST') return await handleDeleteCompany(request, env);
 
     if (url.pathname === '/api/users/create' && request.method === 'POST') return await handleCreateUser(request, env);
     if (url.pathname === '/api/users/update' && request.method === 'POST') return await handleUpdateUser(request, env);
