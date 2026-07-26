@@ -38,6 +38,10 @@ function requireSuperAdminIdentifier(env) {
   return identifier;
 }
 
+function configuredSuperAdminPasswordVersion(env) {
+  return String(env.SUPER_ADMIN_PASSWORD_VERSION || '1').trim() || '1';
+}
+
 class HttpError extends Error {
   constructor(status, message, code = 'REQUEST_ERROR', headers = {}) {
     super(message);
@@ -198,6 +202,7 @@ async function writeUserCredential(env, profile, password, options = {}) {
     hash: await derivePasswordHash(password, salt, PASSWORD_ITERATIONS),
     version: Number(old?.version || 0) + 1,
     mustChangePassword: Boolean(options.mustChangePassword),
+    bootstrapVersion: old?.bootstrapVersion || null,
     updatedAt: new Date().toISOString()
   };
   if (old?.identifier && old.identifier !== record.identifier) await env.GLOBAL_MARKET_KV.delete(authIndexKey(old.identifier));
@@ -486,8 +491,11 @@ async function loadState(env) {
 
 async function ensureSuperAdminCredential(env, state) {
   const identifier = requireSuperAdminIdentifier(env);
+  const desiredBootstrapVersion = configuredSuperAdminPasswordVersion(env);
   const existing = await getAuth(env, SUPER_ADMIN_ID);
-  if (existing?.hash) {
+  const needsCredentialSync = !existing?.hash || String(existing.bootstrapVersion || '') !== desiredBootstrapVersion;
+
+  if (!needsCredentialSync) {
     if (existing.identifier && existing.identifier !== identifier) await env.GLOBAL_MARKET_KV.delete(authIndexKey(existing.identifier));
     if (existing.identifier !== identifier) {
       existing.identifier = identifier;
@@ -498,15 +506,28 @@ async function ensureSuperAdminCredential(env, state) {
     if (!(await env.GLOBAL_MARKET_KV.get(AUTH_INIT_KEY))) await env.GLOBAL_MARKET_KV.put(AUTH_INIT_KEY, new Date().toISOString());
     return existing;
   }
+
   const initialPassword = String(env.SUPER_ADMIN_INITIAL_PASSWORD || '');
   if (!initialPassword) {
     throw new HttpError(503, 'Initialisation de sécurité requise : ajoutez le secret Cloudflare SUPER_ADMIN_INITIAL_PASSWORD.', 'SETUP_REQUIRED');
   }
+
   const publicProfile = state.users.find(u => u.id === SUPER_ADMIN_ID) || { ...SUPER_ADMIN_PROFILE };
   const credentialProfile = { ...publicProfile, email: identifier };
   const auth = await writeUserCredential(env, credentialProfile, initialPassword, { mustChangePassword: false });
+  auth.bootstrapVersion = desiredBootstrapVersion;
+  auth.updatedAt = new Date().toISOString();
+  await env.GLOBAL_MARKET_KV.put(authKey(SUPER_ADMIN_ID), JSON.stringify(auth));
+  await env.GLOBAL_MARKET_KV.put(authIndexKey(identifier), SUPER_ADMIN_ID);
   await env.GLOBAL_MARKET_KV.put(AUTH_INIT_KEY, new Date().toISOString());
-  await audit(env, 'SUPERADMIN_INITIALIZED', SUPER_ADMIN_ID, null, 'Initialisation unique du compte Super Admin', '');
+  await audit(
+    env,
+    existing?.hash ? 'SUPERADMIN_CREDENTIAL_RESYNCED' : 'SUPERADMIN_INITIALIZED',
+    SUPER_ADMIN_ID,
+    null,
+    existing?.hash ? 'Synchronisation sécurisée du mot de passe Super Admin depuis le secret Cloudflare' : 'Initialisation unique du compte Super Admin',
+    ''
+  );
   return auth;
 }
 
@@ -1170,6 +1191,9 @@ async function handleApi(request, env) {
         ok: true, app: APP_NAME, kv: true, d1: true,
         securityInitialized: Boolean(auth?.hash),
         setupRequired: !auth?.hash,
+        superAdminEmailConfigured: Boolean(configuredSuperAdminIdentifier(env)),
+        superAdminPasswordSecretConfigured: Boolean(String(env.SUPER_ADMIN_INITIAL_PASSWORD || '')),
+        passwordVersionSynchronized: Boolean(auth?.hash && String(auth.bootstrapVersion || '') === configuredSuperAdminPasswordVersion(env)),
         time: new Date().toISOString()
       });
     }

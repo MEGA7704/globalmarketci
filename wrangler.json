@@ -17,6 +17,7 @@
     }
   ],
   "vars": {
-    "APP_NAME": "GLOBAL MARKET"
+    "APP_NAME": "GLOBAL MARKET",
+    "SUPER_ADMIN_PASSWORD_VERSION": "2026-07-26-reset-1"
   }
 }

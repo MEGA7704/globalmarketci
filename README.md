@@ -138,3 +138,8 @@ Executing user command: npm run build
 - La fenêtre est centrée horizontalement et verticalement.
 - Les champs de chaque ligne utilisent toute la largeur disponible avec un alignement justifié.
 - Les routes API, KV, D1 et les protections de sécurité restent inchangés.
+
+
+## Correction Super Admin 2.8
+
+Voir `README_CORRECTION_SUPER_ADMIN_2_8.md`. Les secrets `SUPER_ADMIN_EMAIL` et `SUPER_ADMIN_INITIAL_PASSWORD` doivent être configurés dans l’environnement Production de Cloudflare.
