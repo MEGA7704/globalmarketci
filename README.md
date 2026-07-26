@@ -86,12 +86,12 @@ Les identifiants techniques des ressources restent dans `wrangler.json` car ils 
 
 ## Fiche d’inscription des entreprises
 
-La fenêtre d’inscription adopte un design militaire administratif compact. Sur ordinateur, son cadre reste entièrement visible sans défilement interne. Les champs ont un fond blanc, le texte saisi est noir et le bouton de création réagit immédiatement tout en bloquant les doubles clics. Elle est organisée en quatre blocs :
+La fenêtre d’inscription est compacte et ne possède aucun défilement interne sur ordinateur. Elle est organisée en quatre blocs :
 
-1. **Informations de l’entreprise** : raison sociale, forme juridique, RCCM et compte contribuable.
+1. **Information de l’entreprise** : raison sociale, forme juridique, RCCM et compte contribuable.
 2. **Spécialité** : type de commerce et activité principale.
 3. **ID du responsable** : gérant, adresse et téléphone.
-4. **Identifiant** : e-mail et mot de passe administrateur.
+4. **Identifiant de connexion** : e-mail et mot de passe administrateur.
 
 Tous les identifiants HTML, la validation, la création de l’entreprise et la route `POST /api/register-company` sont conservés.
 

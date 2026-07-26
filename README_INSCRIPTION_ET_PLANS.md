@@ -2,7 +2,7 @@
 
 ## Correction de la fiche d’inscription
 
-La modale est réduite, centrée et organisée sans défilement interne sur ordinateur. Le cadre reste visible en entier, les champs sont blancs avec texte noir et le bouton de création fournit un retour visuel immédiat :
+La modale est réduite et organisée sans défilement interne sur ordinateur :
 
 - Informations de l’entreprise : 4 champs alignés horizontalement ;
 - Spécialité : 2 champs alignés et centrés ;
