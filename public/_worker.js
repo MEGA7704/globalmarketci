@@ -852,7 +852,12 @@ async function handleLogin(request, env) {
   await clearLoginRate(env, rate);
   const created = await createEmployeeSession(env, user, auth);
   await audit(env, 'LOGIN_SUCCESS', user.id, user.companyId, 'Connexion réussie', ip);
-  return json({ success: true, session: publicSessionView(created.session), mustChangePassword: Boolean(auth.mustChangePassword) }, {
+  return json({
+    success: true,
+    session: publicSessionView(created.session),
+    mustChangePassword: Boolean(auth.mustChangePassword),
+    data: scopeState(state, user)
+  }, {
     headers: { 'Set-Cookie': setCookie(EMPLOYEE_SESSION_COOKIE, created.sid, created.ttl) }
   });
 }
@@ -889,11 +894,16 @@ async function handleRegisterCompany(request, env) {
   state.companies.push(company);
   state.users.push(user);
   await writeUserCredential(env, user, password);
-  await saveState(env, state);
-  const created = await createEmployeeSession(env, user, await getAuth(env, user.id));
+  const saved = await saveState(env, state);
+  const auth = await getAuth(env, user.id);
+  const created = await createEmployeeSession(env, user, auth);
   await env.GLOBAL_MARKET_KV.put(rateKey, JSON.stringify({ count: (rec.count || 0) + 1, resetAt: Date.now() + 3600000 }), { expirationTtl: 3600 });
   await audit(env, 'COMPANY_REGISTERED', user.id, company.id, company.name, ip);
-  return json({ success: true, session: publicSessionView(created.session) }, {
+  return json({
+    success: true,
+    session: publicSessionView(created.session),
+    data: scopeState(saved.state, user)
+  }, {
     status: 201,
     headers: { 'Set-Cookie': setCookie(EMPLOYEE_SESSION_COOKIE, created.sid, created.ttl) }
   });
@@ -1172,7 +1182,7 @@ async function handleApi(request, env) {
     if (url.pathname === '/api/session' && request.method === 'GET') {
       try {
         const ctx = await getEmployeeSession(request, env, false);
-        return json({ session: publicSessionView(ctx.session) });
+        return json({ session: publicSessionView(ctx.session), data: scopeState(ctx.state, ctx.user) });
       } catch {
         return json({ session: null });
       }
