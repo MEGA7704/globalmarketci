@@ -238,8 +238,6 @@ let CLOUD_DATA=null;
 let CLOUD_SESSION=null;
 let PUBLIC_CLIENT_SESSION=null;
 let CLOUD_SAVE_TIMER=null;
-let CLOUD_DATA_READY=false;
-let CLOUD_BOOT_SEQUENCE=0;
 function defaultData(){return {companies:[],users:[],items:[],sales:[],payments:[],orders:[],clients:[],marketClients:[],passwordResetRequests:[]}}
 function normalizeData(d){d=d&&typeof d==='object'?d:{}; if(d.data&&typeof d.data==='object') d=d.data; const base=defaultData(); return Object.assign(base,d,{companies:Array.isArray(d.companies)?d.companies:[],users:Array.isArray(d.users)?d.users:[],items:Array.isArray(d.items)?d.items:[],sales:Array.isArray(d.sales)?d.sales:[],payments:Array.isArray(d.payments)?d.payments:[],orders:Array.isArray(d.orders)?d.orders:[],clients:Array.isArray(d.clients)?d.clients:[],marketClients:Array.isArray(d.marketClients)?d.marketClients:[],passwordResetRequests:Array.isArray(d.passwordResetRequests)?d.passwordResetRequests:[]})}
 function rememberCloudCache(){/* Sécurité : aucune base complète n'est conservée dans localStorage. */}
@@ -248,63 +246,13 @@ async function fetchWithTimeout(url,opts={},ms=6500){const c=new AbortController
 async function readApiPayload(r){const j=await r.json().catch(()=>({})); if(!r.ok){const e=new Error(j.error||('Erreur serveur '+r.status)); e.status=r.status; e.code=j.code||''; e.payload=j; throw e;} return j}
 function employeeSecurityHeaders(extra={}){return {'Content-Type':'application/json',...(CLOUD_SESSION?.csrfToken?{'X-CSRF-Token':CLOUD_SESSION.csrfToken}:{}),...extra}}
 function clientSecurityHeaders(extra={}){return {'Content-Type':'application/json',...(PUBLIC_CLIENT_SESSION?.csrfToken?{'X-CSRF-Token':PUBLIC_CLIENT_SESSION.csrfToken}:{}),...extra}}
-async function cloudLoadData(){const r=await fetchWithTimeout('/api/load',{cache:'no-store'},9000); const j=await readApiPayload(r); CLOUD_DATA=normalizeData(j); CLOUD_DATA_READY=true; return CLOUD_DATA}
-async function cloudLoadPublicData(){const r=await fetchWithTimeout('/api/public/load',{cache:'no-store'},9000); const j=await readApiPayload(r); PUBLIC_CLIENT_SESSION=j.clientSession||null; CLOUD_DATA=normalizeData(j); CLOUD_DATA_READY=true; if(PUBLIC_CLIENT_SESSION?.clientId) window.publicShopClientId=PUBLIC_CLIENT_SESSION.clientId; else window.publicShopClientId=''; return CLOUD_DATA}
+async function cloudLoadData(){const r=await fetchWithTimeout('/api/load',{cache:'no-store'},9000); const j=await readApiPayload(r); CLOUD_DATA=normalizeData(j); return CLOUD_DATA}
+async function cloudLoadPublicData(){const r=await fetchWithTimeout('/api/public/load',{cache:'no-store'},9000); const j=await readApiPayload(r); PUBLIC_CLIENT_SESSION=j.clientSession||null; CLOUD_DATA=normalizeData(j); if(PUBLIC_CLIENT_SESSION?.clientId) window.publicShopClientId=PUBLIC_CLIENT_SESSION.clientId; else window.publicShopClientId=''; return CLOUD_DATA}
 async function cloudSaveNow(d=CLOUD_DATA){if(!d||!CLOUD_SESSION) return; const r=await fetchWithTimeout('/api/save',{method:'POST',headers:employeeSecurityHeaders(),body:JSON.stringify({data:d})},15000); await readApiPayload(r)}
-async function cloudLoadSession(timeoutMs=3200){
-  try{
-    const r=await fetchWithTimeout('/api/session',{cache:'no-store'},timeoutMs);
-    const j=await readApiPayload(r);
-    CLOUD_SESSION=j.session||null;
-    if(j.data&&typeof j.data==='object'){
-      CLOUD_DATA=normalizeData(j.data);
-      CLOUD_DATA_READY=true;
-    }
-  }catch(e){
-    CLOUD_SESSION=null;
-    CLOUD_DATA_READY=false;
-  }
-  return CLOUD_SESSION;
-}
+async function cloudLoadSession(){try{const r=await fetchWithTimeout('/api/session',{cache:'no-store'},6000); const j=await readApiPayload(r); CLOUD_SESSION=j.session||null}catch(e){CLOUD_SESSION=null} return CLOUD_SESSION}
 async function cloudSetSession(){throw new Error('La création directe de session est désactivée. Utilisez la connexion sécurisée.')}
-async function cloudClearSession(){const old=CLOUD_SESSION; try{await fetchWithTimeout('/api/session',{method:'DELETE',headers:{'Content-Type':'application/json',...(old?.csrfToken?{'X-CSRF-Token':old.csrfToken}:{})}},4500)}catch(e){console.warn('Déconnexion cloud non confirmée',e)} CLOUD_SESSION=null; CLOUD_DATA=defaultData(); CLOUD_DATA_READY=false}
-async function cloudStart(){
-  const sequence=++CLOUD_BOOT_SEQUENCE;
-  const publicRoute=location.hash.startsWith('#boutique-global')||location.hash.startsWith('#boutique/');
-  CLOUD_SESSION=null;
-  CLOUD_DATA=defaultData();
-  CLOUD_DATA_READY=false;
-
-  // La page de connexion s'affiche immédiatement. La restauration de session
-  // s'effectue ensuite en arrière-plan, sans écran blanc ni attente bloquante.
-  if(publicRoute){
-    app.innerHTML='<div class="wrap"><div class="card" style="max-width:620px;margin:70px auto;text-align:center"><h1>GLOBAL MARKET</h1><p>Chargement de la boutique sécurisée…</p></div></div>';
-  }else{
-    renderLogin();
-  }
-
-  try{
-    if(publicRoute){
-      await cloudLoadPublicData();
-      if(sequence===CLOUD_BOOT_SEQUENCE) render();
-      return;
-    }
-    await cloudLoadSession(3200);
-    if(sequence!==CLOUD_BOOT_SEQUENCE) return;
-    if(CLOUD_SESSION){
-      if(!CLOUD_DATA_READY) await cloudLoadData();
-      if(sequence===CLOUD_BOOT_SEQUENCE) render();
-    }
-  }catch(e){
-    console.error(e);
-    if(sequence===CLOUD_BOOT_SEQUENCE){
-      CLOUD_SESSION=null;
-      CLOUD_DATA=defaultData();
-      CLOUD_DATA_READY=false;
-      renderLogin();
-    }
-  }
-}
+async function cloudClearSession(){const old=CLOUD_SESSION; try{await fetchWithTimeout('/api/session',{method:'DELETE',headers:{'Content-Type':'application/json',...(old?.csrfToken?{'X-CSRF-Token':old.csrfToken}:{})}},6000)}catch(e){console.warn('Déconnexion cloud non confirmée',e)} CLOUD_SESSION=null; CLOUD_DATA=defaultData()}
+async function cloudStart(){app.innerHTML='<div class="wrap"><div class="card" style="max-width:620px;margin:80px auto;text-align:center"><h1>GLOBAL MARKET</h1><p>Ouverture sécurisée de la plateforme...</p></div></div>'; try{await cloudLoadSession(); if(location.hash.startsWith('#boutique-global')||location.hash.startsWith('#boutique/')) await cloudLoadPublicData(); else if(CLOUD_SESSION) await cloudLoadData(); else CLOUD_DATA=defaultData()}catch(e){console.error(e); CLOUD_SESSION=null; CLOUD_DATA=defaultData()} render()}
 function seed(){if(!CLOUD_DATA) CLOUD_DATA=defaultData(); return CLOUD_DATA}
 function save(d){CLOUD_DATA=normalizeData(d); if(!CLOUD_SESSION) return; clearTimeout(CLOUD_SAVE_TIMER); CLOUD_SAVE_TIMER=setTimeout(()=>cloudSaveNow(CLOUD_DATA).catch(e=>{console.error(e); if(e.status===401){CLOUD_SESSION=null; alert('Votre session a expiré. Reconnectez-vous.'); renderLogin()}else alert('La sauvegarde sécurisée a échoué : '+e.message)}),400)}
 function session(){return CLOUD_SESSION}
@@ -622,15 +570,16 @@ ${legalModalHtml()}
   <div class="modalCard gmRegisterModalCard" role="dialog" aria-modal="true" aria-labelledby="registerTitle" aria-describedby="registerDescription">
     <button type="button" class="modalClose gmRegisterClose" aria-label="Fermer la fiche d’inscription" onclick="closeRegisterPopup()">×</button>
     <header class="gmRegisterHeader">
+      <div class="gmRegisterHeaderIcon" aria-hidden="true">${ggIcon('building')}</div>
       <div class="gmRegisterHeadingText">
         <h2 id="registerTitle">FICHE D’INSCRIPTION DES ENTREPRISES</h2>
-        <p class="registerSub" id="registerDescription"><span>Veuillez remplir correctement tous les champs. Tous les textes saisis restent visibles et lisibles.</span></p>
+        <p class="registerSub" id="registerDescription"><strong>IDENTIFICATION DE L’ENTREPRISE</strong><span>Renseignez les informations obligatoires pour créer votre espace GLOBAL MARKET.</span></p>
       </div>
     </header>
     <div class="gmRegisterDivider" aria-hidden="true"></div>
     <div class="registerBusinessGrid gmRegisterGrid">
       <section class="gmRegisterSection gmRegisterSectionCompany" aria-labelledby="gmRegisterCompanyTitle">
-        <h3 id="gmRegisterCompanyTitle">INFORMATION DE L’ENTREPRISE</h3>
+        <h3 id="gmRegisterCompanyTitle">INFORMATIONS DE L’ENTREPRISE</h3>
         <div class="gmRegisterRow gmRegisterRowFour">
           <div class="gmRegisterField gmFieldName">
             <label for="cName">RAISON SOCIALE <span class="gmRequired">*</span></label>
@@ -684,7 +633,7 @@ ${legalModalHtml()}
       </section>
 
       <section class="gmRegisterSection gmRegisterSectionCredentials" aria-labelledby="gmRegisterCredentialsTitle">
-        <h3 id="gmRegisterCredentialsTitle">IDENTIFIANT DE CONNEXION</h3>
+        <h3 id="gmRegisterCredentialsTitle">IDENTIFIANT</h3>
         <div class="gmRegisterRow gmRegisterRowTwo gmRegisterRowCredentials">
           <div class="gmRegisterField gmFieldEmail">
             <label for="cEmail">E-MAIL <span class="gmRequired">*</span></label>
@@ -744,17 +693,16 @@ function openSupportWhatsApp(){
   window.open(GLOBAL_MARKET_LOGIN_LINKS.supportWhatsapp+'?text='+msg,'_blank','noopener,noreferrer');
 }
 function openGlobalShopLogin(){location.hash=GLOBAL_MARKET_LOGIN_LINKS.boutiqueHash;render()}
-let REGISTER_REQUEST_IN_PROGRESS=false;
 function openRegisterPopup(){
   const modal=document.querySelector('#registerModal');
   if(!modal)return;
-  if(!REGISTER_REQUEST_IN_PROGRESS)setRegisterLoading(false);
+  setRegisterLoading(false);
   modal.classList.remove('hidden');
   requestAnimationFrame(()=>document.querySelector('#cName')?.focus());
 }
 function closeRegisterPopup(){
   document.querySelector('#registerModal')?.classList.add('hidden');
-  if(!REGISTER_REQUEST_IN_PROGRESS)setRegisterLoading(false);
+  setRegisterLoading(false);
 }
 function toggleRegisterPassword(btn){
   const input=document.querySelector('#cPass');
@@ -767,16 +715,13 @@ function toggleRegisterPassword(btn){
   input.focus();
 }
 function setRegisterLoading(active){
-  REGISTER_REQUEST_IN_PROGRESS=Boolean(active);
   const btn=document.querySelector('#registerSubmitBtn');
-  const modal=document.querySelector('#registerModal .gmRegisterModalCard');
-  if(modal)modal.setAttribute('aria-busy',String(REGISTER_REQUEST_IN_PROGRESS));
   if(!btn)return;
-  btn.disabled=REGISTER_REQUEST_IN_PROGRESS;
-  btn.setAttribute('aria-busy',String(REGISTER_REQUEST_IN_PROGRESS));
-  btn.classList.toggle('is-loading',REGISTER_REQUEST_IN_PROGRESS);
+  btn.disabled=Boolean(active);
+  btn.setAttribute('aria-busy',String(Boolean(active)));
+  btn.classList.toggle('is-loading',Boolean(active));
   const label=btn.querySelector('.gmRegisterButtonLabel');
-  if(label)label.textContent=REGISTER_REQUEST_IN_PROGRESS?'CRÉATION EN COURS…':'CRÉER MON ENTREPRISE';
+  if(label)label.textContent=active?'CRÉATION EN COURS…':'CRÉER MON ENTREPRISE';
 }
 function openForgotPasswordPopup(){document.querySelector('#forgotPasswordModal')?.classList.remove('hidden')}
 function closeForgotPasswordPopup(){document.querySelector('#forgotPasswordModal')?.classList.add('hidden')}
@@ -4334,12 +4279,7 @@ async function login(){
     const r=await fetchWithTimeout('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identifier,password,role})},12000);
     const j=await readApiPayload(r);
     CLOUD_SESSION=j.session||null;
-    if(j.data&&typeof j.data==='object'){
-      CLOUD_DATA=normalizeData(j.data);
-      CLOUD_DATA_READY=true;
-    }else{
-      await cloudLoadData();
-    }
+    await cloudLoadData();
     const u=(CLOUD_DATA.users||[]).find(x=>x.id===CLOUD_SESSION?.userId);
     if(!u) throw new Error('Profil utilisateur non chargé.');
     if(j.mustChangePassword){
@@ -4356,7 +4296,6 @@ async function login(){
   }finally{setLoginLoading(false)}
 }
 async function registerCompany(){
-  if(REGISTER_REQUEST_IN_PROGRESS)return;
   const payload={
     name:$('#cName')?.value.trim()||'', legalForm:$('#cLegalForm')?.value.trim()||'',
     rccm:$('#cRccm')?.value.trim()||'', taxAccount:$('#cTaxAccount')?.value.trim()||'',
@@ -4383,20 +4322,14 @@ async function registerCompany(){
   const emailInput=$('#cEmail');
   if(emailInput&&!emailInput.checkValidity()){alert('Veuillez saisir une adresse e-mail valide.');emailInput.focus();return}
   setRegisterLoading(true);
-  await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
   try{
     const r=await fetchWithTimeout('/api/register-company',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)},15000);
     const j=await readApiPayload(r);
     CLOUD_SESSION=j.session||null;
-    if(j.data&&typeof j.data==='object'){
-      CLOUD_DATA=normalizeData(j.data);
-      CLOUD_DATA_READY=true;
-    }else{
-      await cloudLoadData();
-    }
+    await cloudLoadData();
     closeRegisterPopup();
+    alert('Entreprise créée avec succès. Le compte administrateur associé est actif et les données ont été enregistrées de manière sécurisée.');
     render();
-    setTimeout(()=>alert('Entreprise créée avec succès. Le compte administrateur associé est actif et les données ont été enregistrées de manière sécurisée.'),0);
   }catch(e){
     alert(secureErrorMessage(e,'Création de l’entreprise impossible.'));
   }finally{
