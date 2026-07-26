@@ -86,7 +86,7 @@ Les identifiants techniques des ressources restent dans `wrangler.json` car ils 
 
 ## Fiche d’inscription des entreprises
 
-La fenêtre d’inscription est compacte et ne possède aucun défilement interne sur ordinateur. Elle est organisée en quatre blocs :
+La fenêtre d’inscription adopte un design militaire administratif compact. Sur ordinateur, son cadre reste entièrement visible sans défilement interne. Les champs ont un fond blanc, le texte saisi est noir et le bouton de création réagit immédiatement tout en bloquant les doubles clics. Elle est organisée en quatre blocs :
 
 1. **Informations de l’entreprise** : raison sociale, forme juridique, RCCM et compte contribuable.
 2. **Spécialité** : type de commerce et activité principale.
