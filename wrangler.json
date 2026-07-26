@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "global-market",
+  "compatibility_date": "2026-07-26",
+  "pages_build_output_dir": "public",
+  "kv_namespaces": [
+    {
+      "binding": "GLOBAL_MARKET_KV",
+      "id": "f863a50688bc4dfb89dd302a8a8bec76"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "GLOBAL_MARKET_D1",
+      "database_name": "global_market_d1",
+      "database_id": "92ef9815-eb4e-4b49-9a03-41f8e4bc5c77"
+    }
+  ],
+  "vars": {
+    "APP_NAME": "GLOBAL MARKET",
+    "SUPER_ADMIN_EMAIL": "mega@services.local"
+  }
+}

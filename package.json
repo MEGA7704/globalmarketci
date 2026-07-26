@@ -1,0 +1,20 @@
+{
+  "name": "global-market-cloudflare",
+  "version": "2.1.0",
+  "private": true,
+  "description": "GLOBAL MARKET - application multi-entreprises pour Cloudflare Pages, KV et D1.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "validate": "node scripts/validate.mjs",
+    "build": "npm run validate && node scripts/build.mjs",
+    "check": "npm run build",
+    "dev": "npm run build && wrangler pages dev public",
+    "deploy": "npm run build && wrangler pages deploy public --project-name=global-market"
+  },
+  "devDependencies": {
+    "wrangler": "^4.27.0"
+  }
+}
