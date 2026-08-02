@@ -99,7 +99,9 @@ const targetedSaleChecks = [
   ['initFlexibleHorizontalMenu', 'menu horizontal flexible au défilement'],
   ['saleProfessionalCart', 'panier professionnel intégré à la vente'],
   ['ENCAISSER ET VALIDER', 'bouton d’encaissement du panier'],
-  ["saleStatus:'cart'", 'mise en attente des articles avant encaissement']
+  ["saleStatus:'cart'", 'mise en attente des articles avant encaissement'],
+  ['openPendingCartLineFromClick', 'ouverture de la modification en cliquant sur une ligne du panier'],
+  ['saleProCartLineClickable', 'style cliquable des lignes du panier']
 ];
 for (const [needle, label] of targetedSaleChecks) {
   if (!app.includes(needle)) {

@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "private": true,
-  "description": "GLOBAL MARKET - panier professionnel dynamique intégré à la section Vente.",
+  "description": "GLOBAL MARKET - lignes du panier professionnel cliquables et modifiables avant encaissement.",
   "type": "module",
   "engines": {
     "node": ">=20"

@@ -46,7 +46,7 @@ Application : public/assets/app.js
 Styles      : public/assets/style.css
 Worker      : public/_worker.js
 ```
-   
+
 ## Commandes disponibles
 
 ```bash
