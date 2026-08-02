@@ -1,18 +1,19 @@
 {
   "name": "global-market-cloudflare",
-  "version": "3.3.0",
+  "version": "4.0.0",
   "private": true,
-  "description": "GLOBAL MARKET - lignes du panier professionnel cliquables et modifiables avant encaissement.",
+  "description": "GLOBAL MARKET - isolation réelle des données par entreprise dans le KV et D1 existants, migration automatique et détection des conflits.",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "validate": "node scripts/validate.mjs",
+    "validate": "node scripts/validate.mjs && node scripts/test-isolation.mjs",
     "build": "npm run validate && node scripts/build.mjs",
     "check": "npm run build",
     "dev": "npm run build && wrangler pages dev public",
-    "deploy": "npm run build && wrangler pages deploy public --project-name=global-market"
+    "deploy": "npm run build && wrangler pages deploy public --project-name=global-market",
+    "test:isolation": "node scripts/test-isolation.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.27.0"

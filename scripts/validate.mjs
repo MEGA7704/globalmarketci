@@ -42,6 +42,29 @@ if (!worker.includes("url.pathname === '/api/save'")) {
   process.exit(1);
 }
 
+const isolationChecks = [
+  ["CATALOG_STATE_KEY = 'state:catalog:v5'", 'catalogue global isolé'],
+  ["COMPANY_STATE_KEY_PREFIX = 'state:company:v5:'", 'clé indépendante par entreprise'],
+  ['saveCompanyFromState', 'sauvegarde ciblée par entreprise'],
+  ['COMPANY_DATA_CONFLICT', 'détection des modifications concurrentes'],
+  ['migrateToCompanyIsolation', 'migration automatique de l’ancien stockage'],
+  ['legacyKeyPreserved', 'conservation de la sauvegarde historique']
+];
+for (const [marker, label] of isolationChecks) {
+  if (!worker.includes(marker)) {
+    console.error(`[validate] Isolation multi-entreprises incomplète : ${label}.`);
+    process.exit(1);
+  }
+}
+if (!app.includes('CLOUD_SAVE_IN_FLIGHT') || !app.includes('CLOUD_SAVE_QUEUED')) {
+  console.error('[validate] Sérialisation des sauvegardes navigateur absente.');
+  process.exit(1);
+}
+if (worker.includes('GLOBAL_MARKET_KV.put(LEGACY_STATE_KEY')) {
+  console.error('[validate] L’ancien état global ne doit plus être réécrit.');
+  process.exit(1);
+}
+
 
 if (!worker.includes("url.pathname === '/api/companies/delete'")) {
   console.error('[validate] Route sécurisée de suppression entreprise absente.');

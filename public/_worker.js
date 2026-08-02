@@ -1,6 +1,11 @@
 const APP_NAME = 'GLOBAL MARKET';
-const STATE_ID = 'global_market_all';
-const STATE_KEY = `company:${STATE_ID}`;
+const LEGACY_STATE_ID = 'global_market_all';
+const LEGACY_STATE_KEY = `company:${LEGACY_STATE_ID}`;
+const CATALOG_STATE_ID = '__global_market_catalog_v5__';
+const CATALOG_STATE_KEY = 'state:catalog:v5';
+const COMPANY_STATE_KEY_PREFIX = 'state:company:v5:';
+const STORAGE_VERSION = 5;
+const STORAGE_MIGRATION_KEY = 'migration:company-isolation:v5';
 const EMPLOYEE_SESSION_COOKIE = 'GLOBAL_MARKET_SESSION';
 const CLIENT_SESSION_COOKIE = 'GLOBAL_MARKET_CLIENT_SESSION';
 const EMPLOYEE_SESSION_TTL = 60 * 60 * 24 * 7;
@@ -286,7 +291,7 @@ function defaultState() {
     clients: [],
     marketClients: [],
     passwordResetRequests: [],
-    app: { name: APP_NAME, storageVersion: 3, initializedAt: new Date().toISOString() }
+    app: { name: APP_NAME, storageVersion: STORAGE_VERSION, initializedAt: new Date().toISOString() }
   };
 }
 
@@ -302,7 +307,7 @@ function normalizeState(value) {
   }
   if (!data.app || typeof data.app !== 'object') data.app = {};
   data.app.name = APP_NAME;
-  data.app.storageVersion = 4;
+  data.app.storageVersion = STORAGE_VERSION;
   data.companies = data.companies.map(company => {
     if (!company || typeof company !== 'object') return company;
     const rawPlan = String(company.planCode || company.plan || company.status || 'FREE').toUpperCase();
@@ -467,26 +472,323 @@ async function migrateLegacyCredentials(env, state) {
   return changed;
 }
 
-async function saveState(env, state) {
+function companyStateKey(companyId) {
+  return `${COMPANY_STATE_KEY_PREFIX}${String(companyId || '').trim()}`;
+}
+
+function storageRevision(value) {
+  return Math.max(0, Number(value?.app?.storageRevision || 0) || 0);
+}
+
+function defaultCatalog() {
+  return {
+    companies: [],
+    users: [{ ...SUPER_ADMIN_PROFILE }],
+    app: {
+      name: APP_NAME,
+      storageVersion: STORAGE_VERSION,
+      storageScope: 'catalog',
+      storageRevision: 0,
+      initializedAt: new Date().toISOString()
+    }
+  };
+}
+
+function normalizeCatalog(value) {
+  const source = value && typeof value === 'object' ? cleanClone(value) : defaultCatalog();
+  const normalized = normalizeState({
+    companies: Array.isArray(source.companies) ? source.companies : [],
+    users: Array.isArray(source.users) ? source.users : [],
+    app: source.app && typeof source.app === 'object' ? source.app : {}
+  });
+  normalized.app.storageVersion = STORAGE_VERSION;
+  normalized.app.storageScope = 'catalog';
+  normalized.app.storageRevision = Math.max(0, Number(source?.app?.storageRevision || 0) || 0);
+  return { companies: normalized.companies, users: normalized.users, app: normalized.app };
+}
+
+function normalizeCompanyState(value, companyId, catalog = null) {
+  const id = String(companyId || '').trim();
+  const normalized = normalizeState(cleanClone(value && typeof value === 'object' ? value : {}));
+  normalized.companies = normalized.companies.filter(company => company?.id === id);
+  normalized.users = normalized.users.filter(user => user?.role !== 'superadmin' && user?.companyId === id);
+
+  for (const [key, current] of Object.entries(normalized)) {
+    if (key === 'companies' || key === 'users' || key === 'app') continue;
+    if (Array.isArray(current)) {
+      normalized[key] = current.filter(row => row && row.companyId === id).map(row => ({ ...row, companyId: id }));
+      continue;
+    }
+    if (!current || typeof current !== 'object') continue;
+    if (key === 'clientDeletedOrders') {
+      const clientIds = new Set((value?.marketClients || []).filter(client => client?.companyId === id).map(client => client.id));
+      normalized[key] = Object.fromEntries(Object.entries(current).filter(([clientId]) => clientIds.has(clientId)));
+      continue;
+    }
+    normalized[key] = Object.prototype.hasOwnProperty.call(current, id) ? { [id]: current[id] } : {};
+  }
+
+  if (catalog) {
+    const company = (catalog.companies || []).find(item => item?.id === id);
+    if (company) normalized.companies = [cleanClone(company)];
+    normalized.users = (catalog.users || []).filter(user => user?.companyId === id && user.role !== 'superadmin').map(cleanClone);
+  }
+
+  normalized.app = normalized.app && typeof normalized.app === 'object' ? normalized.app : {};
+  normalized.app.name = APP_NAME;
+  normalized.app.storageVersion = STORAGE_VERSION;
+  normalized.app.storageScope = 'company';
+  normalized.app.companyId = id;
+  normalized.app.storageRevision = Math.max(0, Number(value?.app?.storageRevision || normalized.app.storageRevision || 0) || 0);
+  return normalized;
+}
+
+function buildCompanyStateFromAggregate(globalState, companyId, catalog = null) {
+  const id = String(companyId || '').trim();
+  const source = globalState && typeof globalState === 'object' ? globalState : defaultState();
+  const shard = {
+    app: { ...(source.app || {}), companyId: id, storageScope: 'company' },
+    companies: (source.companies || []).filter(company => company?.id === id),
+    users: (source.users || []).filter(user => user?.companyId === id && user.role !== 'superadmin')
+  };
+
+  for (const [key, current] of Object.entries(source)) {
+    if (key === 'companies' || key === 'users' || key === 'app') continue;
+    if (Array.isArray(current)) {
+      shard[key] = current.filter(row => row && row.companyId === id).map(cleanClone);
+      continue;
+    }
+    if (!current || typeof current !== 'object') continue;
+    if (key === 'clientDeletedOrders') {
+      const clientIds = new Set((source.marketClients || []).filter(client => client?.companyId === id).map(client => client.id));
+      shard[key] = Object.fromEntries(Object.entries(current).filter(([clientId]) => clientIds.has(clientId)).map(([clientId, rows]) => [clientId, cleanClone(rows)]));
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(current, id)) shard[key] = { [id]: cleanClone(current[id]) };
+  }
+  return normalizeCompanyState(shard, id, catalog);
+}
+
+function mergeCompanyStateIntoAggregate(aggregate, shard, companyId) {
+  const id = String(companyId || '').trim();
+  for (const [key, current] of Object.entries(shard || {})) {
+    if (key === 'companies' || key === 'users' || key === 'app') continue;
+    if (Array.isArray(current)) {
+      aggregate[key] = Array.isArray(aggregate[key]) ? aggregate[key] : [];
+      aggregate[key].push(...current.filter(row => row && row.companyId === id).map(cleanClone));
+      continue;
+    }
+    if (!current || typeof current !== 'object') continue;
+    aggregate[key] = aggregate[key] && typeof aggregate[key] === 'object' ? aggregate[key] : {};
+    Object.assign(aggregate[key], cleanClone(current));
+  }
+  aggregate.app.companyRevisions = aggregate.app.companyRevisions || {};
+  aggregate.app.companyRevisions[id] = storageRevision(shard);
+  return aggregate;
+}
+
+async function readStateRecord(env, kvKey, d1Id) {
+  const fromKv = parseState(await env.GLOBAL_MARKET_KV.get(kvKey));
+  if (fromKv) return fromKv;
+  return readD1State(env, d1Id);
+}
+
+async function writeStateRecord(env, kvKey, d1Id, state) {
+  const raw = JSON.stringify(state);
+  await env.GLOBAL_MARKET_KV.put(kvKey, raw);
+  const d1 = await writeD1State(env, d1Id, raw);
+  return { state, d1 };
+}
+
+async function readLegacyState(env) {
+  let legacy = parseState(await env.GLOBAL_MARKET_KV.get(LEGACY_STATE_KEY));
+  if (!legacy) legacy = await readD1State(env, LEGACY_STATE_ID);
+  return legacy ? normalizeState(legacy) : null;
+}
+
+async function writeCatalog(env, catalog, expectedRevision = null, force = false) {
   await ensureDB(env);
-  const normalized = normalizeState(state);
+  const current = normalizeCatalog(await readStateRecord(env, CATALOG_STATE_KEY, CATALOG_STATE_ID) || defaultCatalog());
+  const currentRevision = storageRevision(current);
+  if (!force && expectedRevision !== null && Number(expectedRevision) !== currentRevision) {
+    throw new HttpError(409, 'Les informations générales ont été modifiées par un autre utilisateur. Actualisez puis recommencez.', 'CATALOG_CONFLICT');
+  }
+  const normalized = normalizeCatalog(catalog);
+  normalized.app.storageRevision = currentRevision + 1;
+  normalized.app.updatedAt = new Date().toISOString();
+  return writeStateRecord(env, CATALOG_STATE_KEY, CATALOG_STATE_ID, normalized);
+}
+
+async function writeCompanyState(env, companyId, state, expectedRevision = null, force = false, catalog = null) {
+  await ensureDB(env);
+  const id = String(companyId || '').trim();
+  if (!id) throw new HttpError(400, 'Identifiant entreprise manquant.', 'COMPANY_ID_REQUIRED');
+  const currentRaw = await readStateRecord(env, companyStateKey(id), id);
+  const current = currentRaw ? normalizeCompanyState(currentRaw, id, catalog) : normalizeCompanyState({}, id, catalog);
+  const currentRevision = storageRevision(current);
+  if (!force && expectedRevision !== null && Number(expectedRevision) !== currentRevision) {
+    throw new HttpError(409, 'Les données de cette entreprise ont été modifiées sur un autre appareil. Actualisez la page avant de recommencer.', 'COMPANY_DATA_CONFLICT');
+  }
+  const normalized = normalizeCompanyState(state, id, catalog);
   for (const user of normalized.users) stripCredentialFields(user);
-  for (const client of normalized.marketClients) stripCredentialFields(client);
-  const raw = JSON.stringify(normalized);
-  await env.GLOBAL_MARKET_KV.put(STATE_KEY, raw);
-  const d1 = await writeD1State(env, STATE_ID, raw);
-  return { state: normalized, d1 };
+  for (const client of normalized.marketClients || []) stripCredentialFields(client);
+  normalized.app.storageRevision = currentRevision + 1;
+  normalized.app.updatedAt = new Date().toISOString();
+  return writeStateRecord(env, companyStateKey(id), id, normalized);
+}
+
+async function deleteCompanyStateRecord(env, companyId) {
+  const id = String(companyId || '').trim();
+  await env.GLOBAL_MARKET_KV.delete(companyStateKey(id));
+  await env.GLOBAL_MARKET_D1.batch([
+    env.GLOBAL_MARKET_D1.prepare('DELETE FROM state_chunks WHERE company_id = ?').bind(id),
+    env.GLOBAL_MARKET_D1.prepare('DELETE FROM state_meta WHERE company_id = ?').bind(id),
+    env.GLOBAL_MARKET_D1.prepare('DELETE FROM backups WHERE company_id = ?').bind(id)
+  ]);
+}
+
+async function migrateToCompanyIsolation(env) {
+  await ensureDB(env);
+  const existingCatalog = await readStateRecord(env, CATALOG_STATE_KEY, CATALOG_STATE_ID);
+  if (existingCatalog) return normalizeCatalog(existingCatalog);
+
+  const legacy = await readLegacyState(env) || defaultState();
+  const credentialsMigrated = await migrateLegacyCredentials(env, legacy);
+  const catalog = normalizeCatalog({ companies: legacy.companies, users: legacy.users, app: legacy.app });
+  catalog.app.migratedFrom = LEGACY_STATE_ID;
+  catalog.app.migratedAt = new Date().toISOString();
+
+  const writtenCatalog = await writeCatalog(env, catalog, null, true);
+  for (const company of writtenCatalog.state.companies) {
+    const shard = buildCompanyStateFromAggregate(legacy, company.id, writtenCatalog.state);
+    await writeCompanyState(env, company.id, shard, null, true, writtenCatalog.state);
+  }
+  await env.GLOBAL_MARKET_KV.put(STORAGE_MIGRATION_KEY, JSON.stringify({
+    completedAt: new Date().toISOString(),
+    companyCount: writtenCatalog.state.companies.length,
+    credentialsMigrated: Boolean(credentialsMigrated),
+    legacyKeyPreserved: LEGACY_STATE_KEY
+  }));
+  return writtenCatalog.state;
+}
+
+async function loadCatalog(env) {
+  await ensureDB(env);
+  let catalog = await readStateRecord(env, CATALOG_STATE_KEY, CATALOG_STATE_ID);
+  if (!catalog) catalog = await migrateToCompanyIsolation(env);
+  catalog = normalizeCatalog(catalog);
+  const migrated = await migrateLegacyCredentials(env, catalog);
+  if (migrated) catalog = (await writeCatalog(env, catalog, storageRevision(catalog), true)).state;
+  return catalog;
+}
+
+async function loadCompanyState(env, companyId, providedCatalog = null) {
+  const id = String(companyId || '').trim();
+  const catalog = providedCatalog || await loadCatalog(env);
+  if (!(catalog.companies || []).some(company => company?.id === id)) throw new HttpError(404, 'Entreprise introuvable.', 'COMPANY_NOT_FOUND');
+  let shard = await readStateRecord(env, companyStateKey(id), id);
+  if (!shard) {
+    const legacy = await readLegacyState(env);
+    shard = legacy ? buildCompanyStateFromAggregate(legacy, id, catalog) : normalizeCompanyState({}, id, catalog);
+    shard = (await writeCompanyState(env, id, shard, null, true, catalog)).state;
+  }
+  return normalizeCompanyState(shard, id, catalog);
+}
+
+async function loadAggregateState(env) {
+  const catalog = await loadCatalog(env);
+  const aggregate = normalizeState({
+    companies: catalog.companies,
+    users: catalog.users,
+    app: { ...(catalog.app || {}), storageScope: 'aggregate', catalogRevision: storageRevision(catalog), companyRevisions: {} }
+  });
+  const shards = await Promise.all((catalog.companies || []).map(company => loadCompanyState(env, company.id, catalog)));
+  shards.forEach((shard, index) => mergeCompanyStateIntoAggregate(aggregate, shard, catalog.companies[index].id));
+  return aggregate;
 }
 
 async function loadState(env) {
-  await ensureDB(env);
-  let state = parseState(await env.GLOBAL_MARKET_KV.get(STATE_KEY));
-  if (!state) state = await readD1State(env, STATE_ID);
-  if (!state) state = defaultState();
-  state = normalizeState(state);
-  const migrated = await migrateLegacyCredentials(env, state);
-  if (migrated || !(await env.GLOBAL_MARKET_KV.get(STATE_KEY))) await saveState(env, state);
-  return state;
+  return loadAggregateState(env);
+}
+
+async function saveCompanyFromState(env, state, companyId, options = {}) {
+  const id = String(companyId || '').trim();
+  const catalog = options.catalog || await loadCatalog(env);
+  const expectedRevision = options.expectedRevision ?? (state?.app?.storageScope === 'company'
+    ? storageRevision(state)
+    : Number(state?.app?.companyRevisions?.[id] ?? 0));
+  const shard = buildCompanyStateFromAggregate(state, id, catalog);
+  const saved = await writeCompanyState(env, id, shard, expectedRevision, Boolean(options.force), catalog);
+  if (state?.app?.storageScope === 'company') state.app.storageRevision = saved.state.app.storageRevision;
+  if (state?.app?.companyRevisions) state.app.companyRevisions[id] = saved.state.app.storageRevision;
+  return saved;
+}
+
+async function syncCatalogCompanyAndUsers(env, state, companyId, options = {}) {
+  const id = String(companyId || '').trim();
+  const current = options.catalog || await loadCatalog(env);
+  const next = normalizeCatalog(current);
+  if (options.company !== false) {
+    const incomingCompany = (state.companies || []).find(company => company?.id === id);
+    const index = next.companies.findIndex(company => company?.id === id);
+    if (incomingCompany && index >= 0) next.companies[index] = cleanClone(incomingCompany);
+    else if (incomingCompany) next.companies.push(cleanClone(incomingCompany));
+  }
+  if (options.users) {
+    next.users = next.users.filter(user => user?.role === 'superadmin' || user?.companyId !== id);
+    next.users.push(...(state.users || []).filter(user => user?.companyId === id && user.role !== 'superadmin').map(cleanClone));
+  }
+  return writeCatalog(env, next, storageRevision(current), Boolean(options.force));
+}
+
+async function persistCatalogIdentityToCompany(env, companyId, catalog) {
+  const latest = await loadCompanyState(env, companyId, catalog);
+  return writeCompanyState(env, companyId, latest, storageRevision(latest), false, catalog);
+}
+
+async function saveSuperAdminState(env, incoming, currentAggregate) {
+  if (containsCredentialFields(incoming)) throw new HttpError(400, 'Les mots de passe ne doivent jamais être enregistrés dans les données de l’application.', 'CREDENTIALS_IN_STATE');
+  const catalog = await loadCatalog(env);
+  const nextCatalog = normalizeCatalog(catalog);
+  const changedCompanyIds = new Set();
+  const incomingCompanies = Array.isArray(incoming.companies) ? incoming.companies : [];
+
+  for (const incomingCompany of incomingCompanies) {
+    const index = nextCatalog.companies.findIndex(company => company.id === incomingCompany.id);
+    if (index < 0) continue;
+    const currentCompany = nextCatalog.companies[index];
+    const nextCompany = { ...currentCompany, ...cleanClone(incomingCompany), id: currentCompany.id };
+    if (JSON.stringify(currentCompany) !== JSON.stringify(nextCompany)) {
+      nextCatalog.companies[index] = nextCompany;
+      changedCompanyIds.add(currentCompany.id);
+    }
+  }
+
+  const paymentCompanyIds = new Set();
+  if (Array.isArray(incoming.payments)) {
+    for (const company of nextCatalog.companies) {
+      const before = (currentAggregate?.payments || []).filter(row => row?.companyId === company.id);
+      const after = incoming.payments.filter(row => row?.companyId === company.id);
+      if (JSON.stringify(before) !== JSON.stringify(after)) paymentCompanyIds.add(company.id);
+    }
+  }
+
+  const savedCatalog = changedCompanyIds.size
+    ? await writeCatalog(env, nextCatalog, storageRevision(catalog))
+    : { state: catalog, d1: null };
+
+  for (const companyId of new Set([...changedCompanyIds, ...paymentCompanyIds])) {
+    const currentShard = await loadCompanyState(env, companyId, savedCatalog.state);
+    const company = savedCatalog.state.companies.find(item => item.id === companyId);
+    if (company) currentShard.companies = [cleanClone(company)];
+    if (paymentCompanyIds.has(companyId)) currentShard.payments = incoming.payments.filter(row => row?.companyId === companyId).map(cleanClone);
+    await writeCompanyState(env, companyId, currentShard, storageRevision(currentShard), false, savedCatalog.state);
+  }
+
+  return {
+    state: await loadAggregateState(env),
+    d1: { isolatedCompaniesUpdated: new Set([...changedCompanyIds, ...paymentCompanyIds]).size }
+  };
 }
 
 async function ensureSuperAdminCredential(env, state) {
@@ -655,8 +957,8 @@ async function getEmployeeSession(request, env, requireCsrf = false) {
     const csrf = request.headers.get('X-CSRF-Token') || '';
     if (!csrf || !constantTimeEqual(csrf, session.csrfToken)) throw new HttpError(403, 'Jeton de sécurité invalide.', 'CSRF_REJECTED');
   }
-  const state = await loadState(env);
-  const user = state.users.find(u => u.id === session.userId);
+  const catalog = await loadCatalog(env);
+  const user = catalog.users.find(u => u.id === session.userId);
   const auth = user ? await getAuth(env, user.id) : null;
   if (!user || user.status !== 'active' || !auth || Number(auth.version) !== Number(session.authVersion)) {
     await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);
@@ -666,7 +968,10 @@ async function getEmployeeSession(request, env, requireCsrf = false) {
     await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);
     throw new HttpError(401, 'Session incohérente.', 'SESSION_INVALIDATED');
   }
-  return { sid, session, state, user, auth };
+  const state = user.role === 'superadmin'
+    ? await loadAggregateState(env)
+    : await loadCompanyState(env, user.companyId, catalog);
+  return { sid, session, state, user, auth, catalog };
 }
 
 async function createClientSession(env, client, auth) {
@@ -692,11 +997,12 @@ async function getClientSession(request, env, requireCsrf = false) {
     const csrf = request.headers.get('X-CSRF-Token') || '';
     if (!csrf || !constantTimeEqual(csrf, session.csrfToken)) throw new HttpError(403, 'Jeton de sécurité client invalide.', 'CSRF_REJECTED');
   }
-  const state = await loadState(env);
+  const catalog = await loadCatalog(env);
+  const state = await loadCompanyState(env, session.companyId, catalog);
   const client = state.marketClients.find(c => c.id === session.clientId && c.companyId === session.companyId);
   const auth = client ? await getClientAuth(env, client.id) : null;
   if (!client || !auth || Number(auth.version) !== Number(session.authVersion)) throw new HttpError(401, 'Session client invalidée.', 'CLIENT_SESSION_INVALIDATED');
-  return { sid, session, state, client, auth };
+  return { sid, session, state, client, auth, catalog };
 }
 
 function requireRole(user, roles) {
@@ -835,7 +1141,8 @@ async function handleDeleteCompany(request, env) {
   requireRole(ctx.user, ['superadmin']);
   const body = await readJson(request, 30_000);
   const companyId = String(body.companyId || '').trim();
-  const company = ctx.state.companies.find(item => item?.id === companyId);
+  const catalog = await loadCatalog(env);
+  const company = catalog.companies.find(item => item?.id === companyId);
   if (!company) throw new HttpError(404, 'Entreprise introuvable.', 'COMPANY_NOT_FOUND');
 
   const expectedName = String(company.name || '').trim();
@@ -844,8 +1151,9 @@ async function handleDeleteCompany(request, env) {
     throw new HttpError(400, 'Confirmation de suppression incorrecte.', 'DELETE_CONFIRMATION_INVALID');
   }
 
-  const companyUsers = (ctx.state.users || []).filter(user => user?.companyId === companyId && user.role !== 'superadmin');
-  const companyClients = (ctx.state.marketClients || []).filter(client => client?.companyId === companyId);
+  const companyState = await loadCompanyState(env, companyId, catalog);
+  const companyUsers = catalog.users.filter(user => user?.companyId === companyId && user.role !== 'superadmin');
+  const companyClients = (companyState.marketClients || []).filter(client => client?.companyId === companyId);
 
   for (const user of companyUsers) {
     const auth = await getAuth(env, user.id);
@@ -859,8 +1167,10 @@ async function handleDeleteCompany(request, env) {
     await env.GLOBAL_MARKET_KV.delete(clientAuthKey(client.id));
   }
 
-  removeCompanyDataFromState(ctx.state, companyId);
-  const saved = await saveState(env, ctx.state);
+  catalog.companies = catalog.companies.filter(item => item.id !== companyId);
+  catalog.users = catalog.users.filter(user => user.role === 'superadmin' || user.companyId !== companyId);
+  await writeCatalog(env, catalog, storageRevision(catalog));
+  await deleteCompanyStateRecord(env, companyId);
   await deleteKvSessionsForCompany(env, companyId);
   await audit(
     env,
@@ -871,11 +1181,12 @@ async function handleDeleteCompany(request, env) {
     requestIp(request)
   );
 
+  const state = await loadAggregateState(env);
   return json({
     success: true,
     message: `Le compte entreprise « ${expectedName} » a été supprimé.`,
     deleted: { companyId, companyName: expectedName, users: companyUsers.length, marketClients: companyClients.length },
-    data: scopeState(saved.state, ctx.user)
+    data: scopeState(state, ctx.user)
   });
 }
 
@@ -933,11 +1244,11 @@ async function handleLogin(request, env) {
   if (!identifier || !password) throw new HttpError(400, 'Identifiant et mot de passe obligatoires.', 'MISSING_CREDENTIALS');
   const ip = requestIp(request);
   const rate = await assertLoginRateAllowed(env, ip, identifier);
-  const state = await loadState(env);
+  const catalog = await loadCatalog(env);
   const superIdentifier = configuredSuperAdminIdentifier(env);
-  if (superIdentifier && identifier === superIdentifier) await ensureSuperAdminCredential(env, state);
+  if (superIdentifier && identifier === superIdentifier) await ensureSuperAdminCredential(env, catalog);
   const indexedId = await env.GLOBAL_MARKET_KV.get(authIndexKey(identifier));
-  const user = state.users.find(u => u.id === indexedId) || state.users.find(u => normalizeIdentifier(u.email || u.username) === identifier);
+  const user = catalog.users.find(u => u.id === indexedId) || catalog.users.find(u => normalizeIdentifier(u.email || u.username) === identifier);
   const auth = user ? await getAuth(env, user.id) : null;
   const valid = user && user.status === 'active' && await verifyCredential(auth, password);
   if (!valid) {
@@ -950,12 +1261,15 @@ async function handleLogin(request, env) {
   if (requestedRole === 'admin' && !['admin', 'superadmin'].includes(user.role)) throw new HttpError(403, 'Profil incorrect : sélectionnez La Caisse.', 'ROLE_MISMATCH');
   if (user.role === 'caisse' && !isCashierInAllowedHours(user)) throw new HttpError(403, 'Accès caisse refusé hors de la plage horaire autorisée.', 'OUTSIDE_ALLOWED_HOURS');
   if (user.companyId) {
-    const company = state.companies.find(c => c.id === user.companyId);
+    const company = catalog.companies.find(c => c.id === user.companyId);
     const status = companyStatus(company);
     if (['expired', 'blocked', 'suspended'].includes(status)) throw new HttpError(403, `Accès entreprise ${status}.`, 'COMPANY_ACCESS_BLOCKED');
   }
   await clearLoginRate(env, rate);
   const created = await createEmployeeSession(env, user, auth);
+  const state = user.role === 'superadmin'
+    ? await loadAggregateState(env)
+    : await loadCompanyState(env, user.companyId, catalog);
   await audit(env, 'LOGIN_SUCCESS', user.id, user.companyId, 'Connexion réussie', ip);
   return json({
     success: true,
@@ -978,8 +1292,8 @@ async function handleRegisterCompany(request, env) {
   const email = normalizeIdentifier(body.email);
   const password = validatePassword(body.password, 'admin');
   if (!name || !email) throw new HttpError(400, 'Raison sociale et e-mail obligatoires.', 'MISSING_FIELDS');
-  const state = await loadState(env);
-  if (await env.GLOBAL_MARKET_KV.get(authIndexKey(email)) || state.users.some(u => normalizeIdentifier(u.email) === email)) {
+  const catalog = await loadCatalog(env);
+  if (await env.GLOBAL_MARKET_KV.get(authIndexKey(email)) || catalog.users.some(u => normalizeIdentifier(u.email) === email)) {
     throw new HttpError(409, 'Cet e-mail est déjà utilisé.', 'EMAIL_EXISTS');
   }
   const cid = `ent_${crypto.randomUUID()}`;
@@ -996,10 +1310,24 @@ async function handleRegisterCompany(request, env) {
     createdAt: now.toISOString(), notes: '', shopSlug: slug, shopBanner: 'Boutique officielle', shopColor: '#024644'
   };
   const user = { id: uid, companyId: cid, name: company.owner || 'Administrateur principal', email, role: 'admin', status: 'active', createdAt: now.toISOString(), mainAdmin: true };
-  state.companies.push(company);
-  state.users.push(user);
+
+  const nextCatalog = normalizeCatalog(catalog);
+  nextCatalog.companies.push(company);
+  nextCatalog.users.push(user);
   await writeUserCredential(env, user, password);
-  const saved = await saveState(env, state);
+  let savedCatalog;
+  try {
+    savedCatalog = await writeCatalog(env, nextCatalog, storageRevision(catalog));
+    const initialState = normalizeCompanyState({ companies: [company], users: [user], app: { initializedAt: now.toISOString() } }, cid, savedCatalog.state);
+    await writeCompanyState(env, cid, initialState, 0, true, savedCatalog.state);
+  } catch (error) {
+    const auth = await getAuth(env, user.id);
+    if (auth?.identifier) await env.GLOBAL_MARKET_KV.delete(authIndexKey(auth.identifier));
+    await env.GLOBAL_MARKET_KV.delete(authKey(user.id));
+    throw error;
+  }
+
+  const state = await loadCompanyState(env, cid, savedCatalog.state);
   const auth = await getAuth(env, user.id);
   const created = await createEmployeeSession(env, user, auth);
   await env.GLOBAL_MARKET_KV.put(rateKey, JSON.stringify({ count: (rec.count || 0) + 1, resetAt: Date.now() + 3600000 }), { expirationTtl: 3600 });
@@ -1007,7 +1335,7 @@ async function handleRegisterCompany(request, env) {
   return json({
     success: true,
     session: publicSessionView(created.session),
-    data: scopeState(saved.state, user)
+    data: scopeState(state, user)
   }, {
     status: 201,
     headers: { 'Set-Cookie': setCookie(EMPLOYEE_SESSION_COOKIE, created.sid, created.ttl) }
@@ -1023,7 +1351,17 @@ async function handlePasswordChange(request, env) {
   }
   await writeUserCredential(env, ctx.user, newPassword, { mustChangePassword: false });
   ctx.user.mustChangePassword = false;
-  await saveState(env, ctx.state);
+
+  if (ctx.user.role === 'superadmin') {
+    const catalog = await loadCatalog(env);
+    const target = catalog.users.find(user => user.id === ctx.user.id);
+    if (target) target.mustChangePassword = false;
+    await writeCatalog(env, catalog, storageRevision(catalog));
+  } else {
+    const catalogResult = await syncCatalogCompanyAndUsers(env, ctx.state, ctx.user.companyId, { users: true });
+    await saveCompanyFromState(env, ctx.state, ctx.user.companyId, { catalog: catalogResult.state });
+  }
+
   await env.GLOBAL_MARKET_KV.delete(`session:${ctx.sid}`);
   await audit(env, 'PASSWORD_CHANGED', ctx.user.id, ctx.user.companyId, 'Toutes les sessions ont été invalidées', requestIp(request));
   return json({ success: true, reloginRequired: true }, {
@@ -1040,9 +1378,10 @@ async function handlePasswordResetRequest(request, env) {
   const key = `rate:reset-request:${await rateKeyHash(`${ip}:${identifier}`)}`;
   const rec = await getRateRecord(env, key);
   if (rec.resetAt > Date.now() && rec.count >= 3) throw new HttpError(429, 'Trop de demandes. Réessayez plus tard.', 'RATE_LIMITED');
-  const state = await loadState(env);
-  const user = state.users.find(u => normalizeIdentifier(u.email || u.username) === identifier);
-  if (user && user.role !== 'superadmin' && user.role === role) {
+  const catalog = await loadCatalog(env);
+  const user = catalog.users.find(u => normalizeIdentifier(u.email || u.username) === identifier);
+  if (user && user.role !== 'superadmin' && user.role === role && user.companyId) {
+    const state = await loadCompanyState(env, user.companyId, catalog);
     state.passwordResetRequests = state.passwordResetRequests || [];
     if (!state.passwordResetRequests.some(r => r.userId === user.id && r.status === 'pending')) {
       state.passwordResetRequests.push({
@@ -1050,7 +1389,7 @@ async function handlePasswordResetRequest(request, env) {
         email: user.email, role: user.role, phone: String(body.phone || ''), reason: String(body.reason || 'Mot de passe oublié'),
         status: 'pending', createdAt: new Date().toISOString()
       });
-      await saveState(env, state);
+      await saveCompanyFromState(env, state, user.companyId, { catalog });
     }
   }
   await env.GLOBAL_MARKET_KV.put(key, JSON.stringify({ count: (rec.count || 0) + 1, resetAt: Date.now() + 3600000 }), { expirationTtl: 3600 });
@@ -1061,22 +1400,25 @@ async function handleCreateUser(request, env) {
   const ctx = await getEmployeeSession(request, env, true);
   requireRole(ctx.user, ['admin', 'superadmin']);
   const body = await readJson(request, 50_000);
+  const catalog = await loadCatalog(env);
   const companyId = ctx.user.role === 'superadmin' ? String(body.companyId || '') : ctx.user.companyId;
-  const company = ctx.state.companies.find(c => c.id === companyId);
+  const company = catalog.companies.find(c => c.id === companyId);
   if (!company) throw new HttpError(404, 'Entreprise introuvable.', 'COMPANY_NOT_FOUND');
   const role = body.role === 'admin' ? 'admin' : 'caisse';
   const email = normalizeIdentifier(body.email);
   const password = validatePassword(body.password, role);
   if (!email) throw new HttpError(400, 'E-mail obligatoire.', 'MISSING_EMAIL');
-  if (await env.GLOBAL_MARKET_KV.get(authIndexKey(email)) || ctx.state.users.some(u => normalizeIdentifier(u.email) === email)) throw new HttpError(409, 'Cet e-mail est déjà utilisé.', 'EMAIL_EXISTS');
+  if (await env.GLOBAL_MARKET_KV.get(authIndexKey(email)) || catalog.users.some(u => normalizeIdentifier(u.email) === email)) throw new HttpError(409, 'Cet e-mail est déjà utilisé.', 'EMAIL_EXISTS');
   const user = {
     id: `usr_${crypto.randomUUID()}`, companyId, name: String(body.name || ''), email, role, status: 'active',
     sessionMinutes: 0, caisseStartTime: role === 'caisse' ? String(body.caisseStartTime || '07:00') : '',
     caisseEndTime: role === 'caisse' ? String(body.caisseEndTime || '22:00') : '', createdAt: new Date().toISOString()
   };
-  ctx.state.users.push(user);
   await writeUserCredential(env, user, password, { mustChangePassword: Boolean(body.mustChangePassword) });
-  await saveState(env, ctx.state);
+  const nextCatalog = normalizeCatalog(catalog);
+  nextCatalog.users.push(user);
+  const savedCatalog = await writeCatalog(env, nextCatalog, storageRevision(catalog));
+  await persistCatalogIdentityToCompany(env, companyId, savedCatalog.state);
   await audit(env, 'USER_CREATED', ctx.user.id, companyId, user.id, requestIp(request));
   return json({ success: true, user: cleanClone(user) }, { status: 201 });
 }
@@ -1085,12 +1427,13 @@ async function handleUpdateUser(request, env) {
   const ctx = await getEmployeeSession(request, env, true);
   requireRole(ctx.user, ['admin', 'superadmin']);
   const body = await readJson(request, 50_000);
-  const target = ctx.state.users.find(u => u.id === body.userId);
+  const catalog = await loadCatalog(env);
+  const target = catalog.users.find(u => u.id === body.userId);
   if (!target || target.role === 'superadmin') throw new HttpError(404, 'Utilisateur introuvable.', 'USER_NOT_FOUND');
   if (ctx.user.role !== 'superadmin' && target.companyId !== ctx.user.companyId) throw new HttpError(403, 'Utilisateur hors de votre entreprise.', 'FORBIDDEN');
   const oldEmail = normalizeIdentifier(target.email);
   const newEmail = normalizeIdentifier(body.email || target.email);
-  if (newEmail !== oldEmail && (await env.GLOBAL_MARKET_KV.get(authIndexKey(newEmail)) || ctx.state.users.some(u => u.id !== target.id && normalizeIdentifier(u.email) === newEmail))) {
+  if (newEmail !== oldEmail && (await env.GLOBAL_MARKET_KV.get(authIndexKey(newEmail)) || catalog.users.some(u => u.id !== target.id && normalizeIdentifier(u.email) === newEmail))) {
     throw new HttpError(409, 'Cet e-mail est déjà utilisé.', 'EMAIL_EXISTS');
   }
   if (body.name !== undefined) target.name = String(body.name);
@@ -1115,7 +1458,8 @@ async function handleUpdateUser(request, env) {
     await env.GLOBAL_MARKET_KV.put(authKey(target.id), JSON.stringify(auth));
   }
   target.mustChangePassword = body.password ? Boolean(body.mustChangePassword) : Boolean(body.mustChangePassword ?? target.mustChangePassword);
-  await saveState(env, ctx.state);
+  const savedCatalog = await writeCatalog(env, catalog, storageRevision(catalog));
+  await persistCatalogIdentityToCompany(env, target.companyId, savedCatalog.state);
   await audit(env, 'USER_UPDATED', ctx.user.id, target.companyId, target.id, requestIp(request));
   return json({ success: true, user: cleanClone(target) });
 }
@@ -1124,16 +1468,18 @@ async function handleDeleteUser(request, env) {
   const ctx = await getEmployeeSession(request, env, true);
   requireRole(ctx.user, ['admin', 'superadmin']);
   const body = await readJson(request, 20_000);
-  const target = ctx.state.users.find(u => u.id === body.userId);
+  const catalog = await loadCatalog(env);
+  const target = catalog.users.find(u => u.id === body.userId);
   if (!target || target.role === 'superadmin' || target.id === ctx.user.id) throw new HttpError(400, 'Suppression de cet utilisateur refusée.', 'DELETE_REFUSED');
   if (ctx.user.role !== 'superadmin' && target.companyId !== ctx.user.companyId) throw new HttpError(403, 'Utilisateur hors de votre entreprise.', 'FORBIDDEN');
-  const remaining = ctx.state.users.filter(u => u.companyId === target.companyId && u.id !== target.id);
+  const remaining = catalog.users.filter(u => u.companyId === target.companyId && u.id !== target.id);
   if (!remaining.length) throw new HttpError(400, 'Impossible de supprimer le dernier utilisateur.', 'LAST_USER');
   const auth = await getAuth(env, target.id);
   if (auth?.identifier) await env.GLOBAL_MARKET_KV.delete(authIndexKey(auth.identifier));
   await env.GLOBAL_MARKET_KV.delete(authKey(target.id));
-  ctx.state.users = ctx.state.users.filter(u => u.id !== target.id);
-  await saveState(env, ctx.state);
+  catalog.users = catalog.users.filter(u => u.id !== target.id);
+  const savedCatalog = await writeCatalog(env, catalog, storageRevision(catalog));
+  await persistCatalogIdentityToCompany(env, target.companyId, savedCatalog.state);
   await audit(env, 'USER_DELETED', ctx.user.id, target.companyId, target.id, requestIp(request));
   return json({ success: true });
 }
@@ -1142,7 +1488,8 @@ async function handleResetUserPassword(request, env) {
   const ctx = await getEmployeeSession(request, env, true);
   requireRole(ctx.user, ['admin', 'superadmin']);
   const body = await readJson(request, 30_000);
-  const target = ctx.state.users.find(u => u.id === body.userId);
+  const catalog = await loadCatalog(env);
+  const target = catalog.users.find(u => u.id === body.userId);
   if (!target || target.role === 'superadmin') throw new HttpError(404, 'Utilisateur introuvable.', 'USER_NOT_FOUND');
   if (ctx.user.role === 'admin' && (target.companyId !== ctx.user.companyId || target.role !== 'caisse')) {
     throw new HttpError(403, 'Un administrateur d’entreprise peut réinitialiser uniquement un compte Caisse de son entreprise.', 'FORBIDDEN');
@@ -1152,13 +1499,16 @@ async function handleResetUserPassword(request, env) {
   await writeUserCredential(env, target, tempPassword, { mustChangePassword: true });
   target.status = 'active';
   target.mustChangePassword = true;
+  const companyState = await loadCompanyState(env, target.companyId, catalog);
   if (body.requestId) {
-    const reset = (ctx.state.passwordResetRequests || []).find(r => r.id === body.requestId && r.userId === target.id);
+    const reset = (companyState.passwordResetRequests || []).find(r => r.id === body.requestId && r.userId === target.id);
     if (reset) {
       reset.status = 'done'; reset.doneAt = new Date().toISOString(); reset.doneBy = ctx.user.id;
     }
   }
-  await saveState(env, ctx.state);
+  const savedCatalog = await writeCatalog(env, catalog, storageRevision(catalog));
+  companyState.users = savedCatalog.state.users.filter(user => user.companyId === target.companyId && user.role !== 'superadmin');
+  await writeCompanyState(env, target.companyId, companyState, storageRevision(companyState), false, savedCatalog.state);
   await audit(env, 'PASSWORD_RESET', ctx.user.id, target.companyId, target.id, requestIp(request));
   return json({ success: true, temporaryPassword: tempPassword });
 }
@@ -1166,9 +1516,10 @@ async function handleResetUserPassword(request, env) {
 async function handlePublicClientRegister(request, env) {
   assertSameOrigin(request);
   const body = await readJson(request, 50_000);
-  const state = await loadState(env);
   const companyId = String(body.companyId || '');
-  if (!state.companies.some(c => c.id === companyId)) throw new HttpError(404, 'Boutique introuvable.', 'COMPANY_NOT_FOUND');
+  const catalog = await loadCatalog(env);
+  if (!catalog.companies.some(c => c.id === companyId)) throw new HttpError(404, 'Boutique introuvable.', 'COMPANY_NOT_FOUND');
+  const state = await loadCompanyState(env, companyId, catalog);
   const name = String(body.name || '').trim();
   const phone = normalizePhone(body.phone);
   const email = normalizeIdentifier(body.email);
@@ -1178,7 +1529,7 @@ async function handlePublicClientRegister(request, env) {
   const client = { id: `clt_${crypto.randomUUID()}`, companyId, name, phone, email, createdAt: new Date().toISOString() };
   state.marketClients.push(client);
   await writeClientCredential(env, client, password);
-  await saveState(env, state);
+  await saveCompanyFromState(env, state, companyId, { catalog });
   const created = await createClientSession(env, client, await getClientAuth(env, client.id));
   return json({ success: true, client: cleanClone(client), session: publicClientSessionView(created.session) }, {
     status: 201,
@@ -1194,7 +1545,9 @@ async function handlePublicClientLogin(request, env) {
   const password = String(body.password || '');
   const ip = requestIp(request);
   const rate = await assertLoginRateAllowed(env, ip, `client:${companyId}:${phone}`);
-  const state = await loadState(env);
+  const catalog = await loadCatalog(env);
+  if (!catalog.companies.some(company => company.id === companyId)) throw new HttpError(404, 'Boutique introuvable.', 'COMPANY_NOT_FOUND');
+  const state = await loadCompanyState(env, companyId, catalog);
   const clientId = await env.GLOBAL_MARKET_KV.get(clientIndexKey(companyId, phone));
   const client = state.marketClients.find(c => c.id === clientId && c.companyId === companyId);
   const auth = client ? await getClientAuth(env, client.id) : null;
@@ -1244,7 +1597,7 @@ async function handlePublicOrder(request, env) {
     delivery: 'En attente de validation', source: 'lot panier boutique client'
   };
   ctx.state.orders.push(order);
-  await saveState(env, ctx.state);
+  await saveCompanyFromState(env, ctx.state, ctx.client.companyId, { catalog: ctx.catalog });
   return json({ success: true, order: cleanClone(order) }, { status: 201 });
 }
 
@@ -1260,7 +1613,7 @@ async function handlePublicOrderDelete(request, env) {
   ctx.state.clientDeletedOrders = ctx.state.clientDeletedOrders || {};
   ctx.state.clientDeletedOrders[ctx.client.id] = ctx.state.clientDeletedOrders[ctx.client.id] || [];
   if (!ctx.state.clientDeletedOrders[ctx.client.id].includes(order.id)) ctx.state.clientDeletedOrders[ctx.client.id].push(order.id);
-  await saveState(env, ctx.state);
+  await saveCompanyFromState(env, ctx.state, ctx.client.companyId, { catalog: ctx.catalog });
   return json({ success: true });
 }
 
@@ -1269,10 +1622,10 @@ async function handleApi(request, env) {
   const url = new URL(request.url);
   try {
     if (url.pathname === '/api/health' && request.method === 'GET') {
-      const state = await loadState(env);
+      const catalog = await loadCatalog(env);
       const auth = await getAuth(env, SUPER_ADMIN_ID);
       return json({
-        ok: true, app: APP_NAME, kv: true, d1: true,
+        ok: true, app: APP_NAME, kv: true, d1: true, storageVersion: STORAGE_VERSION, isolatedCompanies: catalog.companies.length,
         securityInitialized: Boolean(auth?.hash),
         setupRequired: !auth?.hash,
         superAdminEmailConfigured: Boolean(configuredSuperAdminIdentifier(env)),
@@ -1315,9 +1668,35 @@ async function handleApi(request, env) {
       const ctx = await getEmployeeSession(request, env, true);
       const body = await readJson(request);
       const incoming = body.data && typeof body.data === 'object' ? body.data : body;
+      if (ctx.user.role === 'superadmin') {
+        const incomingCatalogRevision = Number(incoming?.app?.catalogRevision ?? incoming?.app?.storageRevision ?? -1);
+        const currentCatalogRevision = Number(ctx.state?.app?.catalogRevision ?? -1);
+        if (incomingCatalogRevision >= 0 && incomingCatalogRevision !== currentCatalogRevision) {
+          throw new HttpError(409, 'La gestion Super Admin a été modifiée ailleurs. Actualisez avant de recommencer.', 'CATALOG_CONFLICT');
+        }
+        const result = await saveSuperAdminState(env, incoming, ctx.state);
+        return json({ success: true, message: 'Sauvegarde Super Admin isolée par entreprise.', d1: result.d1, catalogRevision: result.state.app.catalogRevision });
+      }
+      const incomingRevision = Number(incoming?.app?.storageRevision ?? -1);
+      const currentRevision = storageRevision(ctx.state);
+      if (incomingRevision >= 0 && incomingRevision !== currentRevision) {
+        throw new HttpError(409, 'Les données de cette entreprise ont été modifiées sur un autre appareil. Actualisez la page avant de recommencer.', 'COMPANY_DATA_CONFLICT');
+      }
       const merged = mergeScopedState(ctx.state, incoming, ctx.user);
-      const result = await saveState(env, merged);
-      return json({ success: true, message: 'Sauvegarde sécurisée effectuée dans KV et D1.', d1: result.d1 });
+      let catalog = ctx.catalog || await loadCatalog(env);
+      if (ctx.user.role === 'admin') {
+        const incomingCompany = (merged.companies || []).find(company => company.id === ctx.user.companyId);
+        const currentCompany = catalog.companies.find(company => company.id === ctx.user.companyId);
+        if (incomingCompany && currentCompany) {
+          const nextCompany = safeCompanyUpdate(currentCompany, incomingCompany);
+          if (JSON.stringify(currentCompany) !== JSON.stringify(nextCompany)) {
+            Object.assign(currentCompany, nextCompany);
+            catalog = (await writeCatalog(env, catalog, storageRevision(catalog))).state;
+          }
+        }
+      }
+      const result = await saveCompanyFromState(env, merged, ctx.user.companyId, { catalog, expectedRevision: incomingRevision >= 0 ? incomingRevision : currentRevision });
+      return json({ success: true, message: 'Sauvegarde isolée de l’entreprise effectuée dans KV et D1.', d1: result.d1, revision: result.state.app.storageRevision });
     }
 
     if (url.pathname === '/api/companies/delete' && request.method === 'POST') return await handleDeleteCompany(request, env);

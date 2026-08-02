@@ -34,6 +34,7 @@ public/
 scripts/
   build.mjs
   validate.mjs
+  test-isolation.mjs
 package.json
 wrangler.json
 README.md
@@ -51,6 +52,7 @@ Worker      : public/_worker.js
 
 ```bash
 npm install
+npm run validate
 npm run build
 npm run dev
 npm run deploy
@@ -174,3 +176,16 @@ Répertoire racine : vide
 - le nom du programme affiché reste **GLOBAL MARKET** ;
 - le nom de l’entreprise connectée apparaît comme espace entreprise dynamique ;
 - aucune modification de la connexion, de l’inscription, du Super Admin, de KV, de D1 ou du Worker de sécurité.
+
+## Version 4.0.0 — Isolation réelle des entreprises
+
+- aucune nouvelle ressource KV ou D1 n’est nécessaire ;
+- création d’un catalogue global léger dans le KV existant ;
+- création d’un état séparé pour chaque `company_id` dans le KV et D1 existants ;
+- migration automatique depuis `company:global_market_all` ;
+- conservation de l’ancien état comme sauvegarde historique en lecture seule ;
+- détection des sauvegardes obsolètes avec réponse `409 COMPANY_DATA_CONFLICT` ;
+- sérialisation des sauvegardes dans le navigateur ;
+- le Super Admin ne réécrit plus les données opérationnelles de toutes les entreprises à chaque modification.
+
+Documentation détaillée : `README_ISOLATION_MULTI_ENTREPRISES_4_0.md`.
