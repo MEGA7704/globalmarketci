@@ -96,7 +96,10 @@ const targetedSaleChecks = [
   ['id="saleCartClientsServed"', 'champ Nb de Clients servis dans le formulaire de vente'],
   ['clientsServed,unit,total', 'enregistrement du nombre de clients servis'],
   ['r.clientsServed+=saleClientsServedValue(s)', 'comptabilisation dans le bilan détaillé'],
-  ['initFlexibleHorizontalMenu', 'menu horizontal flexible au défilement']
+  ['initFlexibleHorizontalMenu', 'menu horizontal flexible au défilement'],
+  ['saleProfessionalCart', 'panier professionnel intégré à la vente'],
+  ['ENCAISSER ET VALIDER', 'bouton d’encaissement du panier'],
+  ["saleStatus:'cart'", 'mise en attente des articles avant encaissement']
 ];
 for (const [needle, label] of targetedSaleChecks) {
   if (!app.includes(needle)) {

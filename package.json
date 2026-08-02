@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "private": true,
-  "description": "GLOBAL MARKET - ventes avec clients servis et menu horizontal flexible pour Cloudflare Pages, KV et D1.",
+  "description": "GLOBAL MARKET - panier professionnel dynamique intégré à la section Vente.",
   "type": "module",
   "engines": {
     "node": ">=20"
