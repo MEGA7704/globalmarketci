@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "private": true,
-  "description": "GLOBAL MARKET - isolation réelle des données par entreprise dans le KV et D1 existants, migration automatique et détection des conflits.",
+  "description": "GLOBAL MARKET - stockage métier normalisé dans D1, snapshots atomiques, migration automatique et isolation multi-entreprises sans nouveau KV.",
   "type": "module",
   "engines": {
     "node": ">=20"

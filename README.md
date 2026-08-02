@@ -189,3 +189,20 @@ Répertoire racine : vide
 - le Super Admin ne réécrit plus les données opérationnelles de toutes les entreprises à chaque modification.
 
 Documentation détaillée : `README_ISOLATION_MULTI_ENTREPRISES_4_0.md`.
+
+## Version 4.1.0 — Stockage métier D1 normalisé
+
+La version 4.1 remplace les gros états JSON par entreprise par des enregistrements stockés dans des tables D1 dédiées.
+
+Points principaux :
+
+- aucun nouveau KV ni nouveau D1 à créer ;
+- produits, ventes, paiements, commandes, clients et stocks séparés par table ;
+- snapshots atomiques avec révision par entreprise ;
+- migration automatique depuis les versions 4.0 et antérieures ;
+- ancien stockage conservé comme sauvegarde historique et non réécrit ;
+- gros enregistrements découpés en fragments D1 ;
+- conservation des dix derniers snapshots ;
+- initialisation du schéma mise en cache dans chaque instance Worker pour réduire la latence.
+
+Voir `README_STOCKAGE_D1_NORMALISE_4_1.md`.

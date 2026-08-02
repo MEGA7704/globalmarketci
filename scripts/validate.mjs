@@ -43,9 +43,13 @@ if (!worker.includes("url.pathname === '/api/save'")) {
 }
 
 const isolationChecks = [
-  ["CATALOG_STATE_KEY = 'state:catalog:v5'", 'catalogue global isolé'],
-  ["COMPANY_STATE_KEY_PREFIX = 'state:company:v5:'", 'clé indépendante par entreprise'],
-  ['saveCompanyFromState', 'sauvegarde ciblée par entreprise'],
+  ["CATALOG_STATE_KEY = 'state:catalog:v5'", 'catalogue global léger'],
+  ["STORAGE_VERSION = 6", 'version de stockage normalisé'],
+  ['COMPANY_ENTITY_TABLES', 'tables métiers D1 dédiées'],
+  ['gm_company_storage_meta', 'métadonnées et révisions par entreprise'],
+  ['gm_company_snapshots', 'snapshots atomiques par entreprise'],
+  ['writeNormalizedCompanyState', 'sauvegarde D1 par enregistrements'],
+  ['readNormalizedCompanyState', 'lecture D1 par enregistrements'],
   ['COMPANY_DATA_CONFLICT', 'détection des modifications concurrentes'],
   ['migrateToCompanyIsolation', 'migration automatique de l’ancien stockage'],
   ['legacyKeyPreserved', 'conservation de la sauvegarde historique']
@@ -62,6 +66,10 @@ if (!app.includes('CLOUD_SAVE_IN_FLIGHT') || !app.includes('CLOUD_SAVE_QUEUED'))
 }
 if (worker.includes('GLOBAL_MARKET_KV.put(LEGACY_STATE_KEY')) {
   console.error('[validate] L’ancien état global ne doit plus être réécrit.');
+  process.exit(1);
+}
+if (/GLOBAL_MARKET_KV\.put\(legacyCompanyStateKey/.test(worker)) {
+  console.error('[validate] Un gros état entreprise ne doit plus être écrit dans KV.');
   process.exit(1);
 }
 

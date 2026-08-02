@@ -3,8 +3,24 @@ const LEGACY_STATE_ID = 'global_market_all';
 const LEGACY_STATE_KEY = `company:${LEGACY_STATE_ID}`;
 const CATALOG_STATE_ID = '__global_market_catalog_v5__';
 const CATALOG_STATE_KEY = 'state:catalog:v5';
-const COMPANY_STATE_KEY_PREFIX = 'state:company:v5:';
-const STORAGE_VERSION = 5;
+const LEGACY_COMPANY_STATE_KEY_PREFIX = 'state:company:v5:';
+const STORAGE_VERSION = 6;
+const D1_RECORD_INLINE_MAX_BYTES = 400_000;
+const COMPANY_SNAPSHOT_RETENTION = 10;
+const DB_READY_PROMISES = new WeakMap();
+const COMPANY_ENTITY_TABLES = Object.freeze({
+  items: 'gm_products',
+  sales: 'gm_sales',
+  payments: 'gm_payments',
+  orders: 'gm_orders',
+  clients: 'gm_customers',
+  marketClients: 'gm_market_customers',
+  passwordResetRequests: 'gm_password_reset_requests',
+  stockEntries: 'gm_stock_entries',
+  stockOutputs: 'gm_stock_outputs',
+  stockMovements: 'gm_stock_movements',
+  caisseLogs: 'gm_cashier_logs'
+});
 const STORAGE_MIGRATION_KEY = 'migration:company-isolation:v5';
 const EMPLOYEE_SESSION_COOKIE = 'GLOBAL_MARKET_SESSION';
 const CLIENT_SESSION_COOKIE = 'GLOBAL_MARKET_CLIENT_SESSION';
@@ -247,7 +263,11 @@ async function verifyCredential(record, password) {
 
 async function ensureDB(env) {
   needBindings(env);
-  await env.GLOBAL_MARKET_D1.batch([
+  const binding = env.GLOBAL_MARKET_D1;
+  const existing = DB_READY_PROMISES.get(binding);
+  if (existing) return existing;
+  const initialization = (async () => {
+    const statements = [
     env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS state_meta (
       company_id TEXT PRIMARY KEY,
       chunk_count INTEGER NOT NULL,
@@ -275,9 +295,64 @@ async function ensureDB(env) {
       ip_hash TEXT,
       created_at TEXT NOT NULL
     )`),
+    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS gm_company_storage_meta (
+      company_id TEXT PRIMARY KEY,
+      revision INTEGER NOT NULL DEFAULT 0,
+      snapshot_id TEXT NOT NULL DEFAULT '',
+      storage_version INTEGER NOT NULL DEFAULT 6,
+      updated_at TEXT NOT NULL
+    )`),
+    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS gm_company_snapshots (
+      company_id TEXT NOT NULL,
+      snapshot_id TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (company_id, snapshot_id)
+    )`),
+    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS gm_company_settings (
+      company_id TEXT NOT NULL,
+      snapshot_id TEXT NOT NULL,
+      setting_key TEXT NOT NULL,
+      data TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (company_id, snapshot_id, setting_key)
+    )`),
+    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS gm_large_record_chunks (
+      company_id TEXT NOT NULL,
+      snapshot_id TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      data TEXT NOT NULL,
+      PRIMARY KEY (company_id, snapshot_id, entity_type, entity_id, chunk_index)
+    )`),
     env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_backups_company_id ON backups(company_id, id DESC)'),
-    env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events(created_at DESC)')
-  ]);
+    env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events(created_at DESC)'),
+    env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_gm_snapshots_company_revision ON gm_company_snapshots(company_id, revision DESC)'),
+    env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_gm_settings_snapshot ON gm_company_settings(company_id, snapshot_id)'),
+    env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_gm_large_chunks_snapshot ON gm_large_record_chunks(company_id, snapshot_id)')
+  ];
+  for (const table of Object.values(COMPANY_ENTITY_TABLES)) {
+    statements.push(env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS ${table} (
+      company_id TEXT NOT NULL,
+      snapshot_id TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      data TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (company_id, snapshot_id, entity_id)
+    )`));
+    statements.push(env.GLOBAL_MARKET_D1.prepare(`CREATE INDEX IF NOT EXISTS idx_${table}_snapshot ON ${table}(company_id, snapshot_id)`));
+  }
+    await env.GLOBAL_MARKET_D1.batch(statements);
+  })();
+  DB_READY_PROMISES.set(binding, initialization);
+  try {
+    return await initialization;
+  } catch (error) {
+    DB_READY_PROMISES.delete(binding);
+    throw error;
+  }
 }
 
 function defaultState() {
@@ -472,8 +547,8 @@ async function migrateLegacyCredentials(env, state) {
   return changed;
 }
 
-function companyStateKey(companyId) {
-  return `${COMPANY_STATE_KEY_PREFIX}${String(companyId || '').trim()}`;
+function legacyCompanyStateKey(companyId) {
+  return `${LEGACY_COMPANY_STATE_KEY_PREFIX}${String(companyId || '').trim()}`;
 }
 
 function storageRevision(value) {
@@ -600,6 +675,190 @@ async function writeStateRecord(env, kvKey, d1Id, state) {
   return { state, d1 };
 }
 
+
+function utf8Size(value) {
+  return new TextEncoder().encode(String(value || '')).byteLength;
+}
+
+function snapshotEntityId(row, index, key, seen) {
+  const preferred = row?.id ?? row?.ref ?? row?.code ?? row?.email ?? row?.phone ?? `${key}_${index}`;
+  let id = String(preferred || `${key}_${index}`).trim() || `${key}_${index}`;
+  if (seen.has(id)) id = `${id}#${index}`;
+  seen.add(id);
+  return id;
+}
+
+function encodeSnapshotValue(value) {
+  const raw = JSON.stringify(value ?? null);
+  if (utf8Size(raw) <= D1_RECORD_INLINE_MAX_BYTES) return { data: raw, chunks: [] };
+  const chunks = chunksOf(raw, D1_RECORD_INLINE_MAX_BYTES);
+  return { data: JSON.stringify({ __gmChunked: true, chunks: chunks.length }), chunks };
+}
+
+function parseSnapshotValue(data, chunkMap, entityType, entityId) {
+  let parsed;
+  try { parsed = JSON.parse(String(data || 'null')); } catch { return null; }
+  if (!parsed?.__gmChunked) return parsed;
+  const key = `${entityType}\u0000${entityId}`;
+  const rows = chunkMap.get(key) || [];
+  try { return JSON.parse(rows.sort((a, b) => a.chunk_index - b.chunk_index).map(row => row.data || '').join('')); }
+  catch { return null; }
+}
+
+async function runD1Batches(env, statements, batchSize = 50) {
+  for (let index = 0; index < statements.length; index += batchSize) {
+    await env.GLOBAL_MARKET_D1.batch(statements.slice(index, index + batchSize));
+  }
+}
+
+async function ensureCompanyStorageMeta(env, companyId) {
+  const now = new Date().toISOString();
+  await env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_company_storage_meta(company_id, revision, snapshot_id, storage_version, updated_at)
+    VALUES (?, 0, '', ?, ?)
+    ON CONFLICT(company_id) DO NOTHING`).bind(companyId, STORAGE_VERSION, now).run();
+}
+
+async function readNormalizedCompanyState(env, companyId, catalog = null) {
+  await ensureDB(env);
+  const id = String(companyId || '').trim();
+  const meta = await env.GLOBAL_MARKET_D1.prepare('SELECT revision, snapshot_id, storage_version, updated_at FROM gm_company_storage_meta WHERE company_id = ?').bind(id).first();
+  if (!meta?.snapshot_id) return null;
+  const snapshotId = String(meta.snapshot_id);
+  const tableEntries = Object.entries(COMPANY_ENTITY_TABLES);
+  const results = await Promise.all([
+    ...tableEntries.map(([, table]) => env.GLOBAL_MARKET_D1.prepare(`SELECT entity_id, data FROM ${table} WHERE company_id = ? AND snapshot_id = ? ORDER BY entity_id`).bind(id, snapshotId).all()),
+    env.GLOBAL_MARKET_D1.prepare('SELECT setting_key, data FROM gm_company_settings WHERE company_id = ? AND snapshot_id = ? ORDER BY setting_key').bind(id, snapshotId).all(),
+    env.GLOBAL_MARKET_D1.prepare('SELECT entity_type, entity_id, chunk_index, data FROM gm_large_record_chunks WHERE company_id = ? AND snapshot_id = ? ORDER BY entity_type, entity_id, chunk_index').bind(id, snapshotId).all()
+  ]);
+  const chunksResult = results.at(-1);
+  const settingsResult = results.at(-2);
+  const chunkMap = new Map();
+  for (const row of chunksResult?.results || []) {
+    const key = `${row.entity_type}\u0000${row.entity_id}`;
+    if (!chunkMap.has(key)) chunkMap.set(key, []);
+    chunkMap.get(key).push(row);
+  }
+  const state = { companies: [], users: [], app: {} };
+  tableEntries.forEach(([key], index) => {
+    state[key] = (results[index]?.results || []).map(row => parseSnapshotValue(row.data, chunkMap, key, row.entity_id)).filter(value => value && typeof value === 'object');
+  });
+  for (const row of settingsResult?.results || []) {
+    const value = parseSnapshotValue(row.data, chunkMap, 'setting', row.setting_key);
+    if (value !== null) state[row.setting_key] = value;
+  }
+  state.app = state.app && typeof state.app === 'object' ? state.app : {};
+  state.app.storageRevision = Number(meta.revision || 0);
+  state.app.storageVersion = STORAGE_VERSION;
+  state.app.storageScope = 'company';
+  state.app.companyId = id;
+  state.app.snapshotId = snapshotId;
+  state.app.updatedAt = meta.updated_at || state.app.updatedAt;
+  return normalizeCompanyState(state, id, catalog);
+}
+
+async function removeSnapshotRows(env, companyId, snapshotId) {
+  const statements = [
+    ...Object.values(COMPANY_ENTITY_TABLES).map(table => env.GLOBAL_MARKET_D1.prepare(`DELETE FROM ${table} WHERE company_id = ? AND snapshot_id = ?`).bind(companyId, snapshotId)),
+    env.GLOBAL_MARKET_D1.prepare('DELETE FROM gm_company_settings WHERE company_id = ? AND snapshot_id = ?').bind(companyId, snapshotId),
+    env.GLOBAL_MARKET_D1.prepare('DELETE FROM gm_large_record_chunks WHERE company_id = ? AND snapshot_id = ?').bind(companyId, snapshotId),
+    env.GLOBAL_MARKET_D1.prepare('DELETE FROM gm_company_snapshots WHERE company_id = ? AND snapshot_id = ?').bind(companyId, snapshotId)
+  ];
+  await runD1Batches(env, statements);
+}
+
+async function cleanupCompanySnapshots(env, companyId) {
+  try {
+    const result = await env.GLOBAL_MARKET_D1.prepare('SELECT snapshot_id FROM gm_company_snapshots WHERE company_id = ? ORDER BY revision DESC').bind(companyId).all();
+    const old = (result.results || []).slice(COMPANY_SNAPSHOT_RETENTION);
+    for (const row of old) await removeSnapshotRows(env, companyId, row.snapshot_id);
+  } catch (error) {
+    console.warn('Nettoyage des anciens snapshots ignoré :', error?.message || error);
+  }
+}
+
+async function writeNormalizedCompanyState(env, companyId, state, expectedRevision = null, force = false, catalog = null) {
+  await ensureDB(env);
+  const id = String(companyId || '').trim();
+  if (!id) throw new HttpError(400, 'Identifiant entreprise manquant.', 'COMPANY_ID_REQUIRED');
+  await ensureCompanyStorageMeta(env, id);
+  const currentMeta = await env.GLOBAL_MARKET_D1.prepare('SELECT revision, snapshot_id FROM gm_company_storage_meta WHERE company_id = ?').bind(id).first();
+  const currentRevision = Math.max(0, Number(currentMeta?.revision || 0) || 0);
+  if (!force && expectedRevision !== null && Number(expectedRevision) !== currentRevision) {
+    throw new HttpError(409, 'Les données de cette entreprise ont été modifiées sur un autre appareil. Actualisez la page avant de recommencer.', 'COMPANY_DATA_CONFLICT');
+  }
+
+  const normalized = normalizeCompanyState(state, id, catalog);
+  for (const user of normalized.users) stripCredentialFields(user);
+  for (const client of normalized.marketClients || []) stripCredentialFields(client);
+  const nextRevision = currentRevision + 1;
+  const snapshotId = `snap_${nextRevision}_${randomHex(12)}`;
+  const now = new Date().toISOString();
+  normalized.app.storageRevision = nextRevision;
+  normalized.app.storageVersion = STORAGE_VERSION;
+  normalized.app.storageScope = 'company';
+  normalized.app.companyId = id;
+  normalized.app.snapshotId = snapshotId;
+  normalized.app.updatedAt = now;
+
+  await env.GLOBAL_MARKET_D1.prepare('INSERT INTO gm_company_snapshots(company_id, snapshot_id, revision, status, created_at) VALUES (?, ?, ?, ?, ?)')
+    .bind(id, snapshotId, nextRevision, 'staging', now).run();
+
+  let recordCount = 0;
+  let largeChunkCount = 0;
+  try {
+    const statements = [];
+    for (const [key, table] of Object.entries(COMPANY_ENTITY_TABLES)) {
+      const rows = Array.isArray(normalized[key]) ? normalized[key] : [];
+      const seen = new Set();
+      rows.forEach((row, index) => {
+        const entityId = snapshotEntityId(row, index, key, seen);
+        const encoded = encodeSnapshotValue(row);
+        statements.push(env.GLOBAL_MARKET_D1.prepare(`INSERT INTO ${table}(company_id, snapshot_id, entity_id, data, updated_at) VALUES (?, ?, ?, ?, ?)`)
+          .bind(id, snapshotId, entityId, encoded.data, now));
+        encoded.chunks.forEach((chunk, chunkIndex) => statements.push(
+          env.GLOBAL_MARKET_D1.prepare('INSERT INTO gm_large_record_chunks(company_id, snapshot_id, entity_type, entity_id, chunk_index, data) VALUES (?, ?, ?, ?, ?, ?)')
+            .bind(id, snapshotId, key, entityId, chunkIndex, chunk)
+        ));
+        recordCount += 1;
+        largeChunkCount += encoded.chunks.length;
+      });
+    }
+
+    for (const [key, value] of Object.entries(normalized)) {
+      if (key === 'companies' || key === 'users' || Object.prototype.hasOwnProperty.call(COMPANY_ENTITY_TABLES, key)) continue;
+      const encoded = encodeSnapshotValue(value);
+      statements.push(env.GLOBAL_MARKET_D1.prepare('INSERT INTO gm_company_settings(company_id, snapshot_id, setting_key, data, updated_at) VALUES (?, ?, ?, ?, ?)')
+        .bind(id, snapshotId, key, encoded.data, now));
+      encoded.chunks.forEach((chunk, chunkIndex) => statements.push(
+        env.GLOBAL_MARKET_D1.prepare('INSERT INTO gm_large_record_chunks(company_id, snapshot_id, entity_type, entity_id, chunk_index, data) VALUES (?, ?, ?, ?, ?, ?)')
+          .bind(id, snapshotId, 'setting', key, chunkIndex, chunk)
+      ));
+      largeChunkCount += encoded.chunks.length;
+    }
+    await runD1Batches(env, statements);
+
+    const published = await env.GLOBAL_MARKET_D1.prepare(`UPDATE gm_company_storage_meta
+      SET revision = ?, snapshot_id = ?, storage_version = ?, updated_at = ?
+      WHERE company_id = ? AND revision = ?`).bind(nextRevision, snapshotId, STORAGE_VERSION, now, id, currentRevision).run();
+    if (Number(published?.meta?.changes || 0) !== 1) {
+      throw new HttpError(409, 'Une autre sauvegarde a été validée avant celle-ci. Actualisez la page puis recommencez.', 'COMPANY_DATA_CONFLICT');
+    }
+    await env.GLOBAL_MARKET_D1.batch([
+      env.GLOBAL_MARKET_D1.prepare("UPDATE gm_company_snapshots SET status = 'archived' WHERE company_id = ? AND status = 'active'").bind(id),
+      env.GLOBAL_MARKET_D1.prepare("UPDATE gm_company_snapshots SET status = 'active' WHERE company_id = ? AND snapshot_id = ?").bind(id, snapshotId)
+    ]);
+    await cleanupCompanySnapshots(env, id);
+    return { state: normalized, d1: { storage: 'normalized-records-v6', snapshotId, revision: nextRevision, recordCount, largeChunkCount } };
+  } catch (error) {
+    try { await removeSnapshotRows(env, id, snapshotId); } catch {}
+    throw error;
+  }
+}
+
+async function readLegacyCompanyState(env, companyId) {
+  const id = String(companyId || '').trim();
+  return readStateRecord(env, legacyCompanyStateKey(id), id);
+}
 async function readLegacyState(env) {
   let legacy = parseState(await env.GLOBAL_MARKET_KV.get(LEGACY_STATE_KEY));
   if (!legacy) legacy = await readD1State(env, LEGACY_STATE_ID);
@@ -620,31 +879,23 @@ async function writeCatalog(env, catalog, expectedRevision = null, force = false
 }
 
 async function writeCompanyState(env, companyId, state, expectedRevision = null, force = false, catalog = null) {
-  await ensureDB(env);
-  const id = String(companyId || '').trim();
-  if (!id) throw new HttpError(400, 'Identifiant entreprise manquant.', 'COMPANY_ID_REQUIRED');
-  const currentRaw = await readStateRecord(env, companyStateKey(id), id);
-  const current = currentRaw ? normalizeCompanyState(currentRaw, id, catalog) : normalizeCompanyState({}, id, catalog);
-  const currentRevision = storageRevision(current);
-  if (!force && expectedRevision !== null && Number(expectedRevision) !== currentRevision) {
-    throw new HttpError(409, 'Les données de cette entreprise ont été modifiées sur un autre appareil. Actualisez la page avant de recommencer.', 'COMPANY_DATA_CONFLICT');
-  }
-  const normalized = normalizeCompanyState(state, id, catalog);
-  for (const user of normalized.users) stripCredentialFields(user);
-  for (const client of normalized.marketClients || []) stripCredentialFields(client);
-  normalized.app.storageRevision = currentRevision + 1;
-  normalized.app.updatedAt = new Date().toISOString();
-  return writeStateRecord(env, companyStateKey(id), id, normalized);
+  return writeNormalizedCompanyState(env, companyId, state, expectedRevision, force, catalog);
 }
 
 async function deleteCompanyStateRecord(env, companyId) {
   const id = String(companyId || '').trim();
-  await env.GLOBAL_MARKET_KV.delete(companyStateKey(id));
-  await env.GLOBAL_MARKET_D1.batch([
+  await env.GLOBAL_MARKET_KV.delete(legacyCompanyStateKey(id));
+  const statements = [
+    ...Object.values(COMPANY_ENTITY_TABLES).map(table => env.GLOBAL_MARKET_D1.prepare(`DELETE FROM ${table} WHERE company_id = ?`).bind(id)),
+    env.GLOBAL_MARKET_D1.prepare('DELETE FROM gm_company_settings WHERE company_id = ?').bind(id),
+    env.GLOBAL_MARKET_D1.prepare('DELETE FROM gm_large_record_chunks WHERE company_id = ?').bind(id),
+    env.GLOBAL_MARKET_D1.prepare('DELETE FROM gm_company_snapshots WHERE company_id = ?').bind(id),
+    env.GLOBAL_MARKET_D1.prepare('DELETE FROM gm_company_storage_meta WHERE company_id = ?').bind(id),
     env.GLOBAL_MARKET_D1.prepare('DELETE FROM state_chunks WHERE company_id = ?').bind(id),
     env.GLOBAL_MARKET_D1.prepare('DELETE FROM state_meta WHERE company_id = ?').bind(id),
     env.GLOBAL_MARKET_D1.prepare('DELETE FROM backups WHERE company_id = ?').bind(id)
-  ]);
+  ];
+  await runD1Batches(env, statements);
 }
 
 async function migrateToCompanyIsolation(env) {
@@ -686,13 +937,23 @@ async function loadCompanyState(env, companyId, providedCatalog = null) {
   const id = String(companyId || '').trim();
   const catalog = providedCatalog || await loadCatalog(env);
   if (!(catalog.companies || []).some(company => company?.id === id)) throw new HttpError(404, 'Entreprise introuvable.', 'COMPANY_NOT_FOUND');
-  let shard = await readStateRecord(env, companyStateKey(id), id);
-  if (!shard) {
-    const legacy = await readLegacyState(env);
-    shard = legacy ? buildCompanyStateFromAggregate(legacy, id, catalog) : normalizeCompanyState({}, id, catalog);
-    shard = (await writeCompanyState(env, id, shard, null, true, catalog)).state;
+  let state = await readNormalizedCompanyState(env, id, catalog);
+  if (!state) {
+    const legacyShard = await readLegacyCompanyState(env, id);
+    if (legacyShard) state = normalizeCompanyState(legacyShard, id, catalog);
+    else {
+      const legacy = await readLegacyState(env);
+      state = legacy ? buildCompanyStateFromAggregate(legacy, id, catalog) : normalizeCompanyState({}, id, catalog);
+    }
+    try {
+      state = (await writeNormalizedCompanyState(env, id, state, 0, true, catalog)).state;
+    } catch (error) {
+      if (!(error instanceof HttpError) || error.code !== 'COMPANY_DATA_CONFLICT') throw error;
+      state = await readNormalizedCompanyState(env, id, catalog);
+      if (!state) throw error;
+    }
   }
-  return normalizeCompanyState(shard, id, catalog);
+  return normalizeCompanyState(state, id, catalog);
 }
 
 async function loadAggregateState(env) {
@@ -1023,11 +1284,8 @@ function cleanClone(value) {
   return cloned;
 }
 
-const COMPANY_ARRAY_KEYS = [
-  'items', 'sales', 'orders', 'clients', 'marketClients', 'stockEntries', 'stockOutputs',
-  'stockMovements', 'caisseLogs', 'passwordResetRequests', 'payments'
-];
-const COMPANY_OBJECT_KEYS = ['categories', 'monthlyObligations', 'obligations', 'cartClearedAt', 'cartValidatedAt'];
+const COMPANY_ARRAY_KEYS = Object.freeze(Object.keys(COMPANY_ENTITY_TABLES));
+const COMPANY_OBJECT_KEYS = ['categories', 'monthlyObligations', 'obligations', 'cartClearedAt', 'cartValidatedAt', 'saleCartMeta'];
 
 function scopeState(state, user) {
   const safe = cleanClone(state);
@@ -1625,7 +1883,7 @@ async function handleApi(request, env) {
       const catalog = await loadCatalog(env);
       const auth = await getAuth(env, SUPER_ADMIN_ID);
       return json({
-        ok: true, app: APP_NAME, kv: true, d1: true, storageVersion: STORAGE_VERSION, isolatedCompanies: catalog.companies.length,
+        ok: true, app: APP_NAME, kv: true, d1: true, storageVersion: STORAGE_VERSION, storageMode: 'normalized-records-v6', isolatedCompanies: catalog.companies.length,
         securityInitialized: Boolean(auth?.hash),
         setupRequired: !auth?.hash,
         superAdminEmailConfigured: Boolean(configuredSuperAdminIdentifier(env)),
