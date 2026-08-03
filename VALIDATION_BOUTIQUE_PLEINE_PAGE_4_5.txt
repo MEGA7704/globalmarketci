@@ -1,0 +1,15 @@
+GLOBAL MARKET 4.5.0 — VALIDATION
+
+- npm run validate : REUSSI
+- npm run test:isolation : REUSSI
+- npm run build : REUSSI
+- test navigateur : REUSSI en repli structurel après blocage réseau Chromium
+- JavaScript : syntaxe valide
+- Fonctions déclarées : 557
+- Fonctions dupliquées : 0
+- Pagination : 16 offres maximum par page
+- Recherche/catégorie/promotions/nouveautés : pagination réinitialisée automatiquement
+- Formulaire commande : défilement vertical haut/bas activé
+- Boutique : pleine largeur utile de l'écran
+- Bannière : hauteur réduite d'environ 30 %
+- Worker : inchangé par rapport à la version 4.4

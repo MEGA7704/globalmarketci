@@ -143,7 +143,8 @@ for (const marker of planChecks) if (!app.includes(marker)) fail(`Gestion des pl
 const publicShopOrderChecks = [
   'publicDeliveryRate', 'publicDeliveryFee', 'Frais de livraison', 'Payer à la livraison',
   'Payer maintenant', 'publicTransactionId', 'TRANSACTION_ID_REQUIRED', 'marketplaceDeliveryFee',
-  'paymentChoice', 'deliveryFeeRate', 'paymentStatus'
+  'paymentChoice', 'deliveryFeeRate', 'paymentStatus', 'publicShopChangePage',
+  'publicShopPagination', 'pageSize=16'
 ];
 for (const marker of publicShopOrderChecks) if (!(app.includes(marker) || worker.includes(marker))) fail(`Commande boutique incomplète : ${marker}`);
 
