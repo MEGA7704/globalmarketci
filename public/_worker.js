@@ -1312,7 +1312,12 @@ async function handleApi(request, env) {
       return json(scopeState(ctx.state, ctx.user));
     }
     if (url.pathname === '/api/save' && request.method === 'POST') {
-      const ctx = await getEmployeeSession(request, env, true);
+      // Les enregistrements courants restent protégés par la session HttpOnly,
+      // le contrôle d'origine et l'isolation des données de l'entreprise.
+      // Le jeton CSRF n'est plus exigé ici afin qu'un onglet ancien ou une
+      // reconnexion dans un autre onglet ne bloque plus la sauvegarde.
+      assertSameOrigin(request);
+      const ctx = await getEmployeeSession(request, env, false);
       const body = await readJson(request);
       const incoming = body.data && typeof body.data === 'object' ? body.data : body;
       const merged = mergeScopedState(ctx.state, incoming, ctx.user);
