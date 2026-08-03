@@ -1082,6 +1082,18 @@ if (!needsCredentialSync) {
 }
 
 const initialPassword = String(env.SUPER_ADMIN_INITIAL_PASSWORD || '');
+if (!initialPassword && existing?.hash) {
+  // Continuité de service : un changement de version ne doit pas rendre le compte
+  // Super Admin inutilisable lorsque le secret de réinitialisation est momentanément
+  // absent. Le hash existant reste valable et aucune donnée sensible n'est exposée.
+  if (existing.identifier && existing.identifier !== identifier) await env.GLOBAL_MARKET_KV.delete(authIndexKey(existing.identifier));
+  existing.identifier = identifier;
+  existing.updatedAt = new Date().toISOString();
+  await env.GLOBAL_MARKET_KV.put(authKey(SUPER_ADMIN_ID), JSON.stringify(existing));
+  await env.GLOBAL_MARKET_KV.put(authIndexKey(identifier), SUPER_ADMIN_ID);
+  if (!(await env.GLOBAL_MARKET_KV.get(AUTH_INIT_KEY))) await env.GLOBAL_MARKET_KV.put(AUTH_INIT_KEY, new Date().toISOString());
+  return existing;
+}
 if (!initialPassword) {
   throw new HttpError(503, 'Initialisation de sécurité requise : ajoutez le secret Cloudflare SUPER_ADMIN_INITIAL_PASSWORD.', 'SETUP_REQUIRED');
 }
@@ -1885,9 +1897,9 @@ return json({ success: true });
 }
 
 async function handleApi(request, env) {
-needBindings(env);
 const url = new URL(request.url);
 try {
+  needBindings(env);
   if (url.pathname === '/api/health' && request.method === 'GET') {
     const catalog = await loadCatalog(env);
     const auth = await getAuth(env, SUPER_ADMIN_ID);
@@ -2011,6 +2023,12 @@ async fetch(request, env) {
   const url = new URL(request.url);
   if (url.pathname.startsWith('/api/')) return handleApi(request, env);
 
+  if (!env.ASSETS || typeof env.ASSETS.fetch !== 'function') {
+    return new Response('GLOBAL MARKET : service statique temporairement indisponible.', {
+      status: 503,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'Retry-After': '30' }
+    });
+  }
   const assetResponse = await env.ASSETS.fetch(request);
   const headers = new Headers(assetResponse.headers);
   const path = url.pathname;

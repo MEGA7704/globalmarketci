@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "4.6.0",
+  "version": "4.6.1",
   "private": true,
-  "description": "GLOBAL MARKET - boutique officielle pleine page sans bannière publicitaire, formulaire de commande défilable, pagination de 16 offres, paiement et livraison sécurisés.",
+  "description": "GLOBAL MARKET - correction anti-503 : ressources statiques servies sans Function, API isolée et continuité sécurisée du Super Admin.",
   "type": "module",
   "engines": {
     "node": ">=20"
