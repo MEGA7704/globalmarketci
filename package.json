@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "4.5.0",
+  "version": "4.6.0",
   "private": true,
-  "description": "GLOBAL MARKET - boutique officielle pleine page, bannière compacte, formulaire de commande défilable, pagination de 16 offres, paiement et livraison sécurisés.",
+  "description": "GLOBAL MARKET - boutique officielle pleine page sans bannière publicitaire, formulaire de commande défilable, pagination de 16 offres, paiement et livraison sécurisés.",
   "type": "module",
   "engines": {
     "node": ">=20"

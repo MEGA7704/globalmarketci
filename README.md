@@ -244,12 +244,3 @@ Documentation détaillée : `README_GLOBAL_MARKET_SOLIDE_4_2.md`.
 ## Version 4.4.0 — Livraison et paiement boutique
 
 Voir `README_BOUTIQUE_LIVRAISON_PAIEMENT_4_4.md`.
-
-## Version 4.5.0 — Boutique pleine page, formulaire défilable et pagination
-
-- formulaire de validation de commande défilable verticalement ;
-- boutique officielle affichée sur toute la largeur utile de l'écran ;
-- bannière principale réduite d'environ 30 % ;
-- catalogue limité à 16 produits ou services par page ;
-- navigation Précédent / Suivant compatible avec les filtres et la recherche ;
-- logique de livraison, paiement, sécurité, KV et D1 de la version 4.4 conservée.
