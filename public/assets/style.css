@@ -2194,3 +2194,1983 @@ img,svg,canvas,video{max-width:100%;height:auto}.modalCard{max-height:92vh;overf
 @media(max-width:680px){.stockItemFullModal .stockFullGrid{grid-template-columns:1fr!important;}}
 
 
+/* === GLOBAL3 : popup vente produit/service avant ajout panier === */
+.saleCartPopupBackdrop{position:fixed;inset:0;z-index:100000;background:rgba(0,20,18,.68);backdrop-filter:blur(7px);display:flex;align-items:center;justify-content:center;padding:18px}.saleCartPopupCard{position:relative;width:min(860px,96vw);max-height:92vh;overflow:auto;background:linear-gradient(180deg,#fff,#f8fafc);border:1px solid #dbe7e4;border-top:7px solid #16a34a;border-radius:26px;box-shadow:0 32px 95px rgba(0,0,0,.36);padding:24px;color:#0f172a}.saleCartClose{position:absolute;right:16px;top:14px;width:38px;height:38px;border-radius:50%;border:0;background:#eef5f3;color:#0f3f3b;font-size:24px;font-weight:900;box-shadow:none}.saleCartHead{display:flex;gap:14px;align-items:center;margin-bottom:18px;padding-right:34px}.saleCartIcon{width:58px;height:58px;min-width:58px;border-radius:20px;background:#0d6efd;color:#fff;display:flex;align-items:center;justify-content:center;font-size:27px;box-shadow:0 16px 30px rgba(13,110,253,.22)}.saleCartHead h2{margin:0;color:#0f3f3b;font-size:24px;font-weight:1000}.saleCartHead p{margin:5px 0 0;color:#64748b;font-weight:700}.saleCartGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}.saleCartGrid label{display:flex;flex-direction:column;gap:7px;color:#0f3f3b;font-weight:900;font-size:13px}.saleCartGrid input,.saleCartGrid textarea{width:100%;border:1px solid #d7e3e0;border-radius:14px;background:#fff;padding:12px 13px;color:#0f172a;font-weight:800;outline:none}.saleCartGrid input[readonly]{background:#f1f5f9;color:#334155}.saleCartGrid input:focus,.saleCartGrid textarea:focus{border-color:#16a34a;box-shadow:0 0 0 3px rgba(22,163,74,.12)}.saleCartGrid .fullRow{grid-column:1/-1}.saleCartActions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:18px;border-top:1px solid #e2e8f0;padding-top:15px}.saleCartActions button{border:0;border-radius:15px;padding:13px 20px;font-weight:1000;cursor:pointer}.saleCartAddBtn{background:#16a34a!important;color:#fff!important;box-shadow:0 14px 30px rgba(22,163,74,.25)!important}.saleCartActions .btn2{background:#eaf2ff!important;color:#0d3b78!important;border:1px solid #d8e6ff!important;box-shadow:none!important}.saleAutoBox{display:none!important}@media(max-width:760px){.saleCartPopupBackdrop{align-items:flex-start;padding:10px}.saleCartPopupCard{width:100%;max-height:96vh;border-radius:20px;padding:18px}.saleCartHead{align-items:flex-start}.saleCartIcon{width:48px;height:48px;min-width:48px;border-radius:16px;font-size:22px}.saleCartHead h2{font-size:20px}.saleCartGrid{grid-template-columns:1fr}.saleCartGrid .fullRow{grid-column:auto}.saleCartActions{display:grid;grid-template-columns:1fr}.saleCartActions button{width:100%}}
+
+
+/* FACTURE MENSUELLE CLIENT SOUS CONTRAT : colonnes réorganisées */
+.contractMonthlyTable{table-layout:fixed!important;width:100%!important}
+.contractMonthlyTable th,.contractMonthlyTable td{vertical-align:middle!important}
+.contractMonthlyTable th:nth-child(1),.contractMonthlyTable td:nth-child(1){width:12%!important}
+.contractMonthlyTable th:nth-child(2),.contractMonthlyTable td:nth-child(2){width:17%!important}
+.contractMonthlyTable th:nth-child(3),.contractMonthlyTable td:nth-child(3){width:24%!important}
+.contractMonthlyTable th:nth-child(4),.contractMonthlyTable td:nth-child(4){width:8%!important;text-align:center!important}
+.contractMonthlyTable th:nth-child(5),.contractMonthlyTable td:nth-child(5){width:12%!important;text-align:right!important}
+.contractMonthlyTable th:nth-child(6),.contractMonthlyTable td:nth-child(6){width:10%!important;text-align:right!important}
+.contractMonthlyTable th:nth-child(7),.contractMonthlyTable td:nth-child(7){width:17%!important}
+.contractMonthlyTable td:nth-child(2),.contractMonthlyTable td:nth-child(3),.contractMonthlyTable td:nth-child(7){text-align:left!important}
+.contractMonthlyTable tr.total td:first-child{text-align:right!important}
+@media print{
+  .contractMonthlyTable{table-layout:fixed!important}
+  .contractMonthlyTable th,.contractMonthlyTable td{padding:1.6mm 1.8mm!important;line-height:1.16!important}
+}
+
+
+
+/* Correction facture mensuelle client sous contrat : colonne Note / Détail et proportions justifiées */
+.contractInvoicePrint .contractMonthlyTable{
+  width:100%!important;
+  table-layout:fixed!important;
+  border-collapse:collapse!important;
+  font-size:11px!important;
+}
+.contractInvoicePrint .contractMonthlyTable th,
+.contractInvoicePrint .contractMonthlyTable td{
+  padding:7px 6px!important;
+  line-height:1.22!important;
+  vertical-align:middle!important;
+  text-align:center!important;
+  word-break:normal!important;
+  overflow-wrap:anywhere!important;
+}
+.contractInvoicePrint .contractMonthlyTable th:nth-child(2),
+.contractInvoicePrint .contractMonthlyTable td:nth-child(2),
+.contractInvoicePrint .contractMonthlyTable th:nth-child(3),
+.contractInvoicePrint .contractMonthlyTable td:nth-child(3),
+.contractInvoicePrint .contractMonthlyTable th:nth-child(7),
+.contractInvoicePrint .contractMonthlyTable td:nth-child(7){
+  text-align:left!important;
+}
+.contractInvoicePrint .contractMonthlyTable th{
+  font-size:10px!important;
+  letter-spacing:.02em!important;
+}
+.contractInvoicePrint .contractMonthlyTable td:nth-child(1){font-size:10px!important;}
+.contractInvoicePrint .contractMonthlyTable td:nth-child(4){font-weight:800!important;}
+.contractInvoicePrint .contractMonthlyTable tr.total td{font-weight:1000!important;text-align:right!important;}
+.contractInvoicePrint .contractMonthlyTable tr.total td:nth-last-child(2){text-align:center!important;}
+@media print{
+  .contractInvoicePrint .contractMonthlyTable{font-size:9.2px!important;table-layout:fixed!important;}
+  .contractInvoicePrint .contractMonthlyTable th{font-size:8.2px!important;padding:4px 3px!important;}
+  .contractInvoicePrint .contractMonthlyTable td{font-size:8.8px!important;padding:4px 3px!important;line-height:1.15!important;}
+}
+
+
+/* Correction caisse enregistreuse — petites cartes produits/services */
+.salePosPanel{background:linear-gradient(180deg,#ffffff,#f8fafc)!important;overflow:hidden}.salePosShell{display:flex;flex-direction:column;gap:16px}.salePosHero{display:flex;align-items:center;justify-content:space-between;gap:16px;background:linear-gradient(135deg,#003f3c,#00635d);border-radius:24px;padding:20px;color:#fff;box-shadow:0 18px 45px rgba(0,63,60,.22)}.salePosKicker{display:inline-flex;background:rgba(241,207,74,.16);color:#f1cf4a;border:1px solid rgba(241,207,74,.35);border-radius:999px;padding:6px 10px;font-size:12px;font-weight:1000;letter-spacing:.04em}.salePosHero h2{margin:10px 0 4px;color:#fff!important;font-size:26px;font-weight:1000}.salePosHero p{margin:0;color:#d8f2ef;font-weight:700;max-width:720px}.salePosTicketMini{min-width:180px;background:#fff;color:#003f3c;border-radius:20px;padding:14px;box-shadow:0 14px 35px rgba(0,0,0,.18);cursor:pointer;text-align:right}.salePosTicketMini small{display:block;color:#64748b;font-weight:900}.salePosTicketMini b{display:block;font-size:22px;color:#f28c13}.salePosTicketMini span{font-size:12px;font-weight:900;color:#0f172a}.salePosClientBar{display:grid;grid-template-columns:210px 1fr;gap:12px;background:#fff;border:1px solid #e2e8f0;border-radius:20px;padding:14px;box-shadow:0 10px 30px rgba(15,23,42,.06)}.salePosClientBar select,.salePosClientBar input{width:100%;border:1px solid #dbe7e4;border-radius:14px;padding:12px 13px;font-weight:800;color:#0f172a;background:#fff}.salePosClientFields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.salePosClientFields button{border-radius:14px;white-space:nowrap}.salePosStats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.salePosStats>div,.salePosStats>button{background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:14px;box-shadow:0 8px 25px rgba(15,23,42,.05);text-align:left}.salePosStats b{display:block;font-size:22px;color:#003f3c}.salePosStats span{font-size:12px;font-weight:900;color:#64748b}.salePosStats button{background:#16a34a!important;color:#fff!important;text-align:center;font-weight:1000;border:0!important;display:flex;align-items:center;justify-content:center}.salePosFilterBar{display:grid;grid-template-columns:1.4fr .8fr .7fr;gap:10px;background:#eaf2ff;border:1px solid #d7e6ff;border-radius:20px;padding:12px}.salePosFilterBar input,.salePosFilterBar select{height:46px;border:1px solid #cbdaf5;border-radius:14px;padding:0 13px;font-weight:900;color:#0f172a;background:#fff;min-width:0}.salePosGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}.salePosCard{position:relative;display:flex;flex-direction:column;gap:8px;text-align:left;border:1px solid #e2e8f0;background:#fff;border-radius:20px;padding:11px;min-height:190px;box-shadow:0 8px 24px rgba(15,23,42,.07);cursor:pointer;color:#0f172a;transition:.18s ease;overflow:hidden}.salePosCard:hover{transform:translateY(-3px);border-color:#0d6efd;box-shadow:0 18px 38px rgba(13,110,253,.14)}.salePosCard.service:hover{border-color:#f59e0b;box-shadow:0 18px 38px rgba(245,158,11,.16)}.salePosCardType{position:absolute;top:9px;right:9px;border-radius:999px;background:#eaf2ff;color:#0d3b78;font-size:9px;font-weight:1000;padding:4px 7px}.salePosCard.service .salePosCardType{background:#fff2d8;color:#92400e}.salePosImg{height:58px;width:58px;border-radius:18px;background:#f1f5f9;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:25px;overflow:hidden}.salePosImg img{width:100%;height:100%;object-fit:cover}.salePosInfo b{display:block;font-size:13px;line-height:1.15;color:#0f172a;font-weight:1000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:48px}.salePosInfo small{display:block;margin-top:4px;font-size:10.5px;color:#64748b;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.salePosInfo em{display:block;margin-top:5px;height:28px;font-size:10.5px;line-height:1.25;color:#475569;font-style:normal;overflow:hidden}.salePosBottom{margin-top:auto;display:flex;align-items:flex-end;justify-content:space-between;gap:8px;border-top:1px dashed #e2e8f0;padding-top:8px}.salePosBottom strong{font-size:13px;color:#16a34a;font-weight:1000;white-space:nowrap}.salePosBottom span{font-size:10px;color:#64748b;font-weight:900;text-align:right;white-space:nowrap}.salePosEmpty,.salePosDynamicEmpty{grid-column:1/-1;background:#fff;border:1px dashed #cbd5e1;border-radius:18px;padding:18px;text-align:center;color:#64748b;font-weight:900}.salePosDynamicEmpty{background:#fff7ed;color:#92400e;border-color:#fed7aa}.saleAutoBox,.saleCommandGrid{display:none!important}@media(max-width:900px){.salePosHero{align-items:flex-start;flex-direction:column}.salePosTicketMini{text-align:left;width:100%}.salePosClientBar{grid-template-columns:1fr}.salePosClientFields{grid-template-columns:1fr}.salePosStats{grid-template-columns:repeat(2,minmax(0,1fr))}.salePosFilterBar{grid-template-columns:1fr}.salePosGrid{grid-template-columns:repeat(auto-fill,minmax(135px,1fr))}}@media(max-width:520px){.salePosHero{padding:16px;border-radius:18px}.salePosHero h2{font-size:21px}.salePosStats{grid-template-columns:1fr}.salePosGrid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.salePosCard{min-height:175px;border-radius:16px;padding:9px}.salePosInfo b{font-size:12px}.salePosBottom{align-items:flex-start;flex-direction:column}.salePosBottom span{text-align:left}.saleCartPopupCard{max-width:100%}}
+
+
+/* Correctif ventes : sélection multiple panier/rapport */
+.bulkSaleToolbar,.reportBulkToolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:10px 0 14px;padding:10px 12px;border:1px solid #dbe6e4;border-radius:14px;background:#f8fafc}
+.bulkSaleToolbar label,.reportBulkToolbar label{display:flex;align-items:center;gap:7px;font-weight:800;color:#063f3c}
+.bulkSaleToolbar input[type="checkbox"],.reportBulkToolbar input[type="checkbox"],.cartSaleCheck,.reportSaleCheck{width:16px;height:16px;accent-color:#00625d}
+.bulkSaleToolbar button,.reportBulkToolbar button{border:0;border-radius:10px;padding:9px 13px;font-weight:900;cursor:pointer}
+.bulkSaleToolbar .btn2,.reportBulkToolbar .btn2{background:#eaf2ff;color:#0d47a1}.bulkSaleToolbar .miniDanger,.reportBulkToolbar .danger{background:#ef4444;color:#fff}
+.cartTable th:first-child,.cartTable td:first-child,.detailedSalesTable th:first-child,.detailedSalesTable td:first-child{text-align:center;width:34px}
+.bulkSaleInvoice .ficheInfoGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0}.bulkSaleInvoice .ficheInfoGrid div{border:1px solid #e2e8f0;border-radius:10px;padding:10px;background:#f8fafc}.bulkSaleInvoice table{table-layout:fixed}.bulkSaleInvoice th,.bulkSaleInvoice td{font-size:12px;padding:8px 6px}
+@media(max-width:760px){.bulkSaleToolbar,.reportBulkToolbar{align-items:stretch;flex-direction:column}.bulkSaleToolbar button,.reportBulkToolbar button{width:100%}.bulkSaleInvoice .ficheInfoGrid{grid-template-columns:1fr}}
+
+
+
+/* === CORRECTION RAPPORT : tableau ventes compact, justifié, sans défilement gauche-droite === */
+.reportBox{overflow:hidden!important;max-width:100%!important;}
+.compactReportSalesBlock,.detailedSalesBlock{overflow:hidden!important;max-width:100%!important;}
+#serviceReportSalesTable.compactReportSalesTable{
+  display:table!important;
+  width:100%!important;
+  max-width:100%!important;
+  min-width:0!important;
+  table-layout:fixed!important;
+  border-collapse:collapse!important;
+  font-size:10.5px!important;
+  margin:0!important;
+}
+#serviceReportSalesTable.compactReportSalesTable th,
+#serviceReportSalesTable.compactReportSalesTable td{
+  display:table-cell!important;
+  padding:6px 4px!important;
+  font-size:10.5px!important;
+  line-height:1.12!important;
+  vertical-align:middle!important;
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+  word-break:normal!important;
+  overflow-wrap:normal!important;
+  max-width:0!important;
+  color:#102827!important;
+}
+#serviceReportSalesTable.compactReportSalesTable th{
+  text-align:center!important;
+  font-size:9.7px!important;
+  letter-spacing:.01em!important;
+  text-transform:uppercase!important;
+}
+#serviceReportSalesTable.compactReportSalesTable .selectCol,
+#serviceReportSalesTable.compactReportSalesTable th:first-child,
+#serviceReportSalesTable.compactReportSalesTable td:first-child{
+  text-align:center!important;
+  width:auto!important;
+  min-width:0!important;
+  max-width:none!important;
+}
+#serviceReportSalesTable.compactReportSalesTable .rtDate,
+#serviceReportSalesTable.compactReportSalesTable .rtQty,
+#serviceReportSalesTable.compactReportSalesTable .rtCaisse{text-align:center!important;}
+#serviceReportSalesTable.compactReportSalesTable .rtInvoice,
+#serviceReportSalesTable.compactReportSalesTable .rtClient,
+#serviceReportSalesTable.compactReportSalesTable .rtItem{text-align:left!important;}
+#serviceReportSalesTable.compactReportSalesTable .rtMoney,
+#serviceReportSalesTable.compactReportSalesTable .rtTotal{text-align:right!important;font-weight:900!important;}
+#serviceReportSalesTable.compactReportSalesTable .rtClip{display:inline-block;max-width:68%;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#serviceReportSalesTable.compactReportSalesTable .saleBadge{
+  display:inline-block!important;
+  max-width:100%!important;
+  margin:0!important;
+  padding:2px 4px!important;
+  border-radius:999px!important;
+  font-size:8.5px!important;
+  line-height:1!important;
+  vertical-align:middle!important;
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+}
+#serviceReportSalesTable.compactReportSalesTable td.actionCell,
+#serviceReportSalesTable.compactReportSalesTable th:last-child,
+#serviceReportSalesTable.compactReportSalesTable td:last-child{
+  width:auto!important;
+  min-width:0!important;
+  max-width:none!important;
+  text-align:center!important;
+  position:static!important;
+  box-shadow:none!important;
+}
+#serviceReportSalesTable.compactReportSalesTable .rowActions{
+  display:flex!important;
+  flex-direction:row!important;
+  flex-wrap:nowrap!important;
+  align-items:center!important;
+  justify-content:center!important;
+  gap:3px!important;
+  width:100%!important;
+  min-width:0!important;
+}
+#serviceReportSalesTable.compactReportSalesTable .rowActions button{
+  flex:1 1 0!important;
+  width:auto!important;
+  min-width:0!important;
+  max-width:none!important;
+  height:26px!important;
+  padding:0 3px!important;
+  margin:0!important;
+  border-radius:7px!important;
+  font-size:8.7px!important;
+  line-height:1!important;
+  font-weight:900!important;
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+}
+#serviceReportSalesTable.compactReportSalesTable input.reportSaleCheck{width:13px!important;height:13px!important;margin:0!important;}
+@media(max-width:900px){
+  .reportBox table#serviceReportSalesTable.compactReportSalesTable,
+  #serviceReportSalesTable.compactReportSalesTable{
+    display:table!important;
+    width:100%!important;
+    max-width:100%!important;
+    min-width:0!important;
+    table-layout:fixed!important;
+    white-space:normal!important;
+    overflow:visible!important;
+  }
+  .reportBox #serviceReportSalesTable.compactReportSalesTable th,
+  .reportBox #serviceReportSalesTable.compactReportSalesTable td{
+    padding:4px 2px!important;
+    font-size:8.2px!important;
+    line-height:1.05!important;
+  }
+  #serviceReportSalesTable.compactReportSalesTable th{font-size:7.4px!important;}
+  #serviceReportSalesTable.compactReportSalesTable .saleBadge{font-size:6.8px!important;padding:1px 2px!important;}
+  #serviceReportSalesTable.compactReportSalesTable .rowActions{gap:1px!important;}
+  #serviceReportSalesTable.compactReportSalesTable .rowActions button{height:22px!important;font-size:0!important;padding:0!important;}
+  #serviceReportSalesTable.compactReportSalesTable .rowActions button::first-letter{font-size:11px!important;}
+  .compactReportSalesBlock{overflow-x:hidden!important;}
+}
+@media(max-width:560px){
+  #serviceReportSalesTable.compactReportSalesTable col:nth-child(4),
+  #serviceReportSalesTable.compactReportSalesTable th:nth-child(4),
+  #serviceReportSalesTable.compactReportSalesTable td:nth-child(4),
+  #serviceReportSalesTable.compactReportSalesTable col:nth-child(5),
+  #serviceReportSalesTable.compactReportSalesTable th:nth-child(5),
+  #serviceReportSalesTable.compactReportSalesTable td:nth-child(5),
+  #serviceReportSalesTable.compactReportSalesTable col:nth-child(8),
+  #serviceReportSalesTable.compactReportSalesTable th:nth-child(8),
+  #serviceReportSalesTable.compactReportSalesTable td:nth-child(8){display:none!important;}
+  #serviceReportSalesTable.compactReportSalesTable th,
+  #serviceReportSalesTable.compactReportSalesTable td{font-size:8px!important;}
+}
+
+
+/* Correction popup professionnel Panier/Rapport : modification complète d'une ligne */
+.editSaleBackdrop{z-index:100050;background:rgba(2,27,27,.72);backdrop-filter:blur(7px);align-items:center;justify-content:center;padding:18px}
+.editSaleModalPro{position:relative;width:min(1040px,96vw);max-width:1040px;max-height:94vh;overflow:auto;background:linear-gradient(180deg,#ffffff,#f8fafc);border:1px solid #dbe7e4;border-top:7px solid #0d6efd;border-radius:26px;box-shadow:0 34px 95px rgba(0,0,0,.38);padding:24px;color:#0f172a}
+.editSaleClose{position:absolute;right:16px;top:14px;width:38px;height:38px;border-radius:50%;border:0;background:#eef5f3;color:#0f3f3b;font-size:24px;font-weight:1000;box-shadow:none;cursor:pointer}
+.editSaleHeader{display:flex;gap:14px;align-items:flex-start;margin-bottom:16px;padding-right:44px}
+.editSaleIcon{width:60px;height:60px;min-width:60px;border-radius:20px;background:linear-gradient(135deg,#0d6efd,#16a34a);color:#fff;display:flex;align-items:center;justify-content:center;font-size:28px;box-shadow:0 16px 34px rgba(13,110,253,.25)}
+.editSaleHeader h2{margin:0;color:#0f3f3b;font-size:25px;font-weight:1000;text-align:left}.editSaleHeader p{margin:5px 0 8px;color:#64748b;font-weight:800}.editSaleBadges{display:flex;gap:7px;flex-wrap:wrap}.editSaleBadges span{background:#eaf2ff;color:#0d3b78;border:1px solid #d8e6ff;border-radius:999px;padding:5px 9px;font-size:11px;font-weight:1000}.editSaleBadges span:first-child{background:#fff7db;color:#785200;border-color:#f3d778}
+.editSaleSection{background:#fff;border:1px solid #e2e8f0;border-radius:20px;padding:15px;margin-top:12px;box-shadow:0 10px 26px rgba(15,23,42,.045)}
+.editSaleSection h3{margin:0 0 12px;color:#0f3f3b;font-size:15px;font-weight:1000;border-left:5px solid #e7ad2f;padding-left:9px}
+.editSaleGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.editSaleGrid label{display:flex!important;flex-direction:column;gap:7px;color:#0f3f3b;font-size:12.5px;font-weight:1000}.editSaleGrid input,.editSaleGrid select,.editSaleGrid textarea{width:100%;min-width:0;border:1px solid #d7e3e0;border-radius:14px;background:#fff;padding:11px 12px;color:#0f172a;font-weight:850;outline:none}.editSaleGrid textarea{resize:vertical}.editSaleGrid input[readonly],.editSaleGrid textarea[readonly]{background:#f1f5f9;color:#334155}.editSaleGrid input:focus,.editSaleGrid select:focus,.editSaleGrid textarea:focus{border-color:#16a34a;box-shadow:0 0 0 3px rgba(22,163,74,.12)}.editSaleGrid .fullRow{grid-column:1/-1}.editSaleActions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:16px;border-top:1px solid #e2e8f0;padding-top:15px}.editSaleActions button{border:0;border-radius:15px;padding:13px 20px;font-weight:1000;cursor:pointer}.editSaleActions .btn2{background:#eaf2ff!important;color:#0d3b78!important;border:1px solid #d8e6ff!important;box-shadow:none!important}.editSaleSave{background:#16a34a!important;color:#fff!important;box-shadow:0 14px 30px rgba(22,163,74,.24)!important}
+@media(max-width:760px){.editSaleBackdrop{align-items:flex-start;padding:10px}.editSaleModalPro{width:100%;max-height:96vh;border-radius:20px;padding:17px}.editSaleHeader{align-items:flex-start}.editSaleIcon{width:48px;height:48px;min-width:48px;border-radius:16px;font-size:22px}.editSaleHeader h2{font-size:20px}.editSaleGrid{grid-template-columns:1fr}.editSaleGrid .fullRow{grid-column:auto}.editSaleActions{display:grid;grid-template-columns:1fr}.editSaleActions button{width:100%}}
+
+
+/* === Correction rapport : filtre premium + statistiques dans barre d'actions === */
+.serviceReportFilterBox{background:#f8fafc!important;border:1px solid #e2e8f0!important;border-left:7px solid #e7a923!important;border-radius:20px!important;padding:12px 14px!important;margin:12px 0 16px!important;box-shadow:0 10px 26px rgba(15,23,42,.07)!important;}
+.serviceReportFilterLine{display:grid;grid-template-columns:220px minmax(0,1fr);align-items:end;gap:14px;width:100%;}
+.serviceReportFilterBox h4{margin:0!important;color:#004a48!important;font-size:15px!important;font-weight:1000!important;text-transform:uppercase!important;letter-spacing:.45px!important;white-space:nowrap!important;padding:12px 0!important;}
+.serviceReportFilterGrid{display:grid!important;grid-template-columns:1.15fr .85fr .85fr .75fr!important;gap:10px!important;align-items:end!important;}
+.serviceReportFilterGrid label{display:flex!important;flex-direction:column!important;gap:5px!important;font-size:11px!important;font-weight:1000!important;color:#004a48!important;text-transform:none!important;min-width:0!important;}
+.serviceReportFilterGrid select{height:39px!important;border:1px solid #d8c063!important;border-radius:12px!important;padding:0 10px!important;background:#fff!important;font-size:12px!important;font-weight:900!important;color:#0b3d39!important;min-width:0!important;}
+.reportBulkToolbarStats{display:grid!important;grid-template-columns:minmax(280px,auto) minmax(360px,1fr)!important;align-items:center!important;gap:12px!important;background:#f8fafc!important;border:1px solid #e2e8f0!important;border-radius:18px!important;padding:10px 12px!important;box-shadow:0 8px 20px rgba(15,23,42,.05)!important;}
+.reportBulkActions{display:flex;flex-wrap:wrap;align-items:center;gap:9px;min-width:0;}
+.reportInlineStats{display:grid;grid-template-columns:repeat(3,minmax(110px,1fr));gap:9px;align-items:stretch;min-width:0;}
+.reportStatCard{background:#fff!important;border:1px solid #e4e9ef!important;border-radius:15px!important;padding:8px 10px!important;box-shadow:0 6px 18px rgba(15,23,42,.04)!important;min-width:0!important;}
+.reportStatCard span{display:block;font-size:10.5px;line-height:1.15;color:#475569;font-weight:1000;text-transform:uppercase;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.reportStatCard b{display:block;margin-top:3px;color:#e7a923!important;font-size:16px!important;font-weight:1000!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.compactReportSalesBlock>h2{display:none!important;}
+@media(max-width:900px){
+  .serviceReportFilterLine{grid-template-columns:1fr!important;gap:8px!important;}
+  .serviceReportFilterBox h4{padding:0!important;}
+  .serviceReportFilterGrid{grid-template-columns:1fr 1fr!important;}
+  .reportBulkToolbarStats{grid-template-columns:1fr!important;}
+  .reportInlineStats{grid-template-columns:repeat(3,minmax(0,1fr));}
+}
+@media(max-width:560px){
+  .serviceReportFilterGrid,.reportInlineStats{grid-template-columns:1fr!important;}
+  .reportBulkActions{display:grid!important;grid-template-columns:1fr!important;width:100%;}
+  .reportBulkActions button{width:100%;}
+  .reportStatCard span,.reportStatCard b{text-align:center;}
+}
+@media print{.reportBulkToolbarStats,.reportBulkActions,.reportInlineStats{display:none!important}}
+
+
+/* Correction finale filtre période rapport : masquer vraiment les champs inutiles */
+.serviceReportFilterGrid label[aria-hidden="true"]{display:none!important;}
+.serviceReportFilterGrid label[aria-hidden="false"]{display:flex!important;}
+.serviceReportFilterGrid{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))!important;}
+@media(max-width:650px){.serviceReportFilterGrid{grid-template-columns:1fr!important;}}
+
+
+/* === GLOBAL3 : filtre période clients sous contrat premium final === */
+.contractPeriodFilterBox{position:relative;background:#f8fafc!important;border:1px solid #e2e8f0!important;border-radius:18px!important;box-shadow:0 14px 32px rgba(15,23,42,.08)!important;padding:15px 16px 15px 22px!important;margin:14px 0 18px!important;overflow:hidden!important}
+.contractPeriodFilterBox:before{content:"";position:absolute;left:0;top:0;bottom:0;width:6px;background:linear-gradient(180deg,#f59e0b,#e7ad2f)}
+.contractPeriodFilterBox h4{margin:0!important;color:#0f172a!important;font-size:13px!important;font-weight:1000!important;letter-spacing:.04em!important;text-transform:uppercase!important;white-space:nowrap!important}
+.contractPeriodFilterBox .contractFilterGrid{display:grid!important;grid-template-columns:auto minmax(160px,1.15fr) minmax(120px,.85fr) minmax(120px,.85fr) minmax(90px,.65fr)!important;gap:10px!important;align-items:end!important}
+.contractPeriodFilterBox .contractFilterGrid>label{min-width:0!important;display:flex;flex-direction:column;gap:5px!important;font-size:11px!important;font-weight:1000!important;color:#334155!important;white-space:nowrap!important}
+.contractPeriodFilterBox .contractFilterGrid>label:first-child{min-width:150px!important}
+.contractPeriodFilterBox select{width:100%!important;min-height:38px!important;border:1px solid #e2e8f0!important;border-radius:12px!important;background:#fff!important;padding:8px 10px!important;color:#0f172a!important;font-weight:900!important;font-size:12px!important;outline:none!important;box-shadow:0 4px 12px rgba(15,23,42,.04)!important}
+.contractPeriodFilterBox select:focus{border-color:#f59e0b!important;box-shadow:0 0 0 3px rgba(245,158,11,.12)!important}
+.contractYearField[aria-hidden="true"],.contractMonthField[aria-hidden="true"],.contractDayField[aria-hidden="true"]{display:none!important}
+@media(max-width:900px){.contractPeriodFilterBox .contractFilterGrid{grid-template-columns:1fr 1fr!important}.contractPeriodFilterBox h4{grid-column:1/-1}.contractPeriodFilterBox .contractFilterGrid>label:first-child{min-width:0!important}}
+@media(max-width:560px){.contractPeriodFilterBox{padding:14px 12px 14px 18px!important}.contractPeriodFilterBox .contractFilterGrid{grid-template-columns:1fr!important}.contractPeriodFilterBox select{min-height:42px!important;font-size:13px!important}.contractPeriodFilterBox .contractFilterGrid>label{white-space:normal!important}}
+
+
+/* Correction finale : CHOISIR LA PÉRIODE + champs sur la même ligne horizontale */
+.contractPeriodFilterBox{
+  padding:12px 14px 12px 22px!important;
+}
+.contractPeriodFilterLine{
+  display:grid!important;
+  grid-template-columns:190px minmax(0,1fr)!important;
+  align-items:end!important;
+  gap:14px!important;
+  width:100%!important;
+}
+.contractPeriodFilterLine h4{
+  margin:0!important;
+  padding:11px 0!important;
+  align-self:end!important;
+  color:#0f172a!important;
+  font-size:14px!important;
+  font-weight:1000!important;
+  letter-spacing:.04em!important;
+  text-transform:uppercase!important;
+  white-space:nowrap!important;
+}
+.contractPeriodFilterLine .contractFilterGrid{
+  display:grid!important;
+  grid-template-columns:minmax(150px,1.1fr) minmax(100px,.8fr) minmax(115px,.85fr) minmax(85px,.65fr)!important;
+  gap:10px!important;
+  align-items:end!important;
+  min-width:0!important;
+}
+.contractPeriodFilterLine .contractFilterGrid>label{
+  min-width:0!important;
+  display:flex!important;
+  flex-direction:column!important;
+  gap:5px!important;
+  font-size:11px!important;
+  font-weight:1000!important;
+  color:#334155!important;
+  white-space:nowrap!important;
+}
+.contractPeriodFilterLine .contractFilterGrid>label[aria-hidden="true"],
+.contractPeriodFilterLine .contractYearField[aria-hidden="true"],
+.contractPeriodFilterLine .contractMonthField[aria-hidden="true"],
+.contractPeriodFilterLine .contractDayField[aria-hidden="true"]{
+  display:none!important;
+}
+.contractPeriodFilterLine select{
+  height:38px!important;
+  min-height:38px!important;
+  border:1px solid #e2e8f0!important;
+  border-radius:12px!important;
+  background:#fff!important;
+  padding:7px 10px!important;
+  color:#0f172a!important;
+  font-weight:900!important;
+  font-size:12px!important;
+  outline:none!important;
+}
+@media(max-width:900px){
+  .contractPeriodFilterLine{
+    grid-template-columns:1fr!important;
+    gap:8px!important;
+  }
+  .contractPeriodFilterLine h4{padding:0!important;}
+  .contractPeriodFilterLine .contractFilterGrid{grid-template-columns:1fr 1fr!important;}
+}
+@media(max-width:560px){
+  .contractPeriodFilterLine .contractFilterGrid{grid-template-columns:1fr!important;}
+  .contractPeriodFilterLine .contractFilterGrid>label{white-space:normal!important;}
+  .contractPeriodFilterLine select{height:42px!important;font-size:13px!important;}
+}
+
+/* =====================================================
+   MODÈLE D'IMPRESSION UNIFIÉ GLOBAL MARKET — JUILLET 2026
+   Appliqué à toutes les impressions internes : factures,
+   rapports, fiches, listes, stocks et documents divers.
+===================================================== */
+.g3pf{display:none}
+@media print{
+  @page{size:A4 portrait;margin:7mm 7mm 13mm!important}
+  .printCompanyHeader.pdfModeleGlobal3{
+    display:block!important;
+    grid-template-columns:none!important;
+    width:100%!important;
+    max-width:none!important;
+    margin:0 0 5mm!important;
+    padding:0!important;
+    border:0!important;
+    border-bottom:0!important;
+    background:#fff!important;
+    color:#071f1f!important;
+    page-break-inside:avoid!important;
+    break-inside:avoid!important;
+  }
+  .g3ph{display:block!important;width:100%!important;margin:0 0 5mm!important;background:#fff!important;color:#071f1f!important;font-family:Arial,Helvetica,sans-serif!important;page-break-inside:avoid!important;break-inside:avoid!important}
+  .g3phTop{display:grid!important;grid-template-columns:29mm 1fr 1fr 1.22fr!important;align-items:stretch!important;min-height:21mm!important}
+  .g3phBrand{display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;padding:1mm 2mm 1.3mm 0!important}
+  .g3phLogo{position:static!important;transform:none!important;width:15mm!important;height:15mm!important;border:.65mm solid #006b68!important;border-radius:2.6mm!important;display:flex!important;align-items:center!important;justify-content:center!important;color:#006b68!important;font-size:7.4mm!important;line-height:1!important;font-weight:1000!important;letter-spacing:-.6mm!important;background:#fff!important;margin:0!important}
+  .g3phBrand>b{display:block!important;font-size:2.1mm!important;color:#006b68!important;margin-top:1.2mm!important;white-space:nowrap!important}
+  .g3phCol{display:grid!important;grid-template-rows:1fr 1fr!important;align-items:center!important;min-width:0!important;min-height:21mm!important;border:0!important;border-left:.35mm solid #e4a91a!important;padding:2.3mm 3mm!important;background:#fff!important}
+  .g3phCol>div{display:block!important;font-size:2.72mm!important;line-height:1.12!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;min-width:0!important;color:#0b1717!important;text-align:left!important}
+  .g3phCol strong{font-weight:1000!important;color:#050b0b!important}.g3phCol span{font-weight:700!important;color:#0b1717!important}
+  .g3phMeta{display:grid!important;grid-template-columns:39mm 1fr!important;align-items:stretch!important;margin-top:1.8mm!important}
+  .g3phClock{display:flex!important;min-height:12mm!important;background:#006a68!important;color:#fff!important;border-radius:3.8mm 0 0 3.8mm!important;align-items:center!important;gap:2.2mm!important;padding:1.8mm 3mm!important;clip-path:polygon(0 0,91% 0,100% 50%,91% 100%,0 100%)!important}
+  .g3phClockIcon{display:flex!important;width:8mm!important;height:8mm!important;border:.65mm solid #fff!important;border-radius:50%!important;align-items:center!important;justify-content:center!important;font-size:5mm!important;line-height:1!important;color:#fff!important}
+  .g3phClock span:last-child{display:grid!important;gap:.6mm!important}.g3phClock b{display:block!important;font-size:2.25mm!important;white-space:nowrap!important;color:#fff!important}
+  .g3phBand{display:grid!important;background:#ffc400!important;color:#050505!important;border-radius:0 6mm 6mm 0!important;grid-template-columns:1fr 1fr 1.05fr!important;align-items:center!important;padding:2mm 4mm!important;gap:3mm!important}
+  .g3phBand>div{display:block!important;font-size:2.9mm!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;text-align:center!important;font-weight:800!important;color:#050505!important}.g3phBand strong{font-weight:1000!important;color:#050505!important}
+  .g3ph:after{content:""!important;display:block!important;height:.55mm!important;background:#006a68!important;margin-top:4mm!important}
+  .g3pf{display:grid!important;position:fixed!important;left:7mm!important;right:7mm!important;bottom:3mm!important;z-index:999!important;grid-template-columns:1fr auto 1fr!important;align-items:center!important;gap:4mm!important;min-height:8.5mm!important;padding:1.7mm 3mm!important;background:#006a68!important;color:#fff!important;border-radius:2mm 2mm 0 0!important;font-size:2.25mm!important;font-weight:800!important;visibility:visible!important;page-break-inside:avoid!important;break-inside:avoid!important}
+  .g3pf *{visibility:visible!important;color:#fff!important}.g3pf b{text-align:center!important;font-size:2.5mm!important}.g3pf span:last-child{text-align:right!important}.g3pfPage:after{content:" " counter(page)!important}
+  .g2main{padding-bottom:15mm!important}
+}
+
+/* =====================================================
+   GLOBAL MARKET — CONNEXION MILITAIRE PREMIUM 2026
+   Interface responsive en dossier/carnet ouvert.
+===================================================== */
+.ggMilitaryLogin{
+  --gg-ink:#172719;
+  --gg-olive:#34452A;
+  --gg-gold:#C6A352;
+  --gg-gold-light:#E5CE8A;
+  --gg-ivory:#F3EFE3;
+  --gg-paper:#FAF8F0;
+  --gg-muted:#66705f;
+  position:relative!important;
+  isolation:isolate;
+  min-height:100svh!important;
+  width:100%;
+  overflow:hidden;
+  display:flex!important;
+  flex-direction:column!important;
+  justify-content:center!important;
+  align-items:center!important;
+  gap:20px!important;
+  padding:34px 24px 22px!important;
+  background:
+    radial-gradient(circle at 13% 18%,rgba(198,163,82,.16),transparent 27%),
+    radial-gradient(circle at 87% 72%,rgba(107,129,87,.13),transparent 30%),
+    linear-gradient(145deg,#101b12 0%,#172719 46%,#0d160f 100%)!important;
+  color:#fff;
+}
+.ggMilitaryLogin:before,
+.ggMilitaryLogin:after{content:"";position:absolute;inset:0;pointer-events:none;z-index:-2}
+.ggMilitaryLogin:before{
+  opacity:.33;
+  background-image:
+    repeating-radial-gradient(ellipse at 7% 45%,transparent 0 22px,rgba(198,163,82,.12) 23px 24px,transparent 25px 39px),
+    repeating-radial-gradient(ellipse at 94% 12%,transparent 0 28px,rgba(198,163,82,.09) 29px 30px,transparent 31px 47px);
+  background-size:520px 400px,630px 470px;
+  background-position:left center,right top;
+}
+.ggMilitaryLogin:after{
+  z-index:-1;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.015),transparent);
+  box-shadow:inset 0 0 180px rgba(0,0,0,.55);
+}
+.ggTacticalGrid{position:absolute;inset:0;z-index:-1;opacity:.16;pointer-events:none;background-image:linear-gradient(rgba(198,163,82,.23) 1px,transparent 1px),linear-gradient(90deg,rgba(198,163,82,.18) 1px,transparent 1px);background-size:46px 46px;mask-image:radial-gradient(circle at center,#000 28%,transparent 90%)}
+.ggWorldMap{position:absolute;z-index:-1;left:50%;top:50%;width:min(1380px,122vw);height:auto;transform:translate(-50%,-50%);opacity:.075;filter:drop-shadow(0 0 18px rgba(198,163,82,.25));pointer-events:none}
+.ggWorldMap path{fill:none;stroke:#d9c47e;stroke-width:2.2;stroke-linejoin:round}
+.ggLoginBook{
+  position:relative;
+  width:min(1180px,96vw)!important;
+  min-height:650px!important;
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;
+  overflow:visible!important;
+  border:1px solid rgba(229,206,138,.78)!important;
+  border-radius:26px!important;
+  background:#111c13!important;
+  box-shadow:0 34px 100px rgba(0,0,0,.56),0 0 0 5px rgba(198,163,82,.055),inset 0 0 0 1px rgba(255,255,255,.06)!important;
+}
+.ggLoginBook:before{content:"";position:absolute;z-index:7;top:13px;bottom:13px;left:50%;width:18px;transform:translateX(-50%);border-radius:50%;background:linear-gradient(90deg,rgba(0,0,0,.36),rgba(229,206,138,.18) 36%,rgba(255,255,255,.18) 50%,rgba(0,0,0,.29) 72%,rgba(0,0,0,.44));box-shadow:0 0 18px rgba(0,0,0,.42);pointer-events:none}
+.ggLoginBook:after{content:"CONFIDENTIEL • ACCÈS AUTORISÉ";position:absolute;z-index:9;top:-13px;left:50%;transform:translateX(-50%);padding:6px 19px;border:1px solid rgba(229,206,138,.75);border-radius:999px;background:#172719;color:#e5ce8a;font:800 10px/1 Inter,Arial,sans-serif;letter-spacing:2px;white-space:nowrap;box-shadow:0 8px 22px rgba(0,0,0,.32)}
+.ggLoginPanel{position:relative;min-width:0;overflow:hidden;display:flex!important;align-items:center;justify-content:center}
+.ggLoginPanelLeft{border-radius:25px 0 0 25px;background:
+  linear-gradient(rgba(255,255,255,.02),rgba(255,255,255,0)),
+  repeating-linear-gradient(135deg,rgba(255,255,255,.018) 0 1px,transparent 1px 5px),
+  linear-gradient(145deg,#172719 0%,#263823 54%,#122015 100%)!important;color:#fff!important;padding:38px 48px!important}
+.ggLoginPanelLeft:before{content:"";position:absolute;inset:18px;border:1px solid rgba(198,163,82,.27);border-radius:17px;pointer-events:none}
+.ggLoginPanelLeft:after{content:"";position:absolute;width:270px;height:270px;right:-95px;bottom:-110px;border:1px solid rgba(198,163,82,.13);border-radius:50%;box-shadow:0 0 0 35px rgba(198,163,82,.035),0 0 0 70px rgba(198,163,82,.025);pointer-events:none}
+.ggLoginPanelRight{border-radius:0 25px 25px 0;background:
+  radial-gradient(circle at 13% 8%,rgba(198,163,82,.12),transparent 24%),
+  repeating-linear-gradient(0deg,rgba(67,60,39,.018) 0 1px,transparent 1px 4px),
+  linear-gradient(150deg,#faf8f0,#f1ecdc)!important;color:#172719!important;padding:42px 50px!important}
+.ggLoginPanelRight:before{content:"";position:absolute;inset:17px;border:1px solid rgba(52,69,42,.17);border-radius:17px;pointer-events:none}
+.ggLeftInner,.ggRightInner{position:relative;z-index:2;width:100%;max-width:480px}
+.ggLeftInner{display:flex;flex-direction:column;align-items:center;text-align:center}
+.ggMilitaryLogo{width:118px;height:134px;margin:0 auto 10px;filter:drop-shadow(0 15px 20px rgba(0,0,0,.35));transition:transform .3s ease,filter .3s ease}
+.ggMilitaryLogo:hover{transform:translateY(-3px) scale(1.015);filter:drop-shadow(0 18px 26px rgba(0,0,0,.48))}
+.ggMilitaryLogo svg{display:block;width:100%;height:100%}
+.ggLoginTitleBlock{text-align:center}
+.ggKicker{display:inline-block;color:#d8c283;font-size:10px;letter-spacing:2.5px;font-weight:900;margin-bottom:8px}
+.ggLoginTitleBlock h1{margin:0!important;color:#f8f4e9!important;font-family:"Arial Narrow",Impact,Oswald,sans-serif!important;font-size:39px!important;line-height:1.02!important;letter-spacing:1.1px!important;text-transform:uppercase!important;text-shadow:0 3px 14px rgba(0,0,0,.35)}
+.ggLoginTitleBlock h1 strong{display:block;color:#d7b65c;font-weight:900}
+.ggTitleStar{display:flex;justify-content:center;margin:12px auto 6px;color:#c6a352}
+.ggTitleStar:before,.ggTitleStar:after{content:"";width:76px;height:1px;background:linear-gradient(90deg,transparent,#c6a352);margin:10px 12px 0}
+.ggTitleStar:after{background:linear-gradient(90deg,#c6a352,transparent)}
+.ggTitleStar .ggSvgIcon{width:18px;height:18px;fill:currentColor;stroke:currentColor}
+.ggLoginIntro{max-width:430px;margin:8px auto 18px!important;color:rgba(250,248,240,.84)!important;font-size:13.5px!important;line-height:1.65!important}
+.ggRoleBriefs{width:100%;display:grid;grid-template-columns:1fr 1fr;gap:11px;margin:2px 0 18px}
+.ggRoleBrief{min-width:0;display:flex;align-items:center;gap:11px;text-align:left;padding:12px;border:1px solid rgba(198,163,82,.23);border-radius:13px;background:rgba(7,14,8,.25);box-shadow:inset 0 1px rgba(255,255,255,.025);transition:.22s ease}
+.ggRoleBrief:hover{transform:translateY(-2px);border-color:rgba(229,206,138,.56);background:rgba(198,163,82,.09)}
+.ggRoleBriefIcon{flex:0 0 38px;width:38px;height:38px;display:grid;place-items:center;clip-path:polygon(25% 7%,75% 7%,100% 50%,75% 93%,25% 93%,0 50%);background:rgba(198,163,82,.18);color:#e6ce85}
+.ggRoleBriefIcon .ggSvgIcon{width:20px;height:20px}
+.ggRoleBrief p{margin:0!important;color:#fff!important;line-height:1.25!important}
+.ggRoleBrief b{display:block;color:#e5ce8a;font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+.ggRoleBrief small{display:block;margin-top:4px;color:rgba(250,248,240,.7)!important;font-size:10.5px!important;line-height:1.35!important}
+.ggDeveloperLine{width:100%;display:flex;align-items:center;gap:10px;margin:2px 0 14px;color:#d8bd72;font-size:10px;letter-spacing:.75px;white-space:nowrap}
+.ggDeveloperLine span{height:1px;flex:1;background:linear-gradient(90deg,transparent,rgba(198,163,82,.7))}
+.ggDeveloperLine span:last-child{background:linear-gradient(90deg,rgba(198,163,82,.7),transparent)}
+.ggLeftActions{width:100%;display:grid;gap:10px}
+.ggMilitaryAction{width:100%!important;min-height:49px!important;justify-content:flex-start!important;border-radius:11px!important;padding:0 15px!important;box-shadow:0 12px 25px rgba(0,0,0,.2)!important;font-size:12px!important;letter-spacing:.45px!important;transition:transform .22s ease,box-shadow .22s ease,filter .22s ease!important}
+.ggMilitaryAction>span{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:rgba(255,255,255,.1)}
+.ggMilitaryAction>b{flex:1;text-align:left}
+.ggMilitaryAction>i{display:grid;place-items:center;font-style:normal;opacity:.85}
+.ggMilitaryAction .ggSvgIcon{width:18px;height:18px}
+.ggMilitaryAction:hover{transform:translateY(-2px)!important;box-shadow:0 16px 30px rgba(0,0,0,.3)!important}
+.ggWhatsappAction{background:linear-gradient(135deg,#254a2e,#1b3722)!important;color:#fff!important;border:1px solid rgba(180,218,180,.32)!important}
+.ggShopAction{background:linear-gradient(135deg,#d7b55c,#ad8937)!important;color:#172719!important;border:1px solid #ead28e!important}
+.ggSvgIcon{display:block;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.ggRightInner{display:flex;flex-direction:column;align-items:stretch}
+.ggWingEmblem{display:flex;align-items:center;justify-content:center;gap:7px;color:#9d7e32;margin-bottom:4px}
+.ggWingEmblem .wing{width:58px;height:17px;border-top:2px solid currentColor;position:relative;opacity:.72}
+.ggWingEmblem .wing:after{content:"";position:absolute;top:4px;width:48px;height:10px;border-top:1px solid currentColor;transform:skewY(-10deg)}
+.ggWingEmblem .left,.ggWingEmblem .left:after{border-radius:100% 0 0 0}.ggWingEmblem .right,.ggWingEmblem .right:after{border-radius:0 100% 0 0}.ggWingEmblem .left:after{right:0}.ggWingEmblem .right:after{left:0}
+.ggWingEmblem .wingStar{width:35px;height:35px;display:grid;place-items:center;border:1px solid rgba(157,126,50,.45);transform:rotate(45deg);background:rgba(198,163,82,.08)}
+.ggWingEmblem .wingStar .ggSvgIcon{width:18px;height:18px;transform:rotate(-45deg);fill:currentColor}
+.ggFormHeading{text-align:center;margin-bottom:15px}
+.ggFormHeading h2{display:block!important;background:none!important;color:#172719!important;margin:4px 0 5px!important;padding:0!important;border:0!important;font-family:"Arial Narrow",Impact,Oswald,sans-serif!important;font-size:29px!important;line-height:1!important;letter-spacing:1.1px!important}
+.ggFormHeading p{margin:0!important;color:#697162!important;font-size:12.5px!important;line-height:1.5!important}
+.ggProfileGrid{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:12px!important;margin:0 0 18px!important}
+.ggProfileCard{position:relative!important;min-width:0!important;min-height:116px!important;display:flex!important;flex-direction:column!important;justify-content:center!important;align-items:center!important;gap:5px!important;padding:14px 9px 10px!important;border-radius:15px!important;border:1px solid rgba(52,69,42,.18)!important;background:rgba(255,255,255,.64)!important;color:#263322!important;box-shadow:0 8px 20px rgba(48,48,29,.07)!important;transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease,background .2s ease!important}
+.ggProfileCard:hover{transform:translateY(-2px)!important;border-color:rgba(198,163,82,.72)!important}
+.ggProfileCard.active{background:linear-gradient(145deg,#fffdf5,#f4ecd5)!important;border:2px solid #c6a352!important;box-shadow:0 12px 27px rgba(141,107,33,.2),inset 0 0 0 2px rgba(255,255,255,.7)!important}
+.ggProfileCard .ggProfileStar{position:absolute;top:7px;right:9px;color:#5d714b}
+.ggProfileCard.active .ggProfileStar{color:#c6a352}
+.ggProfileCard .ggProfileStar .ggSvgIcon{width:12px;height:12px;fill:currentColor}
+.ggProfileHex{width:47px;height:47px;display:grid;place-items:center;color:#34452a;background:rgba(52,69,42,.08);clip-path:polygon(25% 4%,75% 4%,100% 50%,75% 96%,25% 96%,0 50%);transition:.2s ease}
+.ggProfileCard.active .ggProfileHex{color:#8a6927;background:rgba(198,163,82,.19)}
+.ggProfileHex .ggSvgIcon{width:25px;height:25px}
+.ggProfileCard strong{font-family:"Arial Narrow",Impact,sans-serif;font-size:14px;letter-spacing:.7px}
+.ggProfileCard small{color:#75806d!important;font-size:9.5px!important;line-height:1!important}
+.ggLoginForm{display:block;width:100%}
+.ggFieldGroup{margin:0 0 13px}
+.ggFieldGroup>label{display:block!important;margin:0 0 6px!important;color:#283523!important;font-size:11.5px!important;font-weight:900!important;letter-spacing:.2px!important}
+.ggInputShell{position:relative;display:flex;align-items:center;height:48px;border:1px solid rgba(52,69,42,.24);border-radius:12px;background:rgba(255,255,255,.83);box-shadow:inset 0 1px 2px rgba(33,42,28,.05),0 5px 15px rgba(67,58,34,.035);transition:border-color .2s,box-shadow .2s,background .2s}
+.ggInputShell:focus-within{border-color:#b28e3d;box-shadow:0 0 0 3px rgba(198,163,82,.16),0 8px 20px rgba(67,58,34,.07);background:#fff}
+.ggInputIcon{width:44px;height:100%;display:grid;place-items:center;color:#67725f;border-right:1px solid rgba(52,69,42,.13)}
+.ggInputIcon .ggSvgIcon{width:18px;height:18px}
+.ggLoginPanelRight .ggInputShell input{height:100%!important;min-width:0!important;padding:0 13px!important;margin:0!important;border:0!important;border-radius:0!important;background:transparent!important;color:#172719!important;box-shadow:none!important;font-size:13px!important;font-weight:650!important;outline:0!important}
+.ggLoginPanelRight .ggInputShell input::placeholder{color:#979b90!important;opacity:1!important;font-weight:500!important}
+.ggPasswordToggle{flex:0 0 44px!important;width:44px!important;height:100%!important;min-height:0!important;padding:0!important;border:0!important;border-radius:0 11px 11px 0!important;background:transparent!important;color:#56624e!important;box-shadow:none!important;transform:none!important}
+.ggPasswordToggle:hover{background:rgba(198,163,82,.12)!important;color:#8b6d2b!important;filter:none!important}
+.ggPasswordToggle .ggSvgIcon{width:18px;height:18px}
+.ggLoginMessage{display:none;min-height:0;margin:0 0 2px;padding:0;border-radius:9px;font-size:11px;line-height:1.4;font-weight:750}
+.ggLoginMessage.show{display:block;padding:8px 10px;margin:3px 0 0;border:1px solid}
+.ggLoginMessage.error{color:#842d2d;background:#fff1ef;border-color:#e9b9b4}
+.ggLoginMessage.success{color:#285f39;background:#edf8ef;border-color:#bad9c2}
+.ggLoginMessage.info{color:#4e5c36;background:#f8f2df;border-color:#ddc989}
+.ggLoginActions{display:grid!important;grid-template-columns:1.15fr .85fr!important;gap:10px!important;margin-top:13px!important;align-items:stretch!important;flex-wrap:nowrap!important}
+.ggLoginActions button{width:100%!important;min-width:0!important;min-height:47px!important;flex:none!important;border-radius:11px!important;font-size:11.5px!important;letter-spacing:.45px!important}
+.ggConnectBtn{background:linear-gradient(135deg,#233c25,#172719)!important;color:#fff!important;border:1px solid #425b3a!important;box-shadow:0 12px 22px rgba(23,39,25,.22)!important}
+.ggConnectBtn:hover{box-shadow:0 15px 25px rgba(23,39,25,.31)!important}
+.ggConnectBtn.loading .ggBtnIcon{animation:ggPulse 1s ease-in-out infinite}
+.ggConnectBtn:disabled{opacity:.72;cursor:wait;transform:none!important}
+.ggRegisterBtn{background:rgba(255,255,255,.68)!important;color:#263a25!important;border:1px solid #34452a!important;box-shadow:none!important}
+.ggRegisterBtn:hover{background:#fff!important;border-color:#9e7c32!important}
+.ggBtnIcon{display:grid;place-items:center}.ggBtnIcon .ggSvgIcon{width:17px;height:17px}
+@keyframes ggPulse{0%,100%{opacity:.35;transform:translateX(-2px)}50%{opacity:1;transform:translateX(2px)}}
+.ggForgotLine{text-align:center;margin-top:10px!important}
+.ggForgotLink{display:inline-flex!important;align-items:center!important;gap:6px!important;color:#58664f!important;font-size:10.8px!important;text-decoration:none!important;border-bottom:1px dotted rgba(88,102,79,.65)!important}
+.ggForgotLink:hover{color:#9e7c32!important}
+.ggForgotLink .ggSvgIcon{width:12px;height:12px}
+.ggLoginLegal{position:relative;z-index:3;max-width:930px!important;display:flex;align-items:flex-start;justify-content:center;gap:9px;color:rgba(250,248,240,.72)!important;font-size:10.5px!important;line-height:1.55!important;padding:0 15px!important}
+.ggLoginLegal strong{color:#fff}
+.ggLoginLegal .legalTextLink{color:#d8bb6c!important;font-size:inherit!important}
+.ggLegalShield{flex:0 0 auto;color:#d8bb6c;margin-top:1px}.ggLegalShield .ggSvgIcon{width:15px;height:15px}
+.ggMilitaryLogin .modal{z-index:100000}
+
+@media(max-width:980px){
+  .ggMilitaryLogin{padding:24px 14px 18px!important;overflow:auto}
+  .ggLoginBook{width:min(900px,97vw)!important;min-height:610px!important}
+  .ggLoginPanelLeft{padding:34px 30px!important}.ggLoginPanelRight{padding:36px 32px!important}
+  .ggLoginTitleBlock h1{font-size:33px!important}
+  .ggRoleBriefs{grid-template-columns:1fr}
+  .ggRoleBrief{padding:9px 11px}
+  .ggMilitaryLogo{width:104px;height:118px}
+}
+@media(max-width:760px){
+  .ggMilitaryLogin{justify-content:flex-start!important;padding:22px 11px 18px!important;overflow-x:hidden!important}
+  .ggLoginBook{display:flex!important;flex-direction:column!important;width:min(560px,96vw)!important;min-height:0!important;border-radius:23px!important;overflow:hidden!important}
+  .ggLoginBook:before{display:none}.ggLoginBook:after{font-size:8px;letter-spacing:1.35px;top:-11px}
+  .ggLoginPanel{width:100%;overflow:hidden}
+  .ggLoginPanelLeft{order:1;border-radius:22px 22px 0 0!important;padding:34px 25px 30px!important}
+  .ggLoginPanelRight{order:2;border-radius:0 0 22px 22px!important;padding:33px 25px 30px!important}
+  .ggLeftInner,.ggRightInner{max-width:470px}
+  .ggMilitaryLogo{width:96px;height:108px;margin-bottom:5px}
+  .ggLoginTitleBlock h1{font-size:31px!important}
+  .ggLoginIntro{font-size:12.5px!important;margin-bottom:14px!important}
+  .ggRoleBriefs{grid-template-columns:1fr 1fr;gap:9px}
+  .ggRoleBrief{align-items:flex-start;padding:10px;gap:8px}.ggRoleBriefIcon{flex-basis:32px;width:32px;height:32px}.ggRoleBriefIcon .ggSvgIcon{width:17px;height:17px}
+  .ggDeveloperLine{font-size:8.5px}
+  .ggProfileGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .ggLoginActions{grid-template-columns:1fr!important}
+  .ggLoginActions button{min-height:48px!important}
+  .ggLoginLegal{font-size:9.5px!important;text-align:left!important}
+}
+@media(max-width:430px){
+  .ggMilitaryLogin{padding-left:7px!important;padding-right:7px!important}
+  .ggLoginBook{width:100%!important}
+  .ggLoginPanelLeft,.ggLoginPanelRight{padding-left:19px!important;padding-right:19px!important}
+  .ggLoginPanelLeft:before,.ggLoginPanelRight:before{inset:10px}
+  .ggLoginTitleBlock h1{font-size:27px!important}
+  .ggKicker{font-size:8.5px;letter-spacing:1.7px}
+  .ggRoleBriefs{grid-template-columns:1fr}
+  .ggRoleBrief small{font-size:10px!important}
+  .ggMilitaryAction{font-size:10.5px!important}
+  .ggDeveloperLine{white-space:normal}.ggDeveloperLine b{max-width:230px}
+  .ggProfileGrid{gap:8px!important}.ggProfileCard{min-height:108px!important;padding-left:5px!important;padding-right:5px!important}.ggProfileCard strong{font-size:12px}
+  .ggFormHeading h2{font-size:25px!important}
+  .ggLoginLegal{padding:0 6px!important}
+}
+@media(prefers-reduced-motion:reduce){.ggMilitaryLogin *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+/* =====================================================
+   FICHE D’INSCRIPTION DES ENTREPRISES — GLOBAL MARKET
+   Modale compacte sans défilement interne
+===================================================== */
+#registerModal.gmRegisterModal{
+  align-items:center!important;
+  justify-content:center!important;
+  padding:10px!important;
+  overflow:auto!important;
+}
+#registerModal .gmRegisterOverlay{
+  background:rgba(0,18,14,.80)!important;
+  backdrop-filter:blur(8px) saturate(118%)!important;
+}
+#registerModal .gmRegisterModalCard{
+  position:relative!important;
+  isolation:isolate!important;
+  width:min(94vw,1320px)!important;
+  max-width:1320px!important;
+  max-height:none!important;
+  overflow:visible!important;
+  box-sizing:border-box!important;
+  padding:18px 22px 20px!important;
+  border:3px solid #E7B94B!important;
+  border-radius:24px!important;
+  background:
+    radial-gradient(circle at 9% 0%,rgba(245,205,112,.10),transparent 28%),
+    radial-gradient(circle at 100% 100%,rgba(0,112,84,.18),transparent 34%),
+    linear-gradient(145deg,#002F25 0%,#004636 56%,#002F25 100%)!important;
+  box-shadow:0 26px 72px rgba(0,0,0,.62),0 0 26px rgba(231,185,75,.22),inset 0 0 0 1px rgba(245,205,112,.24)!important;
+  color:#F8F8F6!important;
+}
+#registerModal .gmRegisterModalCard::before{
+  content:"";
+  position:absolute;
+  z-index:-1;
+  inset:6px;
+  border:1px solid rgba(245,205,112,.82);
+  border-radius:18px;
+  pointer-events:none;
+  box-shadow:inset 0 0 18px rgba(231,185,75,.07);
+}
+#registerModal .gmRegisterHeader{
+  display:flex!important;
+  align-items:center!important;
+  gap:14px!important;
+  min-width:0!important;
+  padding-right:54px!important;
+}
+#registerModal .gmRegisterHeaderIcon{
+  flex:0 0 58px!important;
+  width:58px!important;
+  height:58px!important;
+  display:grid!important;
+  place-items:center!important;
+  border:2px solid #E7B94B!important;
+  border-radius:15px!important;
+  color:#F5CD70!important;
+  background:linear-gradient(145deg,#063E31,#002F25)!important;
+  box-shadow:0 8px 20px rgba(0,0,0,.25),inset 0 0 0 1px rgba(245,205,112,.24)!important;
+}
+#registerModal .gmRegisterHeaderIcon .ggSvgIcon{width:31px!important;height:31px!important;stroke-width:1.7!important}
+#registerModal .gmRegisterHeadingText{min-width:0!important;flex:1!important}
+#registerModal .gmRegisterHeadingText h2,
+#registerModal .gmRegisterModalCard h2#registerTitle{
+  margin:0!important;
+  padding:0!important;
+  border:0!important;
+  background:none!important;
+  color:#F8F8F6!important;
+  font-family:Oswald,"Roboto Condensed","Arial Narrow",Montserrat,Arial,sans-serif!important;
+  font-size:clamp(23px,2.3vw,34px)!important;
+  line-height:1.04!important;
+  font-weight:1000!important;
+  letter-spacing:.45px!important;
+  text-transform:uppercase!important;
+  text-shadow:0 3px 10px rgba(0,0,0,.32)!important;
+}
+#registerModal .gmRegisterHeadingText .registerSub{
+  display:flex!important;
+  align-items:baseline!important;
+  flex-wrap:wrap!important;
+  gap:4px 12px!important;
+  margin:6px 0 0!important;
+  line-height:1.25!important;
+}
+#registerModal .gmRegisterHeadingText .registerSub strong{color:#F5CD70!important;font-size:12px!important;letter-spacing:.65px!important;font-weight:1000!important}
+#registerModal .gmRegisterHeadingText .registerSub span{color:#e8f3ef!important;font-size:11px!important;font-weight:650!important}
+#registerModal .gmRegisterDivider{
+  width:100%!important;
+  height:1px!important;
+  margin:10px 0 9px!important;
+  background:linear-gradient(90deg,transparent,#E7B94B 7%,#F5CD70 50%,#E7B94B 93%,transparent)!important;
+  box-shadow:0 0 8px rgba(231,185,75,.28)!important;
+}
+#registerModal .gmRegisterClose{
+  position:absolute!important;
+  z-index:5!important;
+  top:14px!important;
+  right:16px!important;
+  width:40px!important;
+  height:40px!important;
+  min-width:40px!important;
+  min-height:40px!important;
+  display:grid!important;
+  place-items:center!important;
+  padding:0 0 2px!important;
+  border:2px solid #E7B94B!important;
+  border-radius:50%!important;
+  background:linear-gradient(145deg,#063E31,#002F25)!important;
+  color:#fff!important;
+  font-size:27px!important;
+  line-height:1!important;
+  box-shadow:0 7px 16px rgba(0,0,0,.25)!important;
+  transition:transform .18s ease,background .18s ease,box-shadow .18s ease!important;
+}
+#registerModal .gmRegisterClose:hover{transform:rotate(5deg) scale(1.05)!important;background:linear-gradient(145deg,#075744,#00392c)!important;box-shadow:0 9px 20px rgba(0,0,0,.32),0 0 15px rgba(245,205,112,.24)!important}
+#registerModal .gmRegisterGrid{
+  display:flex!important;
+  flex-direction:column!important;
+  gap:8px!important;
+  min-width:0!important;
+}
+#registerModal .gmRegisterSection{
+  min-width:0!important;
+  padding:7px 9px 8px!important;
+  border:1px solid rgba(231,185,75,.30)!important;
+  border-radius:13px!important;
+  background:rgba(0,34,27,.24)!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.025)!important;
+}
+#registerModal .gmRegisterSection>h3{
+  margin:0 0 6px!important;
+  padding:0!important;
+  border:0!important;
+  background:none!important;
+  color:#F5CD70!important;
+  font-family:Oswald,"Roboto Condensed","Arial Narrow",Arial,sans-serif!important;
+  font-size:12px!important;
+  line-height:1!important;
+  font-weight:1000!important;
+  letter-spacing:.85px!important;
+  text-transform:uppercase!important;
+  text-align:center!important;
+}
+#registerModal .gmRegisterRow{
+  display:grid!important;
+  align-items:end!important;
+  justify-content:center!important;
+  gap:10px!important;
+  min-width:0!important;
+  margin:0 auto!important;
+}
+#registerModal .gmRegisterRowFour{grid-template-columns:repeat(4,minmax(0,1fr))!important;width:100%!important}
+#registerModal .gmRegisterRowThree{grid-template-columns:repeat(3,minmax(0,1fr))!important;width:100%!important}
+#registerModal .gmRegisterRowTwo{grid-template-columns:repeat(2,minmax(0,1fr))!important;width:min(100%,980px)!important}
+#registerModal .gmRegisterRowSpecialty{grid-template-columns:minmax(250px,.8fr) minmax(420px,1.8fr)!important}
+#registerModal .gmRegisterRowCredentials{width:min(100%,880px)!important}
+#registerModal .gmRegisterField{
+  display:flex!important;
+  flex-direction:column!important;
+  gap:4px!important;
+  min-width:0!important;
+  margin:0!important;
+}
+#registerModal .gmRegisterField>label{
+  display:block!important;
+  margin:0!important;
+  color:#E7B94B!important;
+  font-family:"Roboto Condensed","Arial Narrow",Arial,sans-serif!important;
+  font-size:10.5px!important;
+  line-height:1.1!important;
+  font-weight:1000!important;
+  letter-spacing:.35px!important;
+  text-transform:uppercase!important;
+  text-align:left!important;
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+}
+#registerModal .gmRequired{color:#FF5252!important;margin-left:2px!important;font-size:1.06em!important}
+#registerModal .gmRegisterControl{
+  position:relative!important;
+  display:flex!important;
+  align-items:stretch!important;
+  width:100%!important;
+  height:48px!important;
+  min-width:0!important;
+  border-radius:11px!important;
+  box-shadow:0 7px 16px rgba(0,0,0,.16)!important;
+  transition:box-shadow .18s ease!important;
+}
+#registerModal .gmRegisterControl:focus-within{box-shadow:0 0 0 2px rgba(245,205,112,.38),0 8px 19px rgba(0,0,0,.22)!important}
+#registerModal .gmRegisterIcon{
+  flex:0 0 43px!important;
+  width:43px!important;
+  height:48px!important;
+  display:grid!important;
+  place-items:center!important;
+  box-sizing:border-box!important;
+  border:1.5px solid #E7B94B!important;
+  border-right:0!important;
+  border-radius:11px 0 0 11px!important;
+  background:linear-gradient(145deg,#063E31,#002F25)!important;
+  color:#F5CD70!important;
+}
+#registerModal .gmRegisterIcon .ggSvgIcon{width:19px!important;height:19px!important;stroke-width:1.8!important}
+#registerModal .gmRegisterControl input,
+#registerModal .gmRegisterControl select{
+  flex:1 1 auto!important;
+  width:calc(100% - 43px)!important;
+  min-width:0!important;
+  height:48px!important;
+  margin:0!important;
+  padding:0 11px!important;
+  box-sizing:border-box!important;
+  border:1.5px solid rgba(231,185,75,.72)!important;
+  border-radius:0 11px 11px 0!important;
+  background:#F8F8F6!important;
+  color:#16231f!important;
+  font-family:Inter,Montserrat,Arial,sans-serif!important;
+  font-size:12px!important;
+  line-height:1.2!important;
+  font-weight:700!important;
+  box-shadow:none!important;
+  text-overflow:ellipsis!important;
+}
+#registerModal .gmRegisterControl select{cursor:pointer!important;padding-right:30px!important;appearance:auto!important}
+#registerModal .gmRegisterControl input::placeholder{color:#66756f!important;opacity:1!important;font-weight:600!important;text-overflow:ellipsis!important}
+#registerModal .gmRegisterControl:focus-within input,
+#registerModal .gmRegisterControl:focus-within select{border-color:#F5CD70!important;background:#fff!important}
+#registerModal .gmRegisterPasswordControl input{border-radius:0!important;border-right:0!important;padding-right:5px!important}
+#registerModal .gmRegisterPasswordToggle{
+  flex:0 0 43px!important;
+  width:43px!important;
+  height:48px!important;
+  min-width:43px!important;
+  min-height:48px!important;
+  display:grid!important;
+  place-items:center!important;
+  margin:0!important;
+  padding:0!important;
+  border:1.5px solid rgba(231,185,75,.72)!important;
+  border-left:0!important;
+  border-radius:0 11px 11px 0!important;
+  background:#F8F8F6!important;
+  color:#063E31!important;
+  box-shadow:none!important;
+  transform:none!important;
+}
+#registerModal .gmRegisterPasswordToggle:hover{background:#fff4d5!important;color:#7e5d13!important;box-shadow:none!important;transform:none!important}
+#registerModal .gmRegisterPasswordToggle .ggSvgIcon{width:18px!important;height:18px!important}
+#registerModal .gmRegisterSubmit{
+  width:min(100%,980px)!important;
+  height:54px!important;
+  min-height:54px!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  gap:10px!important;
+  margin:10px auto 0!important;
+  padding:0 22px!important;
+  box-sizing:border-box!important;
+  border:3px solid #063E31!important;
+  outline:1.5px solid #F5CD70!important;
+  outline-offset:-6px!important;
+  border-radius:14px!important;
+  background:linear-gradient(135deg,#F5CD70 0%,#E7B94B 56%,#d99e28 100%)!important;
+  color:#002F25!important;
+  font-family:Oswald,"Roboto Condensed","Arial Narrow",Montserrat,Arial,sans-serif!important;
+  font-size:19px!important;
+  line-height:1!important;
+  font-weight:1000!important;
+  letter-spacing:.55px!important;
+  text-transform:uppercase!important;
+  box-shadow:0 12px 26px rgba(0,0,0,.24),0 0 18px rgba(231,185,75,.17)!important;
+  transition:transform .16s ease,filter .18s ease,box-shadow .18s ease!important;
+}
+#registerModal .gmRegisterSubmit:hover:not(:disabled){transform:translateY(-1px)!important;filter:brightness(1.06)!important;box-shadow:0 15px 30px rgba(0,0,0,.3),0 0 24px rgba(245,205,112,.29)!important}
+#registerModal .gmRegisterSubmit:active:not(:disabled){transform:translateY(1px)!important}
+#registerModal .gmRegisterSubmit:disabled{cursor:wait!important;opacity:.8!important;transform:none!important;filter:saturate(.76)!important}
+#registerModal .gmRegisterSubmitIcon{display:grid!important;place-items:center!important}
+#registerModal .gmRegisterSubmitIcon .ggSvgIcon{width:24px!important;height:24px!important;stroke-width:1.9!important}
+#registerModal .gmRegisterSubmit.is-loading .gmRegisterSubmitIcon{animation:gmRegisterPulse 1s ease-in-out infinite!important}
+@keyframes gmRegisterPulse{0%,100%{opacity:.35;transform:scale(.92)}50%{opacity:1;transform:scale(1.05)}}
+
+@media(max-width:1100px){
+  #registerModal.gmRegisterModal{align-items:flex-start!important;padding:8px!important}
+  #registerModal .gmRegisterModalCard{width:100%!important;padding:16px 16px 18px!important}
+  #registerModal .gmRegisterRowFour{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  #registerModal .gmRegisterRowSpecialty{grid-template-columns:repeat(2,minmax(0,1fr))!important;width:100%!important}
+  #registerModal .gmRegisterControl input,#registerModal .gmRegisterControl select{font-size:11.5px!important}
+}
+@media(max-width:720px){
+  #registerModal.gmRegisterModal{display:block!important;padding:6px!important;overflow-y:auto!important}
+  #registerModal .gmRegisterModalCard{width:100%!important;margin:auto!important;padding:14px 11px 15px!important;border-radius:19px!important}
+  #registerModal .gmRegisterModalCard::before{inset:5px;border-radius:14px}
+  #registerModal .gmRegisterHeader{gap:9px!important;padding-right:42px!important}
+  #registerModal .gmRegisterHeaderIcon{flex-basis:46px!important;width:46px!important;height:46px!important;border-radius:12px!important}
+  #registerModal .gmRegisterHeaderIcon .ggSvgIcon{width:25px!important;height:25px!important}
+  #registerModal .gmRegisterHeadingText h2,#registerModal .gmRegisterModalCard h2#registerTitle{font-size:19px!important}
+  #registerModal .gmRegisterHeadingText .registerSub span{display:none!important}
+  #registerModal .gmRegisterHeadingText .registerSub{margin-top:4px!important}
+  #registerModal .gmRegisterClose{top:11px!important;right:11px!important;width:36px!important;height:36px!important;min-width:36px!important;min-height:36px!important;font-size:24px!important}
+  #registerModal .gmRegisterDivider{margin:8px 0 7px!important}
+  #registerModal .gmRegisterGrid{gap:6px!important}
+  #registerModal .gmRegisterSection{padding:6px!important}
+  #registerModal .gmRegisterSection>h3{font-size:11px!important;margin-bottom:5px!important}
+  #registerModal .gmRegisterRowFour,#registerModal .gmRegisterRowThree,#registerModal .gmRegisterRowTwo,#registerModal .gmRegisterRowSpecialty,#registerModal .gmRegisterRowCredentials{grid-template-columns:repeat(2,minmax(0,1fr))!important;width:100%!important;gap:7px!important}
+  #registerModal .gmRegisterField>label{font-size:9px!important}
+  #registerModal .gmRegisterControl{height:44px!important}
+  #registerModal .gmRegisterIcon{flex-basis:38px!important;width:38px!important;height:44px!important}
+  #registerModal .gmRegisterIcon .ggSvgIcon{width:17px!important;height:17px!important}
+  #registerModal .gmRegisterControl input,#registerModal .gmRegisterControl select{height:44px!important;width:calc(100% - 38px)!important;padding:0 7px!important;font-size:10.5px!important}
+  #registerModal .gmRegisterPasswordToggle{flex-basis:38px!important;width:38px!important;height:44px!important;min-width:38px!important;min-height:44px!important}
+  #registerModal .gmRegisterSubmit{height:49px!important;min-height:49px!important;margin-top:8px!important;font-size:16px!important;border-radius:12px!important}
+}
+@media(max-width:440px){
+  #registerModal .gmRegisterRowFour,#registerModal .gmRegisterRowThree,#registerModal .gmRegisterRowTwo,#registerModal .gmRegisterRowSpecialty,#registerModal .gmRegisterRowCredentials{grid-template-columns:1fr!important}
+  #registerModal .gmRegisterModalCard{margin:0 auto!important}
+  #registerModal .gmRegisterField>label{font-size:9.5px!important}
+  #registerModal .gmRegisterControl input,#registerModal .gmRegisterControl select{font-size:11px!important}
+}
+@media(prefers-reduced-motion:reduce){#registerModal *{animation:none!important;transition:none!important}}
+
+/* === GLOBAL MARKET : deux plans complets + rappel professionnel du Plan Free === */
+.subscriptionPlansGrid.twoPlans{grid-template-columns:repeat(2,minmax(0,1fr));max-width:1050px;margin:0 auto}
+.planButtons{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.freePlanUpgradeBackdrop{position:fixed;inset:0;z-index:12000;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(0,20,16,.78);backdrop-filter:blur(8px);animation:freePlanFadeIn .2s ease-out}
+.freePlanUpgradeModal{position:relative;width:min(760px,96vw);max-height:92vh;overflow:auto;padding:34px;border-radius:30px;color:#f8f8f6;text-align:center;background:radial-gradient(circle at 90% 0,rgba(245,205,112,.18),transparent 32%),linear-gradient(145deg,#004636,#002f25 62%,#001d17);border:3px solid #e7b94b;box-shadow:inset 0 0 0 1px rgba(245,205,112,.7),0 32px 90px rgba(0,0,0,.5),0 0 34px rgba(231,185,75,.2)}
+.freePlanUpgradeModal:before{content:"";position:absolute;inset:8px;border:1px solid rgba(245,205,112,.55);border-radius:23px;pointer-events:none}
+.freePlanUpgradeClose{position:absolute;top:16px;right:16px;z-index:2;width:46px;height:46px;border-radius:50%;border:1.5px solid #e7b94b;background:#063e31;color:#fff;font-size:29px;line-height:1;cursor:pointer;transition:.2s ease}
+.freePlanUpgradeClose:hover{background:#e7b94b;color:#002f25;transform:rotate(4deg) scale(1.04)}
+.freePlanUpgradeIcon{display:grid;place-items:center;width:78px;height:78px;margin:0 auto 14px;border-radius:22px;background:linear-gradient(145deg,#f5cd70,#e7b94b);color:#002f25;font-size:38px;border:4px double #063e31;box-shadow:0 14px 30px rgba(0,0,0,.24)}
+.freePlanUpgradeBadge{display:inline-flex;align-items:center;justify-content:center;padding:9px 16px;border-radius:999px;background:rgba(231,185,75,.14);border:1px solid rgba(245,205,112,.5);color:#f5cd70;font-size:12px;font-weight:1000;letter-spacing:.08em}
+.freePlanUpgradeModal h2{margin:16px 0 10px;color:#fff;font-size:clamp(28px,4vw,43px);line-height:1.05;text-transform:uppercase;font-weight:1000;letter-spacing:.02em}
+.freePlanUpgradeLead{max-width:660px;margin:0 auto 20px;color:#e8f3ef;font-size:16px;line-height:1.65;font-weight:650}
+.freePlanUpgradeStats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:22px 0}
+.freePlanUpgradeStats>div{padding:16px;border-radius:18px;text-align:left;background:rgba(255,255,255,.08);border:1px solid rgba(245,205,112,.26);box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+.freePlanUpgradeStats small{display:block;margin-bottom:7px;color:#bcd8cf;text-transform:uppercase;font-size:11px;font-weight:900;letter-spacing:.06em}
+.freePlanUpgradeStats b{display:block;color:#f5cd70;font-size:18px;overflow-wrap:anywhere}
+.freePlanUpgradeBenefits{display:grid;gap:8px;padding:17px;border-radius:18px;text-align:left;background:rgba(0,20,16,.35);border-left:4px solid #e7b94b}
+.freePlanUpgradeBenefits span{color:#fff;font-weight:850}
+.freePlanUpgradeNote{margin:14px 0 0;color:#afc9c1;font-size:12px}
+.freePlanUpgradeActions{display:grid;grid-template-columns:minmax(150px,.6fr) minmax(260px,1.4fr);gap:12px;margin-top:22px}
+.freePlanUpgradeActions button{min-height:58px;border-radius:17px;padding:13px 18px;font:inherit;font-weight:1000;cursor:pointer;text-transform:uppercase;transition:.18s ease}
+.freePlanUnderstood{border:1px solid rgba(245,205,112,.55);background:#063e31;color:#fff}
+.freePlanBuy{border:2px double #002f25;background:linear-gradient(135deg,#f5cd70,#e7b94b);color:#002f25;box-shadow:0 12px 30px rgba(231,185,75,.24)}
+.freePlanUpgradeActions button:hover{transform:translateY(-2px);filter:brightness(1.05)}
+.freePlanUpgradeActions button:active{transform:translateY(1px)}
+@keyframes freePlanFadeIn{from{opacity:0}to{opacity:1}}
+@media(max-width:720px){.subscriptionPlansGrid.twoPlans{grid-template-columns:1fr}.freePlanUpgradeModal{padding:28px 18px 20px;border-radius:24px}.freePlanUpgradeModal:before{inset:6px;border-radius:18px}.freePlanUpgradeStats,.freePlanUpgradeActions{grid-template-columns:1fr}.freePlanUpgradeClose{top:11px;right:11px}.freePlanUpgradeLead{font-size:14px}.freePlanUpgradeActions button{width:100%}}
+
+/* Version de déploiement visible pour confirmer que Cloudflare sert la dernière correction. */
+.buildVersion{display:inline-block;margin-left:10px;padding:3px 8px;border:1px solid rgba(231,185,75,.45);border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.02em;color:#f5cd70;background:rgba(0,47,37,.55)}
+
+
+/* =====================================================
+   GLOBAL MARKET — FICHE D’INSCRIPTION MILITAIRE COMPACTE
+   Dernière surcharge : cadre entier sans défilement desktop
+===================================================== */
+@media (min-width:1001px){
+  #registerModal.gmRegisterModal{display:flex!important;align-items:center!important;justify-content:center!important;padding:8px!important;overflow:hidden!important}
+  #registerModal .gmRegisterModalCard{
+    width:min(94vw,1180px)!important;max-width:1180px!important;max-height:calc(100vh - 16px)!important;overflow:hidden!important;
+    padding:13px 17px 14px!important;border-width:2px!important;border-radius:20px!important;
+    background:repeating-linear-gradient(90deg,rgba(245,205,112,.025) 0 1px,transparent 1px 46px),repeating-linear-gradient(0deg,rgba(245,205,112,.018) 0 1px,transparent 1px 46px),radial-gradient(circle at 10% 0,rgba(245,205,112,.10),transparent 28%),linear-gradient(145deg,#071d18 0%,#243326 42%,#0c241c 100%)!important;
+    box-shadow:0 22px 58px rgba(0,0,0,.58),0 0 20px rgba(231,185,75,.18),inset 0 0 0 1px rgba(245,205,112,.22)!important
+  }
+  #registerModal .gmRegisterModalCard::before{inset:5px!important;border-radius:15px!important}
+  #registerModal .gmRegisterModalCard::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;opacity:.18;background:radial-gradient(ellipse at 18% 28%,rgba(123,136,82,.34),transparent 22%),radial-gradient(ellipse at 76% 70%,rgba(70,87,52,.28),transparent 24%),repeating-radial-gradient(circle at 70% 20%,transparent 0 17px,rgba(231,185,75,.08) 18px 19px,transparent 20px 31px)}
+  #registerModal .gmRegisterHeader{justify-content:center!important;min-height:48px!important;gap:10px!important;padding:0 46px 0 0!important}
+  #registerModal .gmRegisterHeaderIcon{flex-basis:48px!important;width:48px!important;height:48px!important;border-radius:12px!important}
+  #registerModal .gmRegisterHeaderIcon .ggSvgIcon{width:25px!important;height:25px!important}
+  #registerModal .gmRegisterHeadingText{text-align:center!important}
+  #registerModal .gmRegisterHeadingText h2,#registerModal .gmRegisterModalCard h2#registerTitle{font-size:clamp(20px,2vw,28px)!important;line-height:1!important;text-align:center!important;color:#f8f8f6!important}
+  #registerModal .gmRegisterHeadingText .registerSub{display:block!important;margin:4px 0 0!important;text-align:center!important}
+  #registerModal .gmRegisterHeadingText .registerSub span{color:#e9e7dc!important;font-size:10px!important;line-height:1.15!important}
+  #registerModal .gmRegisterDivider{margin:6px 0!important}
+  #registerModal .gmRegisterClose{top:10px!important;right:11px!important;width:34px!important;height:34px!important;min-width:34px!important;min-height:34px!important;font-size:23px!important}
+  #registerModal .gmRegisterGrid{gap:5px!important}
+  #registerModal .gmRegisterSection{padding:5px 7px 6px!important;border-radius:10px!important;background:rgba(0,0,0,.18)!important}
+  #registerModal .gmRegisterSection>h3{margin-bottom:4px!important;font-size:10px!important;letter-spacing:.75px!important}
+  #registerModal .gmRegisterRow{gap:7px!important}
+  #registerModal .gmRegisterRowFour{grid-template-columns:repeat(4,minmax(0,1fr))!important}
+  #registerModal .gmRegisterRowThree{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+  #registerModal .gmRegisterRowTwo{grid-template-columns:repeat(2,minmax(0,1fr))!important;width:min(100%,900px)!important}
+  #registerModal .gmRegisterRowSpecialty{grid-template-columns:minmax(230px,.72fr) minmax(420px,1.55fr)!important}
+  #registerModal .gmRegisterRowCredentials{width:min(100%,820px)!important}
+  #registerModal .gmRegisterField{gap:3px!important}
+  #registerModal .gmRegisterField>label{color:#e7b94b!important;font-size:9px!important;line-height:1!important}
+  #registerModal .gmRegisterControl{height:40px!important;border-radius:9px!important;box-shadow:0 5px 12px rgba(0,0,0,.17)!important}
+  #registerModal .gmRegisterIcon{flex-basis:36px!important;width:36px!important;height:40px!important;border-radius:9px 0 0 9px!important;background:linear-gradient(145deg,#172719,#34452a)!important}
+  #registerModal .gmRegisterIcon .ggSvgIcon{width:16px!important;height:16px!important}
+  #registerModal .gmRegisterControl input,#registerModal .gmRegisterControl select{width:calc(100% - 36px)!important;height:40px!important;padding:0 8px!important;border-radius:0 9px 9px 0!important;background:#fff!important;color:#000!important;-webkit-text-fill-color:#000!important;caret-color:#000!important;font-size:11px!important;font-weight:700!important;color-scheme:light!important}
+  #registerModal .gmRegisterControl input::placeholder{color:#646464!important;-webkit-text-fill-color:#646464!important;font-size:10px!important;opacity:1!important}
+  #registerModal .gmRegisterControl select option{background:#fff!important;color:#000!important}
+  #registerModal .gmRegisterPasswordControl input{border-radius:0!important}
+  #registerModal .gmRegisterPasswordToggle{flex-basis:36px!important;width:36px!important;height:40px!important;min-width:36px!important;min-height:40px!important;border-radius:0 9px 9px 0!important;background:#fff!important;color:#172719!important}
+  #registerModal .gmRegisterSubmit{width:min(100%,900px)!important;height:46px!important;min-height:46px!important;margin-top:6px!important;border-radius:11px!important;font-size:16px!important;touch-action:manipulation!important;will-change:transform,filter!important;transition:transform .08s ease,filter .10s ease,box-shadow .10s ease!important}
+  #registerModal .gmRegisterSubmit:hover:not(:disabled){transform:translateY(-1px)!important}
+  #registerModal .gmRegisterSubmit:active:not(:disabled){transform:translateY(1px) scale(.997)!important}
+}
+@media (max-width:1000px){
+  #registerModal.gmRegisterModal{overflow-y:auto!important;overflow-x:hidden!important;padding:6px!important}
+  #registerModal .gmRegisterModalCard{width:min(96vw,820px)!important;overflow:visible!important}
+  #registerModal .gmRegisterControl input,#registerModal .gmRegisterControl select{background:#fff!important;color:#000!important;-webkit-text-fill-color:#000!important;caret-color:#000!important;color-scheme:light!important}
+  #registerModal .gmRegisterControl select option{background:#fff!important;color:#000!important}
+}
+
+
+/* ================================================================
+   GLOBAL MARKET — CORRECTION DÉFINITIVE FICHE D’INSCRIPTION 2.4
+   Mise en page pleine largeur, compacte, sans défilement desktop.
+   La sécurité, les identifiants HTML et les routes API sont inchangés.
+================================================================ */
+#registerModal.gmRegisterModal{
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  box-sizing:border-box!important;
+  padding:10px!important;
+  overflow:hidden!important;
+}
+#registerModal .gmRegisterOverlay{
+  background:rgba(1,12,10,.84)!important;
+  backdrop-filter:blur(7px) saturate(110%)!important;
+}
+#registerModal .gmRegisterModalCard{
+  position:relative!important;
+  display:block!important;
+  width:min(96vw,1360px)!important;
+  max-width:1360px!important;
+  max-height:calc(100dvh - 20px)!important;
+  overflow:hidden!important;
+  box-sizing:border-box!important;
+  margin:0!important;
+  padding:14px 18px 15px!important;
+  border:2px solid #d8ad43!important;
+  border-radius:18px!important;
+  background:
+    linear-gradient(rgba(231,185,75,.025) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(231,185,75,.025) 1px,transparent 1px),
+    radial-gradient(ellipse at 14% 12%,rgba(109,126,77,.18),transparent 28%),
+    radial-gradient(ellipse at 86% 82%,rgba(73,94,55,.15),transparent 30%),
+    linear-gradient(145deg,#071a15 0%,#15271d 52%,#092019 100%)!important;
+  background-size:42px 42px,42px 42px,auto,auto,auto!important;
+  box-shadow:0 24px 64px rgba(0,0,0,.62),0 0 18px rgba(231,185,75,.19),inset 0 0 0 1px rgba(245,205,112,.18)!important;
+  color:#f8f8f6!important;
+}
+#registerModal .gmRegisterModalCard::before{
+  content:""!important;
+  position:absolute!important;
+  inset:5px!important;
+  z-index:-1!important;
+  pointer-events:none!important;
+  border:1px solid rgba(245,205,112,.66)!important;
+  border-radius:13px!important;
+  box-shadow:inset 0 0 16px rgba(231,185,75,.05)!important;
+}
+#registerModal .gmRegisterModalCard::after{
+  content:""!important;
+  position:absolute!important;
+  inset:0!important;
+  z-index:-2!important;
+  pointer-events:none!important;
+  opacity:.13!important;
+  background:repeating-radial-gradient(circle at 82% 20%,transparent 0 24px,rgba(231,185,75,.13) 25px 26px,transparent 27px 42px)!important;
+}
+#registerModal .gmRegisterHeader{
+  display:block!important;
+  width:100%!important;
+  min-height:0!important;
+  padding:0 48px!important;
+  text-align:center!important;
+  box-sizing:border-box!important;
+}
+#registerModal .gmRegisterHeaderIcon{display:none!important}
+#registerModal .gmRegisterHeadingText{
+  display:block!important;
+  width:100%!important;
+  min-width:0!important;
+  text-align:center!important;
+}
+#registerModal .gmRegisterHeadingText h2,
+#registerModal .gmRegisterModalCard h2#registerTitle{
+  margin:0!important;
+  padding:0!important;
+  color:#f8f8f6!important;
+  font-family:Oswald,"Roboto Condensed","Arial Narrow",Montserrat,Arial,sans-serif!important;
+  font-size:clamp(23px,2.25vw,32px)!important;
+  line-height:1.05!important;
+  font-weight:1000!important;
+  letter-spacing:.55px!important;
+  text-align:center!important;
+  text-transform:uppercase!important;
+  text-shadow:0 3px 9px rgba(0,0,0,.42)!important;
+}
+#registerModal .gmRegisterHeadingText .registerSub{
+  display:block!important;
+  margin:4px 0 0!important;
+  padding:0!important;
+  text-align:center!important;
+  line-height:1.2!important;
+}
+#registerModal .gmRegisterHeadingText .registerSub span{
+  display:block!important;
+  color:#e8e6dc!important;
+  font-size:10.5px!important;
+  font-weight:650!important;
+  letter-spacing:.05px!important;
+}
+#registerModal .gmRegisterClose{
+  position:absolute!important;
+  top:10px!important;
+  right:12px!important;
+  z-index:10!important;
+  display:grid!important;
+  place-items:center!important;
+  width:36px!important;
+  height:36px!important;
+  min-width:36px!important;
+  min-height:36px!important;
+  margin:0!important;
+  padding:0 0 2px!important;
+  border:1.5px solid #e7b94b!important;
+  border-radius:50%!important;
+  background:#102b21!important;
+  color:#fff!important;
+  font-size:24px!important;
+  line-height:1!important;
+  box-shadow:0 7px 15px rgba(0,0,0,.32)!important;
+  transition:transform .12s ease,background .12s ease,box-shadow .12s ease!important;
+}
+#registerModal .gmRegisterClose:hover{
+  transform:scale(1.04)!important;
+  background:#1c4936!important;
+  box-shadow:0 7px 17px rgba(0,0,0,.36),0 0 12px rgba(231,185,75,.22)!important;
+}
+#registerModal .gmRegisterDivider{
+  display:block!important;
+  width:100%!important;
+  height:1px!important;
+  margin:7px 0 6px!important;
+  background:linear-gradient(90deg,transparent,#d8ad43 5%,#f5cd70 50%,#d8ad43 95%,transparent)!important;
+  box-shadow:0 0 6px rgba(231,185,75,.22)!important;
+}
+#registerModal .registerBusinessGrid.gmRegisterGrid{
+  display:flex!important;
+  flex-direction:column!important;
+  align-items:stretch!important;
+  justify-content:flex-start!important;
+  width:100%!important;
+  min-width:0!important;
+  gap:6px!important;
+  margin:0!important;
+  padding:0!important;
+}
+#registerModal .gmRegisterSection{
+  display:block!important;
+  width:100%!important;
+  min-width:0!important;
+  box-sizing:border-box!important;
+  margin:0!important;
+  padding:5px 8px 7px!important;
+  border:1px solid rgba(231,185,75,.28)!important;
+  border-radius:10px!important;
+  background:rgba(0,16,12,.32)!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.025)!important;
+}
+#registerModal .gmRegisterSection>h3{
+  display:flex!important;
+  align-items:center!important;
+  gap:9px!important;
+  width:100%!important;
+  margin:0 0 5px!important;
+  padding:0!important;
+  color:#e7b94b!important;
+  font-family:Oswald,"Roboto Condensed","Arial Narrow",Arial,sans-serif!important;
+  font-size:10.5px!important;
+  line-height:1!important;
+  font-weight:1000!important;
+  letter-spacing:.9px!important;
+  text-align:left!important;
+  text-transform:uppercase!important;
+  white-space:nowrap!important;
+}
+#registerModal .gmRegisterSection>h3::after{
+  content:""!important;
+  flex:1 1 auto!important;
+  height:1px!important;
+  background:linear-gradient(90deg,rgba(231,185,75,.55),transparent)!important;
+}
+#registerModal .gmRegisterRow{
+  display:grid!important;
+  align-items:end!important;
+  justify-content:stretch!important;
+  width:100%!important;
+  min-width:0!important;
+  margin:0!important;
+  gap:9px!important;
+}
+#registerModal .gmRegisterRowFour{grid-template-columns:repeat(4,minmax(0,1fr))!important}
+#registerModal .gmRegisterRowThree{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+#registerModal .gmRegisterRowTwo{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+#registerModal .gmRegisterRowSpecialty{grid-template-columns:minmax(250px,.82fr) minmax(0,2.18fr)!important}
+#registerModal .gmRegisterRowCredentials{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+#registerModal .gmRegisterField{
+  display:flex!important;
+  flex-direction:column!important;
+  gap:3px!important;
+  min-width:0!important;
+  margin:0!important;
+}
+#registerModal .gmRegisterField>label{
+  display:block!important;
+  width:100%!important;
+  margin:0!important;
+  color:#e7b94b!important;
+  font-family:"Roboto Condensed","Arial Narrow",Arial,sans-serif!important;
+  font-size:9.5px!important;
+  line-height:1!important;
+  font-weight:1000!important;
+  letter-spacing:.28px!important;
+  text-align:left!important;
+  text-transform:uppercase!important;
+  white-space:nowrap!important;
+  overflow:visible!important;
+  text-overflow:clip!important;
+}
+#registerModal .gmRequired{color:#ff5252!important;margin-left:2px!important}
+#registerModal .gmRegisterControl{
+  position:relative!important;
+  display:flex!important;
+  align-items:stretch!important;
+  width:100%!important;
+  height:43px!important;
+  min-width:0!important;
+  margin:0!important;
+  border-radius:9px!important;
+  box-shadow:0 5px 13px rgba(0,0,0,.19)!important;
+  transition:box-shadow .12s ease!important;
+}
+#registerModal .gmRegisterControl:focus-within{
+  box-shadow:0 0 0 2px rgba(245,205,112,.36),0 7px 17px rgba(0,0,0,.24)!important;
+}
+#registerModal .gmRegisterIcon{
+  display:grid!important;
+  place-items:center!important;
+  flex:0 0 40px!important;
+  width:40px!important;
+  height:43px!important;
+  box-sizing:border-box!important;
+  border:1px solid #d8ad43!important;
+  border-right:0!important;
+  border-radius:9px 0 0 9px!important;
+  background:linear-gradient(145deg,#172719,#34452a)!important;
+  color:#f5cd70!important;
+}
+#registerModal .gmRegisterIcon .ggSvgIcon{width:17px!important;height:17px!important;stroke-width:1.8!important}
+#registerModal .gmRegisterControl input,
+#registerModal .gmRegisterControl select{
+  display:block!important;
+  flex:1 1 auto!important;
+  width:calc(100% - 40px)!important;
+  min-width:0!important;
+  height:43px!important;
+  margin:0!important;
+  padding:0 10px!important;
+  box-sizing:border-box!important;
+  border:1px solid rgba(216,173,67,.72)!important;
+  border-radius:0 9px 9px 0!important;
+  background:#fff!important;
+  color:#000!important;
+  -webkit-text-fill-color:#000!important;
+  caret-color:#000!important;
+  color-scheme:light!important;
+  font-family:Inter,Montserrat,Arial,sans-serif!important;
+  font-size:12.5px!important;
+  line-height:1.2!important;
+  font-weight:650!important;
+  box-shadow:none!important;
+  outline:0!important;
+  text-overflow:clip!important;
+}
+#registerModal .gmRegisterControl input::placeholder{
+  color:#656565!important;
+  -webkit-text-fill-color:#656565!important;
+  opacity:1!important;
+  font-size:11px!important;
+  font-weight:550!important;
+}
+#registerModal .gmRegisterControl select{cursor:pointer!important;padding-right:28px!important}
+#registerModal .gmRegisterControl select option{background:#fff!important;color:#000!important}
+#registerModal .gmRegisterPasswordControl input{
+  width:calc(100% - 80px)!important;
+  border-radius:0!important;
+  border-right:0!important;
+}
+#registerModal .gmRegisterPasswordToggle{
+  display:grid!important;
+  place-items:center!important;
+  flex:0 0 40px!important;
+  width:40px!important;
+  height:43px!important;
+  min-width:40px!important;
+  min-height:43px!important;
+  margin:0!important;
+  padding:0!important;
+  border:1px solid rgba(216,173,67,.72)!important;
+  border-left:0!important;
+  border-radius:0 9px 9px 0!important;
+  background:#fff!important;
+  color:#172719!important;
+  box-shadow:none!important;
+  transition:background .1s ease,color .1s ease!important;
+}
+#registerModal .gmRegisterPasswordToggle:hover{background:#fff4d5!important;color:#765713!important;transform:none!important}
+#registerModal .gmRegisterPasswordToggle .ggSvgIcon{width:17px!important;height:17px!important}
+#registerModal .gmRegisterSubmit{
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  gap:10px!important;
+  width:100%!important;
+  height:48px!important;
+  min-height:48px!important;
+  margin:7px 0 0!important;
+  padding:0 18px!important;
+  box-sizing:border-box!important;
+  border:2px double #173126!important;
+  border-radius:11px!important;
+  background:linear-gradient(135deg,#f5cf75 0%,#e7b94b 55%,#dca72f 100%)!important;
+  color:#09251c!important;
+  font-family:Oswald,"Roboto Condensed",Montserrat,Arial,sans-serif!important;
+  font-size:17px!important;
+  line-height:1!important;
+  font-weight:1000!important;
+  letter-spacing:.45px!important;
+  text-transform:uppercase!important;
+  box-shadow:0 9px 22px rgba(0,0,0,.27),0 0 12px rgba(231,185,75,.16)!important;
+  cursor:pointer!important;
+  touch-action:manipulation!important;
+  will-change:transform,filter!important;
+  transition:transform .07s ease,filter .1s ease,box-shadow .1s ease!important;
+}
+#registerModal .gmRegisterSubmit:hover:not(:disabled){transform:translateY(-1px)!important;filter:brightness(1.045)!important;box-shadow:0 11px 25px rgba(0,0,0,.31),0 0 16px rgba(231,185,75,.22)!important}
+#registerModal .gmRegisterSubmit:active:not(:disabled){transform:translateY(1px) scale(.998)!important}
+#registerModal .gmRegisterSubmit:disabled{cursor:wait!important;opacity:.82!important;transform:none!important}
+#registerModal .gmRegisterSubmitIcon{display:grid!important;place-items:center!important}
+#registerModal .gmRegisterSubmitIcon .ggSvgIcon{width:22px!important;height:22px!important}
+
+@media (max-width:1100px){
+  #registerModal.gmRegisterModal{overflow-y:auto!important;overflow-x:hidden!important;align-items:flex-start!important;padding:8px!important}
+  #registerModal .gmRegisterModalCard{width:min(97vw,900px)!important;max-height:none!important;overflow:visible!important;margin:auto!important}
+  #registerModal .gmRegisterRowFour,#registerModal .gmRegisterRowThree,#registerModal .gmRegisterRowTwo,#registerModal .gmRegisterRowSpecialty,#registerModal .gmRegisterRowCredentials{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+}
+@media (max-width:650px){
+  #registerModal.gmRegisterModal{display:block!important;padding:6px!important}
+  #registerModal .gmRegisterModalCard{width:100%!important;padding:13px 10px 14px!important;border-radius:15px!important}
+  #registerModal .gmRegisterHeader{padding:0 38px 0 0!important}
+  #registerModal .gmRegisterHeadingText h2,#registerModal .gmRegisterModalCard h2#registerTitle{font-size:20px!important;line-height:1.08!important}
+  #registerModal .gmRegisterHeadingText .registerSub span{font-size:9.5px!important}
+  #registerModal .gmRegisterClose{top:8px!important;right:8px!important;width:33px!important;height:33px!important;min-width:33px!important;min-height:33px!important;font-size:22px!important}
+  #registerModal .gmRegisterRowFour,#registerModal .gmRegisterRowThree,#registerModal .gmRegisterRowTwo,#registerModal .gmRegisterRowSpecialty,#registerModal .gmRegisterRowCredentials{grid-template-columns:1fr!important}
+  #registerModal .gmRegisterSection{padding:7px!important}
+  #registerModal .gmRegisterField>label{font-size:10px!important}
+  #registerModal .gmRegisterControl,#registerModal .gmRegisterIcon,#registerModal .gmRegisterControl input,#registerModal .gmRegisterControl select,#registerModal .gmRegisterPasswordToggle{height:45px!important;min-height:45px!important}
+  #registerModal .gmRegisterSubmit{height:50px!important;min-height:50px!important;font-size:16px!important}
+}
+@media (max-height:610px) and (min-width:1101px){
+  #registerModal .gmRegisterModalCard{padding-top:10px!important;padding-bottom:11px!important}
+  #registerModal .gmRegisterHeadingText h2,#registerModal .gmRegisterModalCard h2#registerTitle{font-size:24px!important}
+  #registerModal .gmRegisterHeadingText .registerSub{margin-top:2px!important}
+  #registerModal .gmRegisterDivider{margin:5px 0!important}
+  #registerModal .registerBusinessGrid.gmRegisterGrid{gap:4px!important}
+  #registerModal .gmRegisterSection{padding-top:4px!important;padding-bottom:5px!important}
+  #registerModal .gmRegisterSection>h3{margin-bottom:3px!important}
+  #registerModal .gmRegisterControl,#registerModal .gmRegisterIcon,#registerModal .gmRegisterControl input,#registerModal .gmRegisterControl select,#registerModal .gmRegisterPasswordToggle{height:39px!important;min-height:39px!important}
+  #registerModal .gmRegisterSubmit{height:44px!important;min-height:44px!important;margin-top:5px!important}
+}
+
+/* ================================================================
+   GLOBAL MARKET — CORRECTION MODALE INSCRIPTION 2.7
+   - Connexion visible en premier
+   - Popup ouvert uniquement par le bouton INSCRIPTION
+   - Popup parfaitement centré
+   - Champs justifiés sur toute la largeur
+================================================================ */
+#registerModal.gmRegisterModal.hidden{
+  display:none!important;
+  visibility:hidden!important;
+  opacity:0!important;
+  pointer-events:none!important;
+}
+body.registerModalOpen{overflow:hidden!important}
+#registerModal.gmRegisterModal:not(.hidden){
+  position:fixed!important;
+  inset:0!important;
+  z-index:9999!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  width:100vw!important;
+  height:100vh!important;
+  padding:14px!important;
+  overflow:hidden!important;
+  visibility:visible!important;
+  opacity:1!important;
+  pointer-events:auto!important;
+  box-sizing:border-box!important;
+}
+#registerModal .gmRegisterOverlay{
+  position:absolute!important;
+  inset:0!important;
+  width:100%!important;
+  height:100%!important;
+}
+#registerModal .gmRegisterModalCard{
+  position:relative!important;
+  left:auto!important;
+  right:auto!important;
+  top:auto!important;
+  bottom:auto!important;
+  transform:none!important;
+  display:flex!important;
+  flex-direction:column!important;
+  width:min(92vw,1320px)!important;
+  max-width:1320px!important;
+  max-height:calc(100vh - 28px)!important;
+  margin:auto!important;
+  padding:24px 32px 26px!important;
+  overflow:hidden!important;
+  box-sizing:border-box!important;
+  border:1.5px solid #d6a936!important;
+  border-radius:22px!important;
+  background:
+    linear-gradient(rgba(255,255,255,.012),rgba(255,255,255,.012)),
+    radial-gradient(circle at 12% 18%,rgba(73,125,91,.15),transparent 27%),
+    radial-gradient(circle at 87% 79%,rgba(0,0,0,.28),transparent 35%),
+    linear-gradient(138deg,#003c30 0%,#004b3b 49%,#002c23 100%)!important;
+  box-shadow:0 28px 90px rgba(0,0,0,.65),0 0 0 1px rgba(255,214,99,.10),inset 0 0 68px rgba(0,0,0,.18)!important;
+}
+#registerModal .gmRegisterModalCard::before{display:none!important}
+#registerModal .gmRegisterModalCard::after{
+  content:""!important;
+  position:absolute!important;
+  inset:0!important;
+  z-index:-1!important;
+  pointer-events:none!important;
+  opacity:.18!important;
+  background:
+    repeating-linear-gradient(0deg,transparent 0 31px,rgba(231,185,75,.035) 32px),
+    repeating-linear-gradient(90deg,transparent 0 31px,rgba(231,185,75,.025) 32px),
+    radial-gradient(ellipse at 14% 25%,rgba(128,139,89,.11),transparent 20%),
+    radial-gradient(ellipse at 83% 63%,rgba(66,81,52,.12),transparent 24%)!important;
+}
+#registerModal .gmRegisterHeader{
+  display:block!important;
+  width:100%!important;
+  min-height:0!important;
+  padding:0 54px!important;
+  text-align:center!important;
+}
+#registerModal .gmRegisterHeaderIcon{display:none!important}
+#registerModal .gmRegisterHeadingText{display:block!important;width:100%!important;text-align:center!important}
+#registerModal .gmRegisterHeadingText h2,
+#registerModal .gmRegisterModalCard h2#registerTitle{
+  margin:0!important;
+  color:#f1c257!important;
+  font-family:Oswald,"Roboto Condensed","Arial Narrow",Montserrat,Arial,sans-serif!important;
+  font-size:clamp(25px,2.25vw,35px)!important;
+  line-height:1.05!important;
+  font-weight:1000!important;
+  letter-spacing:.3px!important;
+  text-align:center!important;
+  text-transform:uppercase!important;
+  text-shadow:0 2px 0 rgba(0,0,0,.25),0 0 14px rgba(231,185,75,.12)!important;
+}
+#registerModal .gmRegisterHeadingText .registerSub{display:block!important;margin:9px 0 0!important;text-align:center!important}
+#registerModal .gmRegisterHeadingText .registerSub span{
+  display:block!important;
+  color:#f2f1eb!important;
+  font-size:13px!important;
+  line-height:1.3!important;
+  font-weight:600!important;
+}
+#registerModal .gmRegisterDivider{
+  position:relative!important;
+  width:67%!important;
+  height:1px!important;
+  margin:18px auto 15px!important;
+  background:linear-gradient(90deg,transparent,#b79031 12%,#e7b94b 50%,#b79031 88%,transparent)!important;
+  box-shadow:none!important;
+}
+#registerModal .gmRegisterDivider::after{
+  content:""!important;
+  position:absolute!important;
+  left:50%!important;
+  top:50%!important;
+  width:10px!important;
+  height:10px!important;
+  background:#efbd49!important;
+  transform:translate(-50%,-50%) rotate(45deg)!important;
+  border-radius:1px!important;
+  box-shadow:0 0 0 3px #004638!important;
+}
+#registerModal .gmRegisterClose{
+  top:27px!important;
+  right:30px!important;
+  width:46px!important;
+  height:46px!important;
+  min-width:46px!important;
+  min-height:46px!important;
+  border:1.5px solid #c89b2b!important;
+  background:rgba(0,52,41,.94)!important;
+  color:#f2c653!important;
+  font-size:27px!important;
+  box-shadow:0 8px 22px rgba(0,0,0,.22)!important;
+}
+#registerModal .registerBusinessGrid.gmRegisterGrid{
+  display:flex!important;
+  flex-direction:column!important;
+  align-items:stretch!important;
+  width:100%!important;
+  min-width:0!important;
+  gap:14px!important;
+  margin:0!important;
+  padding:0!important;
+}
+#registerModal .gmRegisterSection{
+  display:block!important;
+  width:100%!important;
+  min-width:0!important;
+  margin:0!important;
+  padding:0!important;
+  border:0!important;
+  border-radius:0!important;
+  background:transparent!important;
+  box-shadow:none!important;
+}
+#registerModal .gmRegisterSection>h3{
+  display:flex!important;
+  align-items:center!important;
+  gap:10px!important;
+  width:100%!important;
+  margin:0 0 11px!important;
+  padding:0 0 8px!important;
+  border-bottom:1px solid rgba(231,185,75,.34)!important;
+  color:#f4f2ea!important;
+  font-family:Oswald,"Roboto Condensed","Arial Narrow",Arial,sans-serif!important;
+  font-size:15.5px!important;
+  line-height:1!important;
+  font-weight:900!important;
+  letter-spacing:.4px!important;
+  text-align:left!important;
+}
+#registerModal .gmRegisterSection>h3::after{display:none!important}
+#registerModal .gmRegisterSectionIcon{
+  display:inline-grid!important;
+  place-items:center!important;
+  flex:0 0 27px!important;
+  width:27px!important;
+  height:27px!important;
+  color:#efbd49!important;
+}
+#registerModal .gmRegisterSectionIcon .ggSvgIcon{width:24px!important;height:24px!important;stroke-width:1.8!important}
+#registerModal .gmRegisterRow{
+  display:grid!important;
+  align-items:end!important;
+  justify-content:stretch!important;
+  width:100%!important;
+  max-width:none!important;
+  min-width:0!important;
+  margin:0!important;
+  gap:22px!important;
+}
+#registerModal .gmRegisterRowFour{grid-template-columns:repeat(4,minmax(0,1fr))!important}
+#registerModal .gmRegisterRowThree{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+#registerModal .gmRegisterRowTwo{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+#registerModal .gmRegisterRowSpecialty{grid-template-columns:minmax(280px,1fr) minmax(0,1fr)!important}
+#registerModal .gmRegisterRowCredentials{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+#registerModal .gmRegisterRow>.gmRegisterField{
+  display:flex!important;
+  flex-direction:column!important;
+  width:100%!important;
+  min-width:0!important;
+  gap:7px!important;
+  margin:0!important;
+}
+#registerModal .gmRegisterField>label{
+  display:block!important;
+  width:100%!important;
+  margin:0!important;
+  color:#f5f3eb!important;
+  font-family:"Roboto Condensed",Montserrat,Arial,sans-serif!important;
+  font-size:12px!important;
+  line-height:1.15!important;
+  font-weight:900!important;
+  letter-spacing:.32px!important;
+  text-align:left!important;
+  white-space:nowrap!important;
+}
+#registerModal .gmRequired{color:#efbd49!important}
+#registerModal .gmRegisterControl{
+  position:relative!important;
+  display:flex!important;
+  width:100%!important;
+  min-width:0!important;
+  height:51px!important;
+  margin:0!important;
+  border-radius:11px!important;
+  box-shadow:0 6px 16px rgba(0,0,0,.18)!important;
+}
+#registerModal .gmRegisterIcon{display:none!important}
+#registerModal .gmRegisterControl input,
+#registerModal .gmRegisterControl select{
+  display:block!important;
+  width:100%!important;
+  min-width:0!important;
+  height:51px!important;
+  margin:0!important;
+  padding:0 18px!important;
+  border:1px solid rgba(223,181,71,.72)!important;
+  border-radius:11px!important;
+  background:#fff!important;
+  color:#101916!important;
+  -webkit-text-fill-color:#101916!important;
+  caret-color:#101916!important;
+  font-family:Inter,Montserrat,Arial,sans-serif!important;
+  font-size:13.5px!important;
+  line-height:1.2!important;
+  font-weight:650!important;
+  box-sizing:border-box!important;
+  color-scheme:light!important;
+}
+#registerModal .gmRegisterControl input::placeholder{
+  color:#596965!important;
+  -webkit-text-fill-color:#596965!important;
+  font-weight:600!important;
+  opacity:1!important;
+}
+#registerModal .gmRegisterControl select{padding-right:42px!important;appearance:auto!important}
+#registerModal .gmRegisterControl select option{background:#fff!important;color:#111!important}
+#registerModal .gmRegisterControl:focus-within{box-shadow:0 0 0 2px rgba(245,205,112,.36),0 9px 20px rgba(0,0,0,.22)!important}
+#registerModal .gmRegisterControl:focus-within input,
+#registerModal .gmRegisterControl:focus-within select{border-color:#f5cd70!important;background:#fff!important}
+#registerModal .gmRegisterPasswordControl input{
+  width:100%!important;
+  border-radius:11px!important;
+  border-right:1px solid rgba(223,181,71,.72)!important;
+  padding-right:56px!important;
+}
+#registerModal .gmRegisterPasswordToggle{
+  position:absolute!important;
+  right:4px!important;
+  top:4px!important;
+  z-index:2!important;
+  width:43px!important;
+  height:43px!important;
+  min-width:43px!important;
+  min-height:43px!important;
+  border:0!important;
+  border-radius:9px!important;
+  background:transparent!important;
+  color:#0c1814!important;
+}
+#registerModal .gmRegisterPasswordToggle:hover{background:#f6edcf!important;color:#785914!important}
+#registerModal .gmRegisterPasswordToggle .ggSvgIcon{width:21px!important;height:21px!important}
+#registerModal .gmRegisterSubmit{
+  width:100%!important;
+  height:59px!important;
+  min-height:59px!important;
+  margin:17px 0 0!important;
+  border:1.5px solid #ffd465!important;
+  border-radius:11px!important;
+  background:linear-gradient(100deg,#e4ad37 0%,#f5ca63 49%,#e1a72e 100%)!important;
+  color:#071811!important;
+  font-size:20px!important;
+  font-weight:1000!important;
+  letter-spacing:.5px!important;
+  box-shadow:0 10px 22px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.42)!important;
+  transition:transform .08s ease,filter .10s ease,box-shadow .10s ease!important;
+  touch-action:manipulation!important;
+}
+#registerModal .gmRegisterSubmit:hover:not(:disabled){transform:translateY(-1px)!important;filter:brightness(1.05)!important}
+#registerModal .gmRegisterSubmit:active:not(:disabled){transform:translateY(1px) scale(.999)!important}
+#registerModal .gmRegisterSubmit:disabled{cursor:wait!important;opacity:.82!important;transform:none!important}
+
+@media(max-width:1050px){
+  #registerModal.gmRegisterModal:not(.hidden){overflow-y:auto!important;align-items:flex-start!important;padding:8px!important}
+  #registerModal .gmRegisterModalCard{width:min(96vw,900px)!important;max-height:none!important;overflow:visible!important;padding:23px 23px 25px!important}
+  #registerModal .gmRegisterRowFour,#registerModal .gmRegisterRowThree,#registerModal .gmRegisterRowTwo,#registerModal .gmRegisterRowSpecialty,#registerModal .gmRegisterRowCredentials{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+}
+@media(max-width:700px){
+  body.registerModalOpen{overflow:hidden!important}
+  #registerModal.gmRegisterModal:not(.hidden){display:block!important;padding:6px!important;overflow-y:auto!important;overflow-x:hidden!important}
+  #registerModal .gmRegisterModalCard{width:100%!important;margin:0 auto!important;padding:19px 14px 21px!important;border-radius:17px!important}
+  #registerModal .gmRegisterHeader{padding:0 40px!important}
+  #registerModal .gmRegisterHeadingText h2,#registerModal .gmRegisterModalCard h2#registerTitle{font-size:21px!important}
+  #registerModal .gmRegisterHeadingText .registerSub span{font-size:11px!important}
+  #registerModal .gmRegisterDivider{width:82%!important;margin:14px auto 13px!important}
+  #registerModal .gmRegisterClose{top:14px!important;right:13px!important;width:38px!important;height:38px!important;min-width:38px!important;min-height:38px!important;font-size:24px!important}
+  #registerModal .registerBusinessGrid.gmRegisterGrid{gap:12px!important}
+  #registerModal .gmRegisterSection>h3{font-size:14px!important;margin-bottom:10px!important}
+  #registerModal .gmRegisterRowFour,#registerModal .gmRegisterRowThree,#registerModal .gmRegisterRowTwo,#registerModal .gmRegisterRowSpecialty,#registerModal .gmRegisterRowCredentials{grid-template-columns:1fr!important;gap:11px!important}
+  #registerModal .gmRegisterField>label{font-size:11.5px!important}
+  #registerModal .gmRegisterControl,#registerModal .gmRegisterControl input,#registerModal .gmRegisterControl select{height:49px!important}
+  #registerModal .gmRegisterSubmit{height:54px!important;min-height:54px!important;font-size:17px!important}
+}
+@media(max-height:760px) and (min-width:1051px){
+  #registerModal .gmRegisterModalCard{padding:16px 28px 18px!important}
+  #registerModal .gmRegisterHeadingText h2,#registerModal .gmRegisterModalCard h2#registerTitle{font-size:27px!important}
+  #registerModal .gmRegisterHeadingText .registerSub{margin-top:5px!important}
+  #registerModal .gmRegisterDivider{margin:11px auto 9px!important}
+  #registerModal .registerBusinessGrid.gmRegisterGrid{gap:8px!important}
+  #registerModal .gmRegisterSection>h3{font-size:14px!important;margin-bottom:7px!important;padding-bottom:6px!important}
+  #registerModal .gmRegisterRow{gap:16px!important}
+  #registerModal .gmRegisterRow>.gmRegisterField{gap:5px!important}
+  #registerModal .gmRegisterField>label{font-size:11px!important}
+  #registerModal .gmRegisterControl,#registerModal .gmRegisterControl input,#registerModal .gmRegisterControl select{height:44px!important}
+  #registerModal .gmRegisterPasswordToggle{width:36px!important;height:36px!important;min-width:36px!important;min-height:36px!important}
+  #registerModal .gmRegisterSubmit{height:49px!important;min-height:49px!important;margin-top:9px!important;font-size:18px!important}
+}
+
+
+/* === SUPER ADMIN : suppression sécurisée des comptes entreprises — v2.9 === */
+.superCompanyActions{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex-wrap:wrap}
+.superCompanyActions .wide{min-width:128px}
+.companyDeleteBtn{white-space:nowrap}
+.companyDeleteBtn:disabled{opacity:.65;cursor:wait;transform:none!important}
+.superCompanyModal .superModalActions .companyDeleteBtn{margin-left:auto}
+@media(max-width:800px){.superCompanyActions{align-items:stretch;flex-direction:column}.superCompanyActions button{width:100%}.superCompanyModal .superModalActions .companyDeleteBtn{margin-left:0;width:100%}}
+
+/* ============================================================
+   GLOBAL MARKET — TABLEAU DE BORD SAAS PREMIUM (VERSION 3.0.1)
+   Correction ciblée : section Accueil / Tableau de bord uniquement
+   ============================================================ */
+.g2main.dashboardMain{
+  width:min(1500px,96vw)!important;
+  margin:20px auto 72px!important;
+}
+.g2main.dashboardMain>.companyLine{display:none!important}
+#home.active{overflow:visible!important}
+#home .msDashboard{
+  --ms-green:#0B6B4B;
+  --ms-green-mid:#1E8E5A;
+  --ms-gold:#D9A11A;
+  --ms-purple:#7B4AE2;
+  --ms-blue:#2490F0;
+  --ms-bg:#F5F7F7;
+  --ms-ink:#18332b;
+  --ms-muted:#708079;
+  font-family:Inter,"Segoe UI",Roboto,Arial,sans-serif!important;
+  color:var(--ms-ink)!important;
+  background:var(--ms-bg)!important;
+  border:1px solid #e7ecea!important;
+  border-radius:24px!important;
+  padding:18px!important;
+  box-shadow:0 24px 55px rgba(18,63,49,.09)!important;
+}
+#home .msDashboard *{box-sizing:border-box}
+#home .msDashboardHeader{
+  display:flex!important;
+  align-items:center!important;
+  justify-content:space-between!important;
+  gap:20px!important;
+  padding:16px 18px!important;
+  margin-bottom:18px!important;
+  background:#fff!important;
+  border:1px solid #e3eae7!important;
+  border-radius:18px!important;
+  box-shadow:0 10px 30px rgba(19,77,59,.07)!important;
+}
+#home .msDashboardBrand{display:flex!important;align-items:center!important;gap:13px!important;min-width:250px!important}
+#home .msDashboardLogo{
+  width:48px!important;height:48px!important;min-width:48px!important;
+  display:grid!important;place-items:center!important;
+  border-radius:14px!important;
+  color:#fff!important;background:linear-gradient(145deg,#0B6B4B,#1E8E5A)!important;
+  border:2px solid rgba(217,161,26,.72)!important;
+  box-shadow:0 9px 18px rgba(11,107,75,.22)!important;
+  font-weight:1000!important;letter-spacing:-1px!important;font-size:19px!important;
+}
+#home .msDashboardBrand h1{margin:0!important;color:#0B6B4B!important;font-size:22px!important;line-height:1.05!important;font-weight:1000!important;letter-spacing:.1px!important}
+#home .msDashboardBrand p{margin:4px 0 0!important;color:#78847f!important;font-size:12px!important;font-weight:650!important}
+#home .msDashboardHeaderRight{display:flex!important;align-items:center!important;justify-content:flex-end!important;gap:10px!important;min-width:0!important}
+#home .msPlanCard{display:grid!important;gap:2px!important;padding:9px 13px!important;border-radius:13px!important;background:#f0f8f4!important;border:1px solid #d5e9df!important;white-space:nowrap!important}
+#home .msPlanCard span{color:#0B6B4B!important;font-size:12px!important;font-weight:1000!important}
+#home .msPlanCard b{color:#60706a!important;font-size:10px!important;font-weight:800!important}
+#home .msHeaderIcons{display:flex!important;gap:7px!important}
+#home .msHeaderIcons button{
+  width:38px!important;height:38px!important;min-width:38px!important;padding:0!important;
+  display:grid!important;place-items:center!important;border-radius:11px!important;
+  color:#566760!important;background:#fff!important;border:1px solid #dfe7e3!important;
+  box-shadow:none!important;font-size:16px!important;font-weight:1000!important;
+}
+#home .msHeaderIcons button:hover{color:#0B6B4B!important;background:#eff8f4!important;border-color:#b9daca!important;transform:translateY(-1px)!important}
+#home .msProfileCard{display:flex!important;align-items:center!important;gap:9px!important;padding:5px 10px 5px 5px!important;border:1px solid #e0e7e4!important;border-radius:14px!important;background:#fff!important;min-width:166px!important}
+#home .msProfileAvatar{width:36px!important;height:36px!important;min-width:36px!important;border-radius:11px!important;display:grid!important;place-items:center!important;background:#e9f6ef!important;color:#0B6B4B!important;font-size:14px!important;font-weight:1000!important}
+#home .msProfileCard div{min-width:0!important}
+#home .msProfileCard strong{display:block!important;color:#253c34!important;font-size:12px!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+#home .msProfileCard small{display:block!important;color:#83908b!important;font-size:9px!important;font-weight:750!important;margin-top:2px!important}
+#home .msCustomizeBtn{padding:10px 13px!important;border-radius:11px!important;background:#fff!important;color:#0B6B4B!important;border:1px solid #bad7ca!important;box-shadow:none!important;font-size:11px!important;font-weight:950!important;white-space:nowrap!important}
+#home .msCustomizeBtn:hover{background:#0B6B4B!important;color:#fff!important;transform:translateY(-1px)!important}
+#home .msDashboardPanel{
+  background:#fff!important;
+  border:1px solid #e3e9e7!important;
+  border-radius:18px!important;
+  box-shadow:0 12px 30px rgba(28,66,54,.065)!important;
+}
+#home .msQuickAccessPanel{padding:18px!important;margin-bottom:18px!important}
+#home .msSectionTitle{display:flex!important;align-items:center!important;gap:12px!important;margin-bottom:15px!important}
+#home .msSectionTitle>span{width:5px!important;height:39px!important;border-radius:6px!important;background:linear-gradient(180deg,#F0C44B,#D9A11A)!important;box-shadow:0 4px 10px rgba(217,161,26,.25)!important}
+#home .msSectionTitle h2{margin:0!important;color:#173a2f!important;font-size:19px!important;font-weight:1000!important;letter-spacing:.35px!important}
+#home .msSectionTitle p{margin:3px 0 0!important;color:#82908b!important;font-size:11px!important;font-weight:650!important}
+#home .msQuickGrid{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:13px!important;justify-content:center!important}
+#home .msQuickCard{
+  --card-tone:var(--ms-green);
+  position:relative!important;
+  min-width:0!important;
+  min-height:190px!important;
+  display:flex!important;
+  flex-direction:column!important;
+  align-items:stretch!important;
+  text-align:left!important;
+  padding:15px!important;
+  overflow:hidden!important;
+  background:#fff!important;
+  color:var(--ms-ink)!important;
+  border:1px solid #e3e9e7!important;
+  border-radius:16px!important;
+  box-shadow:0 9px 22px rgba(22,62,49,.07)!important;
+  transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease!important;
+}
+#home .msQuickCard:before{content:"";position:absolute!important;inset:0 0 auto!important;height:4px!important;background:var(--card-tone)!important}
+#home .msQuickCard:after{content:"";position:absolute!important;width:92px!important;height:92px!important;border-radius:50%!important;right:-42px!important;top:-44px!important;background:color-mix(in srgb,var(--card-tone) 9%,transparent)!important;pointer-events:none!important}
+#home .msQuickCard:hover{transform:translateY(-4px)!important;border-color:color-mix(in srgb,var(--card-tone) 38%,#e3e9e7)!important;box-shadow:0 16px 30px rgba(24,73,56,.12)!important}
+#home .msTone-green{--card-tone:#1E8E5A}
+#home .msTone-gold{--card-tone:#D9A11A}
+#home .msTone-lime{--card-tone:#42A86B}
+#home .msTone-forest{--card-tone:#0B6B4B}
+#home .msTone-purple{--card-tone:#7B4AE2}
+#home .msTone-blue{--card-tone:#2490F0}
+#home .msQuickIcon{width:48px!important;height:48px!important;display:grid!important;place-items:center!important;border-radius:50%!important;background:color-mix(in srgb,var(--card-tone) 13%,white)!important;color:var(--card-tone)!important;font-size:22px!important;border:1px solid color-mix(in srgb,var(--card-tone) 22%,white)!important;margin:1px 0 12px!important}
+#home .msQuickBody{flex:1!important;min-width:0!important}
+#home .msQuickBody h3{margin:0 0 6px!important;color:#213a31!important;font-size:15px!important;font-weight:1000!important;line-height:1.15!important}
+#home .msQuickBody p{margin:0!important;color:#77847f!important;font-size:11px!important;line-height:1.45!important;font-weight:600!important}
+#home .msQuickFooter{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:8px!important;margin-top:13px!important;padding-top:11px!important;border-top:1px solid #edf1ef!important}
+#home .msQuickFooter>span{color:#596a63!important;font-size:10px!important;font-weight:900!important;line-height:1.25!important;max-width:48%!important}
+#home .msQuickFooter button{display:inline-flex!important;align-items:center!important;justify-content:center!important;gap:6px!important;padding:8px 10px!important;border-radius:10px!important;background:var(--card-tone)!important;color:#fff!important;border:0!important;box-shadow:none!important;font-size:9px!important;font-weight:1000!important;letter-spacing:.35px!important;white-space:nowrap!important}
+#home .msQuickFooter button:hover{filter:brightness(1.07)!important;transform:translateY(-1px)!important}
+#home .msDashboardLowerGrid{display:grid!important;grid-template-columns:1.08fr 1.25fr .92fr!important;gap:15px!important;align-items:stretch!important}
+#home .msSummaryBlock,#home .msPerformanceBlock,#home .msYearBlock{padding:17px!important;display:flex!important;flex-direction:column!important;min-width:0!important}
+#home .msBlockHead{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:10px!important;margin-bottom:13px!important;min-height:30px!important}
+#home .msBlockHead h2{margin:0!important;color:#193b30!important;font-size:15px!important;font-weight:1000!important;letter-spacing:.3px!important}
+#home .msBlockHead button{padding:6px 8px!important;border-radius:9px!important;background:#f3f7f5!important;color:#0B6B4B!important;border:1px solid #dae6e0!important;box-shadow:none!important;font-size:9px!important;font-weight:900!important;white-space:nowrap!important}
+#home .msBlockHead select{width:auto!important;min-width:132px!important;height:32px!important;padding:0 29px 0 9px!important;border-radius:9px!important;background:#f6f8f7!important;color:#52625c!important;border:1px solid #dde5e1!important;font-size:9px!important;font-weight:850!important}
+#home .msMiniGrid{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important;margin-bottom:13px!important}
+#home .msMiniStat{display:flex!important;align-items:center!important;gap:8px!important;min-width:0!important;padding:9px!important;border:1px solid #e8eeeb!important;border-radius:12px!important;background:#fafcfb!important}
+#home .msMiniStat>span{width:32px!important;height:32px!important;min-width:32px!important;display:grid!important;place-items:center!important;border-radius:10px!important;font-size:14px!important;font-weight:1000!important}
+#home .msMini-green>span{background:#e6f5ed!important;color:#0B6B4B!important}
+#home .msMini-gold>span{background:#fff5d8!important;color:#a97700!important}
+#home .msMini-purple>span{background:#f0eafd!important;color:#7B4AE2!important}
+#home .msMini-blue>span{background:#e6f3ff!important;color:#2490F0!important}
+#home .msMiniStat div{min-width:0!important}
+#home .msMiniStat strong{display:block!important;color:#203a31!important;font-size:12px!important;line-height:1.15!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+#home .msMiniStat small{display:block!important;color:#87938e!important;font-size:8px!important;font-weight:750!important;margin-top:2px!important}
+#home .msRecentActivity{margin-top:auto!important;padding-top:4px!important}
+#home .msRecentActivity h3,#home .msChartWrap h3{margin:0 0 9px!important;color:#4e6159!important;font-size:10px!important;font-weight:1000!important;letter-spacing:.3px!important}
+#home .msRecentActivity>div{display:flex!important;align-items:center!important;gap:8px!important;padding:7px 0!important;border-bottom:1px solid #eef2f0!important;color:#708079!important;font-size:9px!important;font-weight:650!important;line-height:1.3!important}
+#home .msRecentActivity>div:last-child{border-bottom:0!important}
+#home .msDot{width:7px!important;height:7px!important;min-width:7px!important;border-radius:50%!important;background:#1E8E5A!important}
+#home .msDot.gold{background:#D9A11A!important}.msDot.purple{background:#7B4AE2!important}.msDot.blue{background:#2490F0!important}
+#home .msChartWrap{margin-top:2px!important;padding:11px 10px 6px!important;background:#fbfcfc!important;border:1px solid #e8eeeb!important;border-radius:13px!important}
+#home .msSalesChart{display:block!important;width:100%!important;height:auto!important;max-height:190px!important;overflow:visible!important}
+#home .msChartGrid line{stroke:#e8eeeb!important;stroke-width:1!important}
+#home .msChartArea{fill:rgba(30,142,90,.08)!important}
+#home .msChartLine{fill:none!important;stroke:#1E8E5A!important;stroke-width:4!important;stroke-linecap:round!important;stroke-linejoin:round!important}
+#home .msSalesChart circle{fill:#fff!important;stroke:#1E8E5A!important;stroke-width:3!important}
+#home .msChartLabels text{fill:#87938e!important;font-size:10px!important;font-weight:800!important;text-transform:capitalize!important}
+#home .msPrimaryAction{width:100%!important;min-height:40px!important;margin-top:12px!important;padding:10px 12px!important;border-radius:11px!important;background:linear-gradient(135deg,#0B6B4B,#1E8E5A)!important;color:#fff!important;border:0!important;box-shadow:0 9px 18px rgba(11,107,75,.18)!important;font-size:10px!important;font-weight:1000!important;letter-spacing:.25px!important}
+#home .msPrimaryAction:hover{filter:brightness(1.08)!important;transform:translateY(-1px)!important}
+#home .msYearList{display:grid!important;gap:7px!important;flex:1!important}
+#home .msYearList>div{display:grid!important;grid-template-columns:36px minmax(0,1fr) auto!important;align-items:center!important;gap:9px!important;padding:8px!important;border-radius:12px!important;border:1px solid #e9eeec!important;background:#fbfcfc!important}
+#home .msYearIcon{width:34px!important;height:34px!important;display:grid!important;place-items:center!important;border-radius:10px!important;background:#e7f5ed!important;color:#0B6B4B!important;font-size:13px!important;font-weight:1000!important}
+#home .msYearIcon.blue{background:#e7f3ff!important;color:#2490F0!important}.msYearIcon.purple{background:#f0eafd!important;color:#7B4AE2!important}.msYearIcon.gold{background:#fff4d6!important;color:#a87600!important}
+#home .msYearList p{margin:0!important;color:#42574f!important;font-size:10px!important;font-weight:900!important;min-width:0!important}
+#home .msYearList p small{display:block!important;margin-top:2px!important;color:#929c98!important;font-size:8px!important;font-weight:650!important}
+#home .msYearList strong{color:#173b2e!important;font-size:10px!important;text-align:right!important;white-space:nowrap!important}
+#home .msDashboardFooterDate{text-align:right!important;margin:11px 3px 0!important;color:#7a8983!important;font-size:9px!important;font-weight:750!important}
+
+@media(max-width:1280px){
+  #home .msDashboardHeader{align-items:flex-start!important}
+  #home .msDashboardHeaderRight{flex-wrap:wrap!important}
+  #home .msQuickGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  #home .msDashboardLowerGrid{grid-template-columns:1fr 1fr!important}
+  #home .msYearBlock{grid-column:1/-1!important}
+}
+@media(max-width:860px){
+  .g2main.dashboardMain{width:96vw!important;margin-top:12px!important}
+  #home .msDashboard{padding:10px!important;border-radius:18px!important}
+  #home .msDashboardHeader{display:grid!important;grid-template-columns:1fr!important;padding:13px!important}
+  #home .msDashboardHeaderRight{justify-content:flex-start!important}
+  #home .msPlanCard{white-space:normal!important}
+  #home .msDashboardLowerGrid{grid-template-columns:1fr!important}
+  #home .msYearBlock{grid-column:auto!important}
+}
+@media(max-width:620px){
+  #home .msQuickGrid{grid-template-columns:1fr!important}
+  #home .msQuickCard{min-height:168px!important}
+  #home .msHeaderIcons{order:3!important}
+  #home .msProfileCard{min-width:0!important;flex:1!important}
+  #home .msMiniGrid{grid-template-columns:1fr 1fr!important}
+}
+@media(max-width:420px){
+  #home .msDashboardHeaderRight{display:grid!important;grid-template-columns:1fr 1fr!important;width:100%!important}
+  #home .msPlanCard,#home .msProfileCard,#home .msCustomizeBtn{grid-column:1/-1!important}
+  #home .msMiniGrid{grid-template-columns:1fr!important}
+}
+@media print{
+  #home .msDashboardHeader,#home .msQuickAccessPanel,#home .msDashboardFooterDate{display:none!important}
+  #home .msDashboardLowerGrid{grid-template-columns:1fr!important}
+  #home .msDashboardPanel{box-shadow:none!important;border:1px solid #bbb!important}
+}
+
+.msDashboardCompanyName{display:block;margin-top:4px;color:#65726d;font-size:12px;font-weight:700;letter-spacing:.01em}
+
+
+/* === Correction ciblée 3.1.0 : menu horizontal flexible au défilement === */
+.g2topbar{
+  position:sticky!important;
+  top:0!important;
+  z-index:100!important;
+}
+.g2nav{
+  min-width:0!important;
+  flex-wrap:nowrap!important;
+  overflow-x:auto!important;
+  overflow-y:hidden!important;
+  scroll-behavior:smooth!important;
+  scroll-snap-type:x proximity!important;
+  overscroll-behavior-inline:contain!important;
+  -webkit-overflow-scrolling:touch!important;
+  scrollbar-width:thin!important;
+  scrollbar-color:rgba(217,161,26,.78) rgba(255,255,255,.10)!important;
+}
+.g2nav::-webkit-scrollbar{height:5px!important}
+.g2nav::-webkit-scrollbar-track{background:rgba(255,255,255,.08)!important;border-radius:999px!important}
+.g2nav::-webkit-scrollbar-thumb{background:rgba(217,161,26,.82)!important;border-radius:999px!important}
+.g2nav button{
+  flex:0 0 auto!important;
+  scroll-snap-align:center!important;
+}
+@media(max-width:1100px){
+  .g2nav{order:3!important;flex:1 0 100%!important;width:100%!important;padding:3px 0 5px!important}
+}
+
+
+/* GLOBAL MARKET 3.2 — Panier professionnel intégré à la section Vente */
+.salePosWorkspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(350px,430px);gap:18px;align-items:start}.saleCatalogPane{display:flex;flex-direction:column;gap:16px;min-width:0}.saleProCartPanel{position:sticky;top:132px;background:#fff;border:1px solid #dbe7e4;border-radius:24px;box-shadow:0 18px 48px rgba(15,23,42,.12);overflow:hidden;color:#0f172a}.saleProCartHeader{display:flex;align-items:center;justify-content:space-between;gap:12px;background:linear-gradient(135deg,#0B6B4B,#1E8E5A);padding:17px 18px;color:#fff}.saleProCartHeader span{display:block;color:#f7d56c;font-size:11px;font-weight:1000;letter-spacing:.16em}.saleProCartHeader h3{margin:3px 0 0;color:#fff;font-size:18px;font-weight:1000}.saleProCartHeader>b{display:grid;place-items:center;width:42px;height:42px;border-radius:50%;background:#fff;color:#0B6B4B;font-size:18px;box-shadow:0 8px 20px rgba(0,0,0,.18)}.saleProCartClient{padding:14px;border-bottom:1px solid #edf2f1;background:#f8fbfa}.saleProCartClientTitle{display:flex;align-items:center;gap:9px;margin-bottom:10px}.saleProCartClientTitle>span{display:grid;place-items:center;width:38px;height:38px;border-radius:13px;background:#e7f5ef}.saleProCartClientTitle b{display:block;color:#0B6B4B;font-size:12px;letter-spacing:.05em}.saleProCartClientTitle small{display:block;margin-top:2px;color:#64748b;font-weight:700}.saleProCartClient select,.saleProCartClient input{width:100%;height:42px;border:1px solid #d4e2de;border-radius:12px;background:#fff;color:#111827;padding:0 11px;font-weight:800;outline:none}.saleProCartClient select:focus,.saleProCartClient input:focus{border-color:#1E8E5A;box-shadow:0 0 0 3px rgba(30,142,90,.12)}.saleProCartClientFields{display:grid;grid-template-columns:1fr;gap:8px;margin-top:8px}.saleProCartContractFields{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:8px}.saleProCartContractFields button{white-space:nowrap;border-radius:12px!important}.saleProCartList{max-height:455px;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px;background:#fff}.saleProCartLine{border:1px solid #e2e8f0;border-radius:17px;padding:11px;background:#fff;box-shadow:0 6px 18px rgba(15,23,42,.055)}.saleProCartLineHead{display:grid;grid-template-columns:38px minmax(0,1fr) 30px;gap:9px;align-items:center}.saleProCartLineIcon{display:grid;place-items:center;width:38px;height:38px;border-radius:13px;background:#e8f7ef}.saleProCartLineIcon.service{background:#fff3d9}.saleProCartLineHead b{display:block;font-size:12.5px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.saleProCartLineHead small{display:block;margin-top:3px;font-size:9.5px;color:#64748b;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.saleProCartRemove{width:30px!important;height:30px!important;min-width:30px!important;min-height:30px!important;padding:0!important;border:0!important;border-radius:10px!important;background:#fff0f0!important;color:#c62828!important;font-size:20px!important;box-shadow:none!important}.saleProCartLineBody{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px}.saleProQty{display:grid;grid-template-columns:30px 46px 30px;align-items:center;border:1px solid #dce6e3;border-radius:11px;overflow:hidden}.saleProQty button{width:30px!important;height:30px!important;min-width:30px!important;min-height:30px!important;padding:0!important;border:0!important;border-radius:0!important;background:#eef7f3!important;color:#0B6B4B!important;font-size:17px!important;box-shadow:none!important}.saleProQty input{width:46px;height:30px;border:0;border-left:1px solid #dce6e3;border-right:1px solid #dce6e3;text-align:center;font-weight:1000;color:#111827;outline:none}.saleProServed{font-size:9.5px;color:#7c5a00;background:#fff5d7;border-radius:999px;padding:5px 7px;font-weight:900}.saleProCartLineFoot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:9px;padding-top:8px;border-top:1px dashed #dce6e3}.saleProCartLineFoot span{font-size:10px;color:#64748b;font-weight:800}.saleProCartLineFoot strong{font-size:14px;color:#0B6B4B}.saleProCartEmpty{display:flex;min-height:190px;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:22px;color:#64748b}.saleProCartEmpty>span{font-size:38px}.saleProCartEmpty b{margin-top:8px;color:#0B6B4B}.saleProCartEmpty p{margin:5px 0 0;font-size:12px;line-height:1.45}.saleProCartSummary{padding:13px 15px;border-top:1px solid #edf2f1;background:#f8fbfa}.saleProCartSummary>div{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 0}.saleProCartSummary span{font-size:11px;color:#64748b;font-weight:800}.saleProCartSummary b{font-size:12px;color:#0f172a}.saleProCartGrandTotal{margin-top:7px;padding-top:10px!important;border-top:1px solid #dbe7e4}.saleProCartGrandTotal span{color:#0B6B4B!important;font-weight:1000!important}.saleProCartGrandTotal strong{font-size:21px;color:#D9A11A}.saleProCartActions{display:grid;grid-template-columns:auto 1fr;gap:9px;padding:13px 15px 16px;background:#fff}.saleProCartActions button{height:47px;border:0;border-radius:14px;font-weight:1000;cursor:pointer}.saleProCartClear{padding:0 15px;background:#fff0f0!important;color:#b42318!important;box-shadow:none!important}.saleProCartCheckout{background:linear-gradient(135deg,#0B6B4B,#1E8E5A)!important;color:#fff!important;box-shadow:0 12px 24px rgba(11,107,75,.24)!important}.saleProCartActions button:disabled{opacity:.45;cursor:not-allowed;box-shadow:none!important}.saleCartAddBtn{background:linear-gradient(135deg,#0B6B4B,#1E8E5A)!important}.salePosPanel .salePosGrid{grid-template-columns:repeat(auto-fill,minmax(145px,1fr))}@media(max-width:1180px){.salePosWorkspace{grid-template-columns:1fr}.saleProCartPanel{position:relative;top:auto}.saleProCartList{max-height:none}}@media(max-width:700px){.saleProCartPanel{border-radius:18px}.saleProCartContractFields{grid-template-columns:1fr}.saleProCartActions{grid-template-columns:1fr}.saleProCartClear{order:2}.saleProCartCheckout{order:1}.saleProCartList{padding:9px}.saleProCartClient{padding:11px}.saleProCartLineBody{align-items:flex-start;flex-direction:column}.saleProServed{align-self:flex-start}}
+
+
+/* GLOBAL MARKET 3.3 — lignes du panier cliquables et modifiables */
+.saleProCartLineClickable{position:relative;cursor:pointer;transition:border-color .16s ease,box-shadow .16s ease,transform .12s ease,background .16s ease;outline:none}
+.saleProCartLineClickable:hover{border-color:#77b99f;background:#fbfefd;box-shadow:0 12px 26px rgba(11,107,75,.12);transform:translateY(-1px)}
+.saleProCartLineClickable:focus-visible{border-color:#1E8E5A;box-shadow:0 0 0 3px rgba(30,142,90,.18),0 12px 26px rgba(11,107,75,.12)}
+.saleProCartLineClickable:active{transform:translateY(0)}
+.saleProCartEditHint{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:9px;padding:7px 9px;border-radius:10px;background:#edf8f3;color:#0B6B4B;font-size:10px;font-weight:1000;letter-spacing:.025em;transition:background .15s ease,color .15s ease}
+.saleProCartEditHint span{font-size:14px;line-height:1}
+.saleProCartLineClickable:hover .saleProCartEditHint,.saleProCartLineClickable:focus-visible .saleProCartEditHint{background:#0B6B4B;color:#fff}
+.saleProCartLineClickable .saleProQty,.saleProCartLineClickable .saleProCartRemove{cursor:auto}
+@media(max-width:700px){.saleProCartEditHint{padding:8px;font-size:10.5px}}

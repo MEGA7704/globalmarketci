@@ -1,18 +1,16 @@
 {
   "name": "global-market-cloudflare",
-  "version": "4.6.1",
+  "version": "3.3.0",
   "private": true,
-  "description": "GLOBAL MARKET - correction anti-503 : ressources statiques servies sans Function, API isolée et continuité sécurisée du Super Admin.",
+  "description": "GLOBAL MARKET - lignes du panier professionnel cliquables et modifiables avant encaissement.",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "validate": "node scripts/validate.mjs",
-    "test:isolation": "node scripts/test-isolation.mjs",
-    "test:e2e": "node scripts/test-browser-smoke.mjs",
-    "build": "npm run validate && npm run test:isolation && node scripts/build.mjs",
-    "check": "npm run build && npm run test:e2e",
+    "build": "npm run validate && node scripts/build.mjs",
+    "check": "npm run build",
     "dev": "npm run build && wrangler pages dev public",
     "deploy": "npm run build && wrangler pages deploy public --project-name=global-market"
   },

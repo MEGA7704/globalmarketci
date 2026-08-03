@@ -1,167 +1,134 @@
 import fs from 'node:fs';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 
-const jsModules = [
-  'public/assets/app.js',
-  'public/assets/app-sales.js',
-  'public/assets/app-admin.js',
-  'public/assets/app-bootstrap.js'
-];
-const cssModules = [
-  'public/assets/style.css',
-  'public/assets/style-sales.css',
-  'public/assets/style-admin.css'
-];
 const required = [
   'public/index.html',
-  ...jsModules,
-  ...cssModules,
+  'public/assets/app.js',
+  'public/assets/style.css',
   'public/_worker.js',
-  'public/server/checkout.js',
-  'public/server/session-utils.js',
   'public/_routes.json',
-  'cloudflare/schema.sql',
-  'cloudflare/migrations/0007_transactional_checkout.sql',
   'wrangler.json'
 ];
 
-function fail(message) {
-  console.error(`[validate] ${message}`);
-  process.exit(1);
-}
-
-for (const file of required) if (!fs.existsSync(file)) fail(`Fichier obligatoire introuvable : ${file}`);
-
-const moduleSources = jsModules.map(file => ({ file, source: fs.readFileSync(file, 'utf8') }));
-for (const { file, source } of moduleSources) {
-  try {
-    new Function(source);
-    console.log(`[validate] ${file} : syntaxe valide`);
-  } catch (error) {
-    console.error(`[validate] Erreur JavaScript dans ${file}`);
-    console.error(error);
+for (const file of required) {
+  if (!fs.existsSync(file)) {
+    console.error(`[validate] Fichier obligatoire introuvable : ${file}`);
     process.exit(1);
   }
 }
 
-await import(`${pathToFileURL(path.resolve('public/server/checkout.js')).href}?v=${Date.now()}`);
-await import(`${pathToFileURL(path.resolve('public/_worker.js')).href}?v=${Date.now()}`);
-console.log('[validate] Modules Worker et encaissement : syntaxe valide');
-
-const app = moduleSources.map(item => item.source).join('\n');
+const app = fs.readFileSync('public/assets/app.js', 'utf8');
 const worker = fs.readFileSync('public/_worker.js', 'utf8');
-const checkout = fs.readFileSync('public/server/checkout.js', 'utf8');
-const schema = fs.readFileSync('cloudflare/schema.sql', 'utf8');
-const html = fs.readFileSync('public/index.html', 'utf8');
 const wrangler = JSON.parse(fs.readFileSync('wrangler.json', 'utf8'));
 
-for (const route of ["/api/login", "/api/load", "/api/save", "/api/cart/checkout"]) {
-  if (!worker.includes(`url.pathname === '${route}'`)) fail(`Route ${route} absente.`);
+try {
+  new Function(app);
+  console.log('[validate] public/assets/app.js : syntaxe valide');
+} catch (error) {
+  console.error('[validate] Erreur JavaScript dans public/assets/app.js');
+  console.error(error);
+  process.exit(1);
 }
 
-const architectureChecks = [
-  ["STORAGE_VERSION = 7", 'version de stockage 7'],
-  ["storageMode: 'transactional-checkout-v7'", 'mode d’encaissement transactionnel'],
-  ['COMPANY_ENTITY_TABLES', 'tables métiers D1 dédiées'],
-  ['gm_company_storage_meta', 'révisions par entreprise'],
-  ['gm_company_snapshots', 'snapshots atomiques'],
-  ['writeNormalizedCompanyState', 'sauvegarde normalisée'],
-  ['readNormalizedCompanyState', 'lecture normalisée'],
-  ['COMPANY_DATA_CONFLICT', 'protection de concurrence'],
-  ['executeCartCheckout', 'moteur d’encaissement serveur'],
-  ['gm_checkout_requests', 'idempotence des encaissements']
-];
-for (const [marker, label] of architectureChecks) {
-  if (!(worker.includes(marker) || checkout.includes(marker) || schema.includes(marker))) fail(`Architecture incomplète : ${label}.`);
+if (!worker.includes("url.pathname === '/api/login' && request.method === 'POST'")) {
+  console.error('[validate] Route sécurisée POST /api/login absente.');
+  process.exit(1);
+}
+if (!worker.includes("url.pathname === '/api/load'")) {
+  console.error('[validate] Route /api/load absente.');
+  process.exit(1);
+}
+if (!worker.includes("url.pathname === '/api/save'")) {
+  console.error('[validate] Route /api/save absente.');
+  process.exit(1);
 }
 
-const checkoutChecks = [
-  ['INSERT OR IGNORE INTO gm_checkout_requests', 'réservation idempotente'],
-  ['STOCK_INSUFFICIENT', 'contrôle de stock serveur'],
-  ['expectedRevision', 'contrôle de révision'],
-  ['checkoutId', 'numéro unique d’encaissement'],
-  ['stockMovements', 'journal des mouvements de stock'],
-  ['saveCompanyFromState', 'publication atomique du nouvel état']
-];
-for (const [marker, label] of checkoutChecks) if (!checkout.includes(marker)) fail(`Encaissement serveur incomplet : ${label}.`);
 
-const functionOccurrences = new Map();
-const functionPattern = /^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/gm;
-for (const { file, source } of moduleSources) {
-  for (const match of source.matchAll(functionPattern)) {
-    const list = functionOccurrences.get(match[1]) || [];
-    list.push(file);
-    functionOccurrences.set(match[1], list);
-  }
+if (!worker.includes("url.pathname === '/api/companies/delete'")) {
+  console.error('[validate] Route sécurisée de suppression entreprise absente.');
+  process.exit(1);
 }
-const duplicateFunctions = [...functionOccurrences.entries()].filter(([, files]) => files.length > 1);
-if (duplicateFunctions.length) {
-  fail(`Fonctions dupliquées détectées : ${duplicateFunctions.map(([name, files]) => `${name} (${files.length})`).join(', ')}`);
-}
-console.log(`[validate] ${functionOccurrences.size} fonctions déclarées, aucun nom dupliqué.`);
-
-for (const { file, source } of moduleSources) {
-  const bytes = Buffer.byteLength(source);
-  if (bytes > 270_000) fail(`${file} reste trop volumineux (${bytes} octets).`);
-}
-for (const file of cssModules) {
-  const bytes = fs.statSync(file).size;
-  if (bytes > 270_000) fail(`${file} reste trop volumineux (${bytes} octets).`);
-}
-
-const workerBytes = fs.statSync('public/_worker.js').size;
-if (workerBytes >= 100_000) fail(`public/_worker.js doit rester sous 100 000 octets (${workerBytes} octets).`);
-
-const expectedOrder = [
-  ['style', 'css'], ['style-sales', 'css'], ['style-admin', 'css'],
-  ['build-version', 'js'], ['app', 'js'], ['app-sales', 'js'], ['app-admin', 'js'], ['app-bootstrap', 'js']
-];
-let last = -1;
-for (const [base, ext] of expectedOrder) {
-  const pattern = new RegExp(`assets/${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\.[a-f0-9]{12})?\\.${ext}`);
-  const match = pattern.exec(html);
-  const position = match?.index ?? -1;
-  if (position < 0 || position < last) fail(`Ordre des modules incorrect ou fichier absent dans index.html : ${base}.${ext}`);
-  last = position;
+if (!app.includes('deleteCompanyAccount') || !app.includes('Supprimer le compte')) {
+  console.error('[validate] Action Super Admin de suppression entreprise absente.');
+  process.exit(1);
 }
 
 const registrationChecks = [
-  'FICHE D’INSCRIPTION DES ENTREPRISES', 'id="cName"', 'id="cLegalForm"', 'id="cRccm"',
-  'id="cTaxAccount"', 'id="cType"', 'id="cActivity"', 'id="cOwner"', 'id="cAddress"',
-  'id="cPhone"', 'id="cEmail"', 'id="cPass"', 'CRÉATION EN COURS…'
+  ['FICHE D’INSCRIPTION DES ENTREPRISES', 'titre de la fiche d’inscription'],
+  ['id="cName"', 'champ raison sociale'],
+  ['id="cLegalForm"', 'champ forme juridique'],
+  ['id="cRccm"', 'champ RCCM'],
+  ['id="cTaxAccount"', 'champ compte contribuable'],
+  ['id="cType"', 'champ type de commerce'],
+  ['Produits et services', 'option Produits et services'],
+  ['Gestion commerciale générale', 'option Gestion commerciale générale'],
+  ['id="cActivity"', 'champ activité principale'],
+  ['id="cOwner"', 'champ gérant'],
+  ['id="cAddress"', 'champ adresse'],
+  ['id="cPhone"', 'champ téléphone'],
+  ['id="cEmail"', 'champ e-mail'],
+  ['id="cPass"', 'champ mot de passe administrateur'],
+  ['CRÉATION EN COURS…', 'état de chargement du bouton d’inscription']
 ];
-for (const marker of registrationChecks) if (!app.includes(marker)) fail(`Composant d’inscription incomplet : ${marker}`);
+for (const [needle, label] of registrationChecks) {
+  if (!app.includes(needle)) {
+    console.error(`[validate] Composant d’inscription incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
 
 const planChecks = [
-  'const FREE_PLAN_DAYS=21;', 'const BUSINESS_PLAN_DAYS=365;', 'const BUSINESS_PLAN_AMOUNT=26300;',
-  'https://pay.wave.com/m/M_ci_Enx-2JNAklk-/c/ci/?amount=26300', '15*60*1000',
-  'Acheter mon plan Business', 'Compris'
+  ['const FREE_PLAN_DAYS=21;', 'Plan Free de 21 jours'],
+  ['const BUSINESS_PLAN_DAYS=365;', 'Plan Business de 365 jours'],
+  ['const BUSINESS_PLAN_AMOUNT=26300;', 'montant Business de 26 300 FCFA'],
+  ["https://pay.wave.com/m/M_ci_Enx-2JNAklk-/c/ci/?amount=26300", 'lien Wave Business'],
+  ['15*60*1000', 'rappel automatique toutes les 15 minutes'],
+  ['Acheter mon plan Business', 'bouton achat Business'],
+  ['Compris', 'bouton de fermeture du rappel Free']
 ];
-for (const marker of planChecks) if (!app.includes(marker)) fail(`Gestion des plans incomplète : ${marker}`);
+for (const [needle, label] of planChecks) {
+  if (!app.includes(needle)) {
+    console.error(`[validate] Gestion des plans incomplète : ${label}.`);
+    process.exit(1);
+  }
+}
 
-const publicShopOrderChecks = [
-  'publicDeliveryRate', 'publicDeliveryFee', 'Frais de livraison', 'Payer à la livraison',
-  'Payer maintenant', 'publicTransactionId', 'TRANSACTION_ID_REQUIRED', 'marketplaceDeliveryFee',
-  'paymentChoice', 'deliveryFeeRate', 'paymentStatus', 'publicShopChangePage',
-  'publicShopPagination', 'pageSize=16'
+const targetedSaleChecks = [
+  ['id="saleCartClientsServed"', 'champ Nb de Clients servis dans le formulaire de vente'],
+  ['clientsServed,unit,total', 'enregistrement du nombre de clients servis'],
+  ['r.clientsServed+=saleClientsServedValue(s)', 'comptabilisation dans le bilan détaillé'],
+  ['initFlexibleHorizontalMenu', 'menu horizontal flexible au défilement'],
+  ['saleProfessionalCart', 'panier professionnel intégré à la vente'],
+  ['ENCAISSER ET VALIDER', 'bouton d’encaissement du panier'],
+  ["saleStatus:'cart'", 'mise en attente des articles avant encaissement'],
+  ['openPendingCartLineFromClick', 'ouverture de la modification en cliquant sur une ligne du panier'],
+  ['saleProCartLineClickable', 'style cliquable des lignes du panier']
 ];
-for (const marker of publicShopOrderChecks) if (!(app.includes(marker) || worker.includes(marker))) fail(`Commande boutique incomplète : ${marker}`);
+for (const [needle, label] of targetedSaleChecks) {
+  if (!app.includes(needle)) {
+    console.error(`[validate] Correction ciblée incomplète : ${label}.`);
+    process.exit(1);
+  }
+}
 
-const saleChecks = [
-  'id="saleCartClientsServed"', 'clientsServed,unit,total', 'r.clientsServed+=saleClientsServedValue(s)',
-  'initFlexibleHorizontalMenu', 'saleProfessionalCart', 'ENCAISSER ET VALIDER', "saleStatus:'cart'",
-  'openPendingCartLineFromClick', 'saleProCartLineClickable', '/api/cart/checkout', 'createCheckoutIdempotencyKey'
-];
-for (const marker of saleChecks) if (!app.includes(marker)) fail(`Fonction Vente incomplète : ${marker}`);
+if (/passwordHash|passwordSalt|derivePasswordHash/.test(app)) {
+  console.error('[validate] Une logique sensible de mot de passe est présente dans le navigateur.');
+  process.exit(1);
+}
+if (/localStorage\s*\.\s*setItem\s*\(/.test(app)) {
+  console.error('[validate] Une écriture localStorage subsiste dans app.js.');
+  process.exit(1);
+}
+if (wrangler.pages_build_output_dir !== 'public') {
+  console.error('[validate] pages_build_output_dir doit être exactement "public".');
+  process.exit(1);
+}
+if (!wrangler.kv_namespaces?.some(item => item.binding === 'GLOBAL_MARKET_KV')) {
+  console.error('[validate] Binding KV GLOBAL_MARKET_KV absent.');
+  process.exit(1);
+}
+if (!wrangler.d1_databases?.some(item => item.binding === 'GLOBAL_MARKET_D1')) {
+  console.error('[validate] Binding D1 GLOBAL_MARKET_D1 absent.');
+  process.exit(1);
+}
 
-if (/passwordHash|passwordSalt|derivePasswordHash/.test(app)) fail('Une logique sensible de mot de passe est présente dans le navigateur.');
-if (/localStorage\s*\.\s*setItem\s*\(/.test(app)) fail('Une écriture localStorage subsiste dans le navigateur.');
-if (worker.includes('GLOBAL_MARKET_KV.put(LEGACY_STATE_KEY')) fail('L’ancien état global ne doit plus être réécrit.');
-if (/GLOBAL_MARKET_KV\.put\(legacyCompanyStateKey/.test(worker)) fail('Un gros état entreprise ne doit plus être écrit dans KV.');
-
-if (wrangler.pages_build_output_dir !== 'public') fail('pages_build_output_dir doit être exactement "public".');
-if (!wrangler.kv_namespaces?.some(item => item.binding === 'GLOBAL_MARKET_KV')) fail('Binding KV GLOBAL_MARKET_KV absent.');
-if (!wrangler.d1_databases?.some(item => item.binding === 'GLOBAL_MARKET_D1')) fail('Binding D1 GLOBAL_MARKET_D1 absent.');
-
-console.log('[validate] Modules, Worker, sécurité, encaissement, KV, D1 et configuration Cloudflare : valides');
+console.log('[validate] Worker, sécurité, KV, D1 et configuration Cloudflare : valides');

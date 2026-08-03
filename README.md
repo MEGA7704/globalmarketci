@@ -26,15 +26,7 @@ cloudflare/schema.sql
 public/
   assets/
     app.js
-    app-sales.js
-    app-admin.js
-    app-bootstrap.js
     style.css
-    style-sales.css
-    style-admin.css
-  server/
-    checkout.js
-    session-utils.js
   _worker.js
   _routes.json
   _headers
@@ -42,7 +34,6 @@ public/
 scripts/
   build.mjs
   validate.mjs
-  test-isolation.mjs
 package.json
 wrangler.json
 README.md
@@ -51,24 +42,16 @@ README.md
 Fichiers principaux :
 
 ```text
-Noyau navigateur       : public/assets/app.js
-Ventes et rapports     : public/assets/app-sales.js
-Administration et stock: public/assets/app-admin.js
-Démarrage              : public/assets/app-bootstrap.js
-Styles                  : public/assets/style*.css
-Worker                  : public/_worker.js
-Encaissement serveur    : public/server/checkout.js
+Application : public/assets/app.js
+Styles      : public/assets/style.css
+Worker      : public/_worker.js
 ```
 
 ## Commandes disponibles
 
 ```bash
 npm install
-npm run validate
 npm run build
-npm run test:isolation
-npm run test:e2e
-npm run check
 npm run dev
 npm run deploy
 ```
@@ -191,56 +174,3 @@ Répertoire racine : vide
 - le nom du programme affiché reste **GLOBAL MARKET** ;
 - le nom de l’entreprise connectée apparaît comme espace entreprise dynamique ;
 - aucune modification de la connexion, de l’inscription, du Super Admin, de KV, de D1 ou du Worker de sécurité.
-
-## Version 4.0.0 — Isolation réelle des entreprises
-
-- aucune nouvelle ressource KV ou D1 n’est nécessaire ;
-- création d’un catalogue global léger dans le KV existant ;
-- création d’un état séparé pour chaque `company_id` dans le KV et D1 existants ;
-- migration automatique depuis `company:global_market_all` ;
-- conservation de l’ancien état comme sauvegarde historique en lecture seule ;
-- détection des sauvegardes obsolètes avec réponse `409 COMPANY_DATA_CONFLICT` ;
-- sérialisation des sauvegardes dans le navigateur ;
-- le Super Admin ne réécrit plus les données opérationnelles de toutes les entreprises à chaque modification.
-
-Documentation détaillée : `README_ISOLATION_MULTI_ENTREPRISES_4_0.md`.
-
-## Version 4.1.0 — Stockage métier D1 normalisé
-
-La version 4.1 remplace les gros états JSON par entreprise par des enregistrements stockés dans des tables D1 dédiées.
-
-Points principaux :
-
-- aucun nouveau KV ni nouveau D1 à créer ;
-- produits, ventes, paiements, commandes, clients et stocks séparés par table ;
-- snapshots atomiques avec révision par entreprise ;
-- migration automatique depuis les versions 4.0 et antérieures ;
-- ancien stockage conservé comme sauvegarde historique et non réécrit ;
-- gros enregistrements découpés en fragments D1 ;
-- conservation des dix derniers snapshots ;
-- initialisation du schéma mise en cache dans chaque instance Worker pour réduire la latence.
-
-Voir `README_STOCKAGE_D1_NORMALISE_4_1.md`.
-
-
-## Version 4.2.0 — Encaissement transactionnel et modules séparés
-
-- nouvelle route sécurisée `POST /api/cart/checkout` ;
-- vérification du stock et validation des ventes côté Worker ;
-- protection idempotente contre les doubles clics ;
-- numéro unique par encaissement ;
-- mouvement de stock enregistré avec chaque validation ;
-- panier Caisse isolé par utilisateur ;
-- conflit propre lorsque deux caissiers tentent de vendre le dernier article ;
-- 22 déclarations de fonctions dupliquées supprimées ;
-- JavaScript et CSS découpés en modules plus petits ;
-- Worker principal ramené sous 100 000 octets grâce aux modules serveur ;
-- migration SQL `0007_transactional_checkout.sql` ;
-- tests de concurrence, d’idempotence, d’isolation et de chargement inclus.
-
-Documentation détaillée : `README_GLOBAL_MARKET_SOLIDE_4_2.md`.
-
-
-## Version 4.4.0 — Livraison et paiement boutique
-
-Voir `README_BOUTIQUE_LIVRAISON_PAIEMENT_4_4.md`.
