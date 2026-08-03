@@ -1,0 +1,30 @@
+GLOBAL MARKET 4.4 — VALIDATION BOUTIQUE LIVRAISON ET PAIEMENT
+
+Correction ciblée : espace Boutique officielle des entreprises.
+
+Fonctions intégrées :
+- frais de livraison calculés automatiquement sur le sous-total ;
+- 5 à 4 999 FCFA : 10 % ;
+- 5 000 à 24 999 FCFA : 5 % ;
+- 25 000 à 99 999 FCFA : 2 % ;
+- 100 000 FCFA et plus : 1,5 % ;
+- choix « Payer à la livraison » ;
+- choix « Payer maintenant » ;
+- paiement immédiat par Wave ou USDT TRC20 configuré par l’entreprise ;
+- ID de transaction obligatoire pour le paiement immédiat ;
+- aucun ID exigé pour le paiement à la livraison ;
+- recalcul côté Worker du sous-total, des frais et du total ;
+- frais de livraison ajoutés au rapport lors de la validation de la commande Marketplace ;
+- blocage du bouton pendant l’enregistrement pour éviter les doubles envois.
+
+Contrôles exécutés :
+- syntaxe des quatre modules JavaScript : valide ;
+- Worker et modules serveur : valides ;
+- 556 fonctions contrôlées, aucun nom dupliqué ;
+- barème de livraison testé sur les seuils 4, 5, 4 999, 5 000, 24 999, 25 000, 99 999, 100 000 et 200 000 FCFA ;
+- tests d’isolation multi-entreprises : réussis ;
+- tests d’encaissement concurrent : réussis ;
+- construction npm : réussie ;
+- Worker inférieur à 100 000 octets.
+
+Aucune nouvelle ressource KV ou D1 n’est nécessaire.

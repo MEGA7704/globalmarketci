@@ -1,0 +1,40 @@
+GLOBAL MARKET 4.2.0 — RAPPORT DE VALIDATION
+Date : 2026-08-03
+
+VALIDATION DU CODE
+- app.js : syntaxe valide
+- app-sales.js : syntaxe valide
+- app-admin.js : syntaxe valide
+- app-bootstrap.js : syntaxe valide
+- _worker.js : syntaxe valide
+- checkout.js : syntaxe valide
+- session-utils.js : syntaxe valide
+- 545 fonctions déclarées
+- 0 nom de fonction dupliqué
+
+TESTS MÉTIER
+- Encaissement idempotent : réussi
+- Double envoi de la même demande : une seule vente créée
+- Stock décrémenté une seule fois : réussi
+- Deux caissiers sur le dernier article : une seule vente validée
+- Stock négatif : empêché
+- Panier du caissier perdant conservé : réussi
+- Isolation de deux entreprises : réussie
+- Migration depuis l’ancien stockage : réussie
+- Gros enregistrements D1 découpés et reconstruits : réussi
+
+TEST INTERFACE
+- Le test Chromium a démarré mais l’environnement a bloqué l’accès au serveur local.
+- Le contrôle structurel de repli a validé :
+  * page de connexion prioritaire ;
+  * bouton INSCRIPTION ;
+  * fonctions d’ouverture et fermeture ;
+  * règle de centrage du popup ;
+  * ordre de chargement des modules.
+
+CONSTRUCTION
+- npm run build : réussi
+- Sortie : public
+- Version : 4.2.0
+- Storage version : 7
+- Storage mode : transactional-checkout-v7

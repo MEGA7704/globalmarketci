@@ -1,7 +1,17 @@
 {
   "app": "GLOBAL MARKET",
-  "version": "4.1.0",
-  "build": "2026.08.02-577674953ad6",
-  "generatedAt": "2026-08-02T23:51:32.216Z",
-  "outputDirectory": "public"
+  "version": "4.4.0",
+  "storageVersion": 7,
+  "build": "2026.08.03-9a6d925d60cc",
+  "generatedAt": "2026-08-03T00:47:34.413Z",
+  "outputDirectory": "public",
+  "modules": [
+    "style.9a6d925d60cc.css",
+    "style-sales.9a6d925d60cc.css",
+    "style-admin.9a6d925d60cc.css",
+    "app.9a6d925d60cc.js",
+    "app-sales.9a6d925d60cc.js",
+    "app-admin.9a6d925d60cc.js",
+    "app-bootstrap.9a6d925d60cc.js"
+  ]
 }

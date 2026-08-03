@@ -19,7 +19,7 @@ class Prepared {
 class MemoryD1 {
   constructor(){
     this.meta=new Map(); this.chunks=new Map(); this.backups=[]; this.events=[]; this.backupId=0;
-    this.companyMeta=new Map(); this.snapshots=[]; this.tables=new Map();
+    this.companyMeta=new Map(); this.snapshots=[]; this.tables=new Map(); this.checkoutRequests=new Map();
   }
   prepare(sql){return new Prepared(this,sql);}
   async batch(stmts){const out=[];for(const st of stmts)out.push(await st.run());return out;}
@@ -29,6 +29,9 @@ class MemoryD1 {
     if(sql.startsWith('SELECT data FROM backups')){const rows=this.backups.filter(r=>r.company_id===a[0]).sort((x,y)=>y.id-x.id);return rows[0]?{data:rows[0].data}:null;}
     if(sql.includes('FROM gm_company_storage_meta WHERE company_id = ?')){
       const r=this.companyMeta.get(a[0]); return r?{...r}:null;
+    }
+    if(sql.startsWith('SELECT checkout_id, status, revision, result_json, error_code, updated_at FROM gm_checkout_requests')){
+      const r=this.checkoutRequests.get(`${a[0]}::${a[1]}`); return r?{...r}:null;
     }
     throw new Error('D1 first unsupported: '+sql);
   }
@@ -57,6 +60,23 @@ class MemoryD1 {
     if(sql.startsWith('INSERT INTO state_chunks')){if(!this.chunks.has(a[0]))this.chunks.set(a[0],new Map());this.chunks.get(a[0]).set(a[1],a[2]);return {success:true,meta:{changes:1}};}
     if(sql.startsWith('INSERT INTO backups')){this.backups.push({id:++this.backupId,company_id:a[0],data:a[1],created_at:a[2]});return {success:true,meta:{changes:1}};}
     if(sql.startsWith('INSERT INTO security_events')){this.events.push(a);return {success:true,meta:{changes:1}};}
+
+    if(sql.startsWith('INSERT OR IGNORE INTO gm_checkout_requests')){
+      const key=`${a[0]}::${a[1]}`;
+      if(this.checkoutRequests.has(key)) return {success:true,meta:{changes:0}};
+      this.checkoutRequests.set(key,{company_id:a[0],idempotency_key:a[1],checkout_id:a[2],cashier_id:a[3],status:'processing',revision:0,result_json:'',error_code:'',created_at:a[4],updated_at:a[5]});
+      return {success:true,meta:{changes:1}};
+    }
+    if(sql.startsWith('UPDATE gm_checkout_requests SET checkout_id = ?')){
+      const key=`${a[6]}::${a[7]}`; const current=this.checkoutRequests.get(key);
+      if(!current) return {success:true,meta:{changes:0}};
+      Object.assign(current,{checkout_id:a[0],status:a[1],revision:a[2],result_json:a[3],error_code:a[4],updated_at:a[5]});
+      return {success:true,meta:{changes:1}};
+    }
+    if(sql.startsWith('DELETE FROM gm_checkout_requests WHERE company_id = ?')){
+      let changes=0; for(const key of [...this.checkoutRequests.keys()]) if(key.startsWith(`${a[0]}::`)){this.checkoutRequests.delete(key);changes++;}
+      return {success:true,meta:{changes}};
+    }
 
     if(sql.startsWith('INSERT INTO gm_company_storage_meta')){
       if(!this.companyMeta.has(a[0]))this.companyMeta.set(a[0],{revision:0,snapshot_id:'',storage_version:a[1],updated_at:a[2]});
@@ -111,8 +131,8 @@ function assert(cond,msg){if(!cond)throw new Error(msg);}
 
 const health0=await api('/api/health');
 assert(health0.res.ok,'health failed');
-assert(health0.json.storageVersion===6,'storage version must be 6');
-assert(health0.json.storageMode==='normalized-records-v6','normalized mode missing');
+assert(health0.json.storageVersion===7,'storage version must be 7');
+assert(health0.json.storageMode==='transactional-checkout-v7','transactional checkout mode missing');
 
 const reg1=await api('/api/register-company',{method:'POST',body:{name:'Entreprise A',email:'a@example.test',password:'AdminA@12345',owner:'A',businessType:'boutique'}});
 assert(reg1.res.status===201,`register A failed: ${JSON.stringify(reg1.json)}`);
@@ -131,6 +151,67 @@ duplicateStale.items.push({id:'item-a-stale',companyId:company1,name:'Ancien ét
 const conflict=await api('/api/save',{method:'POST',body:{data:duplicateStale},cookie:reg1.cookie,csrf:csrf1});
 assert(conflict.res.status===409,'stale save must be rejected');
 assert(conflict.json.code==='COMPANY_DATA_CONFLICT','wrong conflict code');
+
+
+// Encaissement transactionnel : idempotence et concurrence sur le dernier article.
+const checkoutSeed=structuredClone((await api('/api/load',{cookie:reg1.cookie})).json);
+const currentRev=Number(checkoutSeed.app.storageRevision||0);
+const productA=checkoutSeed.items.find(i=>i.id==='item-a'); productA.stock=1; productA.stockType='limited';
+checkoutSeed.sales.push(
+  {id:'cart-line-1',companyId:company1,userId:reg1.json.session.userId,itemId:'item-a',name:'Produit A',qty:1,unit:100,total:100,clientsServed:1,saleKind:'boutique',saleStatus:'cart',status:'cart',cartPending:true,date:new Date().toISOString()},
+  {id:'cart-line-2',companyId:company1,userId:reg1.json.session.userId,itemId:'item-a',name:'Produit A',qty:1,unit:100,total:100,clientsServed:1,saleKind:'boutique',saleStatus:'cart',status:'cart',cartPending:true,date:new Date().toISOString()}
+);
+const cartSave=await api('/api/save',{method:'POST',body:{data:checkoutSeed},cookie:reg1.cookie,csrf:csrf1});
+assert(cartSave.res.ok,'cart seed save failed');
+const checkoutRevision=cartSave.json.revision;
+const checkoutBody={expectedRevision:checkoutRevision,client:{type:'particulier',name:'Client Test',phone:'0102030405'},cartLineIds:['cart-line-1'],idempotencyKey:'checkout:test:stable:0001'};
+const checkout1=await api('/api/cart/checkout',{method:'POST',body:checkoutBody,cookie:reg1.cookie,csrf:csrf1});
+assert(checkout1.res.ok,`checkout failed: ${JSON.stringify(checkout1.json)}`);
+assert(checkout1.json.checkoutId&&checkout1.json.revision===checkoutRevision+1,'checkout revision/number missing');
+const replay=await api('/api/cart/checkout',{method:'POST',body:checkoutBody,cookie:reg1.cookie,csrf:csrf1});
+assert(replay.res.ok&&replay.json.replayed===true,'idempotent replay must succeed without duplicate sale');
+const afterCheckout=await api('/api/load',{cookie:reg1.cookie});
+assert(afterCheckout.json.items.find(i=>i.id==='item-a').stock===0,'stock must be decremented exactly once');
+assert(afterCheckout.json.sales.filter(s=>s.checkoutId===checkout1.json.checkoutId).length===1,'checkout must validate exactly one cart line');
+
+const competingBody={expectedRevision:checkoutRevision,client:{type:'particulier',name:'Concurrent'},cartLineIds:['cart-line-2'],idempotencyKey:'checkout:test:concurrent:0002'};
+const competing=await api('/api/cart/checkout',{method:'POST',body:competingBody,cookie:reg1.cookie,csrf:csrf1});
+assert(competing.res.status===409,'stale concurrent checkout must be rejected');
+const afterCompeting=await api('/api/load',{cookie:reg1.cookie});
+assert(afterCompeting.json.items.find(i=>i.id==='item-a').stock===0,'concurrent checkout must never create negative stock');
+assert(afterCompeting.json.sales.find(s=>s.id==='cart-line-2').cartPending===true,'rejected cart line must remain pending');
+console.log('[test-checkout] OK - encaissement serveur idempotent, stock décrémenté une seule fois, concurrence refusée.');
+
+// Deux caissiers concurrents sur le dernier article disponible.
+const createCashier1=await api('/api/users/create',{method:'POST',body:{name:'Caisse Un',email:'caisse1@example.test',password:'Caisse1@Secure',role:'caisse',caisseStartTime:'00:00',caisseEndTime:'23:59'},cookie:reg1.cookie,csrf:csrf1});
+const createCashier2=await api('/api/users/create',{method:'POST',body:{name:'Caisse Deux',email:'caisse2@example.test',password:'Caisse2@Secure',role:'caisse',caisseStartTime:'00:00',caisseEndTime:'23:59'},cookie:reg1.cookie,csrf:csrf1});
+assert(createCashier1.res.status===201&&createCashier2.res.status===201,'cashier creation failed');
+const cashier1=await api('/api/login',{method:'POST',body:{email:'caisse1@example.test',password:'Caisse1@Secure',role:'caisse'}});
+const cashier2=await api('/api/login',{method:'POST',body:{email:'caisse2@example.test',password:'Caisse2@Secure',role:'caisse'}});
+assert(cashier1.res.ok&&cashier2.res.ok,'cashier login failed');
+const raceSeed=structuredClone((await api('/api/load',{cookie:reg1.cookie})).json);
+raceSeed.items.push({id:'item-race',companyId:company1,name:'Dernier produit',sell:500,stock:1,stockType:'limited',type:'boutique'});
+raceSeed.sales.push(
+  {id:'race-line-1',companyId:company1,userId:createCashier1.json.user.id,itemId:'item-race',name:'Dernier produit',qty:1,unit:500,total:500,clientsServed:1,saleKind:'boutique',saleStatus:'cart',status:'cart',cartPending:true,date:new Date().toISOString()},
+  {id:'race-line-2',companyId:company1,userId:createCashier2.json.user.id,itemId:'item-race',name:'Dernier produit',qty:1,unit:500,total:500,clientsServed:1,saleKind:'boutique',saleStatus:'cart',status:'cart',cartPending:true,date:new Date().toISOString()}
+);
+const raceSave=await api('/api/save',{method:'POST',body:{data:raceSeed},cookie:reg1.cookie,csrf:csrf1});
+assert(raceSave.res.ok,'race seed save failed');
+const raceRevision=raceSave.json.revision;
+const racePayload1={expectedRevision:raceRevision,client:{type:'particulier',name:'Client Caisse 1'},cartLineIds:['race-line-1'],idempotencyKey:'checkout:cashier:race:0001'};
+const racePayload2={expectedRevision:raceRevision,client:{type:'particulier',name:'Client Caisse 2'},cartLineIds:['race-line-2'],idempotencyKey:'checkout:cashier:race:0002'};
+const [race1,race2]=await Promise.all([
+  api('/api/cart/checkout',{method:'POST',body:racePayload1,cookie:cashier1.cookie,csrf:cashier1.json.session.csrfToken}),
+  api('/api/cart/checkout',{method:'POST',body:racePayload2,cookie:cashier2.cookie,csrf:cashier2.json.session.csrfToken})
+]);
+const raceStatuses=[race1.res.status,race2.res.status].sort((a,b)=>a-b);
+assert(raceStatuses[0]===200&&raceStatuses[1]===409,`exactly one cashier must succeed: ${raceStatuses}`);
+const raceAfter=await api('/api/load',{cookie:reg1.cookie});
+assert(raceAfter.json.items.find(i=>i.id==='item-race').stock===0,'last stock must end at zero');
+const raceLines=raceAfter.json.sales.filter(s=>s.id==='race-line-1'||s.id==='race-line-2');
+assert(raceLines.filter(s=>s.cartPending===false).length===1,'exactly one cashier sale must be validated');
+assert(raceLines.filter(s=>s.cartPending===true).length===1,'the losing cashier cart must remain pending');
+console.log('[test-checkout] OK - deux caissiers concurrents : une seule vente validée, aucun stock négatif.');
 
 const reg2=await api('/api/register-company',{method:'POST',body:{name:'Entreprise B',email:'b@example.test',password:'AdminB@12345',owner:'B',businessType:'service'}});
 assert(reg2.res.status===201,`register B failed: ${JSON.stringify(reg2.json)}`);

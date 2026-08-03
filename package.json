@@ -1,19 +1,20 @@
 {
   "name": "global-market-cloudflare",
-  "version": "4.1.0",
+  "version": "4.4.0",
   "private": true,
-  "description": "GLOBAL MARKET - stockage métier normalisé dans D1, snapshots atomiques, migration automatique et isolation multi-entreprises sans nouveau KV.",
+  "description": "GLOBAL MARKET - boutique officielle avec frais de livraison automatiques et paiement à la livraison ou immédiat, encaissement transactionnel et stockage D1 normalisé.",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "validate": "node scripts/validate.mjs && node scripts/test-isolation.mjs",
-    "build": "npm run validate && node scripts/build.mjs",
-    "check": "npm run build",
+    "validate": "node scripts/validate.mjs",
+    "test:isolation": "node scripts/test-isolation.mjs",
+    "test:e2e": "node scripts/test-browser-smoke.mjs",
+    "build": "npm run validate && npm run test:isolation && node scripts/build.mjs",
+    "check": "npm run build && npm run test:e2e",
     "dev": "npm run build && wrangler pages dev public",
-    "deploy": "npm run build && wrangler pages deploy public --project-name=global-market",
-    "test:isolation": "node scripts/test-isolation.mjs"
+    "deploy": "npm run build && wrangler pages deploy public --project-name=global-market"
   },
   "devDependencies": {
     "wrangler": "^4.27.0"

@@ -26,7 +26,15 @@ cloudflare/schema.sql
 public/
   assets/
     app.js
+    app-sales.js
+    app-admin.js
+    app-bootstrap.js
     style.css
+    style-sales.css
+    style-admin.css
+  server/
+    checkout.js
+    session-utils.js
   _worker.js
   _routes.json
   _headers
@@ -43,9 +51,13 @@ README.md
 Fichiers principaux :
 
 ```text
-Application : public/assets/app.js
-Styles      : public/assets/style.css
-Worker      : public/_worker.js
+Noyau navigateur       : public/assets/app.js
+Ventes et rapports     : public/assets/app-sales.js
+Administration et stock: public/assets/app-admin.js
+Démarrage              : public/assets/app-bootstrap.js
+Styles                  : public/assets/style*.css
+Worker                  : public/_worker.js
+Encaissement serveur    : public/server/checkout.js
 ```
 
 ## Commandes disponibles
@@ -54,6 +66,9 @@ Worker      : public/_worker.js
 npm install
 npm run validate
 npm run build
+npm run test:isolation
+npm run test:e2e
+npm run check
 npm run dev
 npm run deploy
 ```
@@ -206,3 +221,26 @@ Points principaux :
 - initialisation du schéma mise en cache dans chaque instance Worker pour réduire la latence.
 
 Voir `README_STOCKAGE_D1_NORMALISE_4_1.md`.
+
+
+## Version 4.2.0 — Encaissement transactionnel et modules séparés
+
+- nouvelle route sécurisée `POST /api/cart/checkout` ;
+- vérification du stock et validation des ventes côté Worker ;
+- protection idempotente contre les doubles clics ;
+- numéro unique par encaissement ;
+- mouvement de stock enregistré avec chaque validation ;
+- panier Caisse isolé par utilisateur ;
+- conflit propre lorsque deux caissiers tentent de vendre le dernier article ;
+- 22 déclarations de fonctions dupliquées supprimées ;
+- JavaScript et CSS découpés en modules plus petits ;
+- Worker principal ramené sous 100 000 octets grâce aux modules serveur ;
+- migration SQL `0007_transactional_checkout.sql` ;
+- tests de concurrence, d’idempotence, d’isolation et de chargement inclus.
+
+Documentation détaillée : `README_GLOBAL_MARKET_SOLIDE_4_2.md`.
+
+
+## Version 4.4.0 — Livraison et paiement boutique
+
+Voir `README_BOUTIQUE_LIVRAISON_PAIEMENT_4_4.md`.
