@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "3.3.0",
+  "version": "3.5.0",
   "private": true,
-  "description": "GLOBAL MARKET - lignes du panier professionnel cliquables et modifiables avant encaissement.",
+  "description": "GLOBAL MARKET - boutique officielle pleine page avec frais de livraison, paiement flexible et pagination de 16 articles.",
   "type": "module",
   "engines": {
     "node": ">=20"

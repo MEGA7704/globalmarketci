@@ -110,6 +110,27 @@ for (const [needle, label] of targetedSaleChecks) {
   }
 }
 
+const officialShopChecks = [
+  ['officialStore', 'nouvelle boutique officielle premium'],
+  ['officialHeaderMain', 'en-tête e-commerce responsive'],
+  ['officialShopSearch', 'recherche produits et marques'],
+  ['officialCategoriesGrid', 'catégories populaires'],
+  ['officialTrustStats', 'statistiques de confiance'],
+  ['filterOfficialShop', 'filtres de catalogue'],
+  ['addToPublicCart', 'panier public conservé'],
+  ['deliveryFeeRateForSubtotal', 'barème automatique des frais de livraison'],
+  ['PAIEMENT À LA LIVRAISON', 'paiement à la livraison'],
+  ['publicTransactionId', 'champ identifiant de transaction'],
+  ['OFFICIAL_SHOP_PAGE_SIZE=16', 'pagination limitée à 16 éléments'],
+  ['officialShopPagination', 'bouton Suivant du catalogue']
+];
+for (const [needle, label] of officialShopChecks) {
+  if (!app.includes(needle) && !fs.readFileSync('public/assets/style.css', 'utf8').includes(needle)) {
+    console.error(`[validate] Boutique officielle incomplète : ${label}.`);
+    process.exit(1);
+  }
+}
+
 if (/passwordHash|passwordSalt|derivePasswordHash/.test(app)) {
   console.error('[validate] Une logique sensible de mot de passe est présente dans le navigateur.');
   process.exit(1);
