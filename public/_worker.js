@@ -8,6 +8,11 @@ const CLIENT_SESSION_TTL = 60 * 60 * 24 * 30;
 const PASSWORD_ITERATIONS = 100000;
 const D1_CHUNK_MAX_BYTES = 1_500_000;
 const D1_BACKUP_MAX_BYTES = 1_500_000;
+const KV_STATE_MAX_BYTES = 20_000_000;
+const MAX_STATE_BYTES = 60_000_000;
+const LEGACY_CREDENTIAL_MIGRATION_KEY = 'security:credentials:migrated:v4';
+let dbReadyPromise = null;
+let legacyMigrationChecked = false;
 const AUTH_INIT_KEY = 'security:superadmin:initialized:v2';
 const SUPER_ADMIN_ID = 'superadmin_global_market';
 const SENSITIVE_FIELDS = new Set([
@@ -33,7 +38,7 @@ function configuredSuperAdminIdentifier(env) {
 function requireSuperAdminIdentifier(env) {
   const identifier = configuredSuperAdminIdentifier(env);
   if (!identifier) {
-    throw new HttpError(503, 'Initialisation de sécurité requise : ajoutez le secret Cloudflare SUPER_ADMIN_EMAIL.', 'SETUP_REQUIRED');
+    throw new HttpError(428, 'Configuration requise : ajoutez la variable Cloudflare SUPER_ADMIN_EMAIL.', 'SETUP_REQUIRED');
   }
   return identifier;
 }
@@ -242,37 +247,43 @@ async function verifyCredential(record, password) {
 
 async function ensureDB(env) {
   needBindings(env);
-  await env.GLOBAL_MARKET_D1.batch([
-    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS state_meta (
-      company_id TEXT PRIMARY KEY,
-      chunk_count INTEGER NOT NULL,
-      size_bytes INTEGER NOT NULL,
-      updated_at TEXT NOT NULL
-    )`),
-    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS state_chunks (
-      company_id TEXT NOT NULL,
-      chunk_index INTEGER NOT NULL,
-      data TEXT NOT NULL,
-      PRIMARY KEY (company_id, chunk_index)
-    )`),
-    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS backups (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      company_id TEXT NOT NULL,
-      data TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    )`),
-    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS security_events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      event_type TEXT NOT NULL,
-      actor_id TEXT,
-      company_id TEXT,
-      detail TEXT,
-      ip_hash TEXT,
-      created_at TEXT NOT NULL
-    )`),
-    env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_backups_company_id ON backups(company_id, id DESC)'),
-    env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events(created_at DESC)')
-  ]);
+  if (!dbReadyPromise) {
+    dbReadyPromise = env.GLOBAL_MARKET_D1.batch([
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS state_meta (
+        company_id TEXT PRIMARY KEY,
+        chunk_count INTEGER NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+      )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS state_chunks (
+        company_id TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        data TEXT NOT NULL,
+        PRIMARY KEY (company_id, chunk_index)
+      )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS backups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id TEXT NOT NULL,
+        data TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS security_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type TEXT NOT NULL,
+        actor_id TEXT,
+        company_id TEXT,
+        detail TEXT,
+        ip_hash TEXT,
+        created_at TEXT NOT NULL
+      )`),
+      env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_backups_company_id ON backups(company_id, id DESC)'),
+      env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events(created_at DESC)')
+    ]).catch(error => {
+      dbReadyPromise = null;
+      throw error;
+    });
+  }
+  await dbReadyPromise;
 }
 
 function defaultState() {
@@ -331,6 +342,24 @@ function parseState(raw) {
   } catch {
     return null;
   }
+}
+
+function parseStateStorageMarker(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.__globalMarketStorage === 'd1' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function makeStateStorageMarker(sizeBytes, updatedAt) {
+  return JSON.stringify({
+    __globalMarketStorage: 'd1',
+    sizeBytes,
+    updatedAt
+  });
 }
 
 function chunksOf(text, maxBytes = D1_CHUNK_MAX_BYTES) {
@@ -467,25 +496,51 @@ async function migrateLegacyCredentials(env, state) {
   return changed;
 }
 
+async function ensureLegacyCredentialsMigrated(env, state) {
+  if (legacyMigrationChecked) return false;
+  const completed = await env.GLOBAL_MARKET_KV.get(LEGACY_CREDENTIAL_MIGRATION_KEY);
+  if (completed) {
+    legacyMigrationChecked = true;
+    return false;
+  }
+  const changed = await migrateLegacyCredentials(env, state);
+  await env.GLOBAL_MARKET_KV.put(LEGACY_CREDENTIAL_MIGRATION_KEY, new Date().toISOString());
+  legacyMigrationChecked = true;
+  return changed;
+}
+
 async function saveState(env, state) {
   await ensureDB(env);
   const normalized = normalizeState(state);
   for (const user of normalized.users) stripCredentialFields(user);
   for (const client of normalized.marketClients) stripCredentialFields(client);
+  normalized.app.updatedAt = new Date().toISOString();
   const raw = JSON.stringify(normalized);
-  await env.GLOBAL_MARKET_KV.put(STATE_KEY, raw);
+  const sizeBytes = new TextEncoder().encode(raw).byteLength;
+  if (sizeBytes > MAX_STATE_BYTES) {
+    throw new HttpError(413, 'La base de données globale est trop volumineuse. Réduisez les images et captures enregistrées.', 'STATE_TOO_LARGE');
+  }
+
+  // D1 est la source durable. KV sert de cache rapide lorsque la taille le permet.
   const d1 = await writeD1State(env, STATE_ID, raw);
-  return { state: normalized, d1 };
+  if (sizeBytes <= KV_STATE_MAX_BYTES) {
+    await env.GLOBAL_MARKET_KV.put(STATE_KEY, raw);
+  } else {
+    await env.GLOBAL_MARKET_KV.put(STATE_KEY, makeStateStorageMarker(sizeBytes, normalized.app.updatedAt));
+  }
+  return { state: normalized, d1, storage: sizeBytes <= KV_STATE_MAX_BYTES ? 'kv+d1' : 'd1' };
 }
 
 async function loadState(env) {
   await ensureDB(env);
-  let state = parseState(await env.GLOBAL_MARKET_KV.get(STATE_KEY));
+  const kvRaw = await env.GLOBAL_MARKET_KV.get(STATE_KEY);
+  const marker = parseStateStorageMarker(kvRaw);
+  let state = marker ? null : parseState(kvRaw);
   if (!state) state = await readD1State(env, STATE_ID);
   if (!state) state = defaultState();
   state = normalizeState(state);
-  const migrated = await migrateLegacyCredentials(env, state);
-  if (migrated || !(await env.GLOBAL_MARKET_KV.get(STATE_KEY))) await saveState(env, state);
+  const migrated = await ensureLegacyCredentialsMigrated(env, state);
+  if (migrated || !kvRaw) await saveState(env, state);
   return state;
 }
 
@@ -493,7 +548,9 @@ async function ensureSuperAdminCredential(env, state) {
   const identifier = requireSuperAdminIdentifier(env);
   const desiredBootstrapVersion = configuredSuperAdminPasswordVersion(env);
   const existing = await getAuth(env, SUPER_ADMIN_ID);
-  const needsCredentialSync = !existing?.hash || String(existing.bootstrapVersion || '') !== desiredBootstrapVersion;
+  // Une mise à jour du code ne doit jamais invalider un identifiant déjà fonctionnel.
+  // Le secret initial est exigé uniquement lors de la toute première initialisation.
+  const needsCredentialSync = !existing?.hash;
 
   if (!needsCredentialSync) {
     if (existing.identifier && existing.identifier !== identifier) await env.GLOBAL_MARKET_KV.delete(authIndexKey(existing.identifier));
@@ -509,7 +566,7 @@ async function ensureSuperAdminCredential(env, state) {
 
   const initialPassword = String(env.SUPER_ADMIN_INITIAL_PASSWORD || '');
   if (!initialPassword) {
-    throw new HttpError(503, 'Initialisation de sécurité requise : ajoutez le secret Cloudflare SUPER_ADMIN_INITIAL_PASSWORD.', 'SETUP_REQUIRED');
+    throw new HttpError(428, 'Configuration requise : ajoutez le secret Cloudflare SUPER_ADMIN_INITIAL_PASSWORD.', 'SETUP_REQUIRED');
   }
 
   const publicProfile = state.users.find(u => u.id === SUPER_ADMIN_ID) || { ...SUPER_ADMIN_PROFILE };
@@ -1269,15 +1326,17 @@ async function handleApi(request, env) {
   const url = new URL(request.url);
   try {
     if (url.pathname === '/api/health' && request.method === 'GET') {
-      const state = await loadState(env);
-      const auth = await getAuth(env, SUPER_ADMIN_ID);
+      await ensureDB(env);
+      const [auth, d1Probe] = await Promise.all([
+        getAuth(env, SUPER_ADMIN_ID),
+        env.GLOBAL_MARKET_D1.prepare('SELECT 1 AS ok').first()
+      ]);
       return json({
-        ok: true, app: APP_NAME, kv: true, d1: true,
+        ok: Boolean(d1Probe?.ok), app: APP_NAME, kv: true, d1: Boolean(d1Probe?.ok),
         securityInitialized: Boolean(auth?.hash),
         setupRequired: !auth?.hash,
         superAdminEmailConfigured: Boolean(configuredSuperAdminIdentifier(env)),
         superAdminPasswordSecretConfigured: Boolean(String(env.SUPER_ADMIN_INITIAL_PASSWORD || '')),
-        passwordVersionSynchronized: Boolean(auth?.hash && String(auth.bootstrapVersion || '') === configuredSuperAdminPasswordVersion(env)),
         time: new Date().toISOString()
       });
     }
@@ -1322,7 +1381,7 @@ async function handleApi(request, env) {
       const incoming = body.data && typeof body.data === 'object' ? body.data : body;
       const merged = mergeScopedState(ctx.state, incoming, ctx.user);
       const result = await saveState(env, merged);
-      return json({ success: true, message: 'Sauvegarde sécurisée effectuée dans KV et D1.', d1: result.d1 });
+      return json({ success: true, message: 'Sauvegarde sécurisée effectuée.', d1: result.d1, storage: result.storage });
     }
 
     if (url.pathname === '/api/companies/delete' && request.method === 'POST') return await handleDeleteCompany(request, env);

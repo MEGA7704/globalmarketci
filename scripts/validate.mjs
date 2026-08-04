@@ -20,6 +20,20 @@ const app = fs.readFileSync('public/assets/app.js', 'utf8');
 const worker = fs.readFileSync('public/_worker.js', 'utf8');
 const wrangler = JSON.parse(fs.readFileSync('wrangler.json', 'utf8'));
 
+const routes = JSON.parse(fs.readFileSync('public/_routes.json', 'utf8'));
+if (JSON.stringify(routes.include) !== JSON.stringify(['/api/*'])) {
+  console.error('[validate] Anti-503 invalide : seul /api/* doit invoquer le Worker.');
+  process.exit(1);
+}
+if (!worker.includes('KV_STATE_MAX_BYTES') || !worker.includes('ensureLegacyCredentialsMigrated')) {
+  console.error('[validate] Protection anti-503 KV/D1 incomplète.');
+  process.exit(1);
+}
+if (worker.includes("new HttpError(503, 'Initialisation de sécurité requise")) {
+  console.error('[validate] Une erreur de configuration est encore exposée comme 503.');
+  process.exit(1);
+}
+
 try {
   new Function(app);
   console.log('[validate] public/assets/app.js : syntaxe valide');
