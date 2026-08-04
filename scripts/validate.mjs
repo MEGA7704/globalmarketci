@@ -152,8 +152,26 @@ for (const [needle, label] of connectedCompanyReportChecks) {
     process.exit(1);
   }
 }
+const unifiedPrintHeaderChecks = [
+  ['globalPrintHeaderHTML(company,documentTitle', 'entête PDF dynamique avec titre de document'],
+  ['g3phIdentity', 'bloc identité de l’entreprise dans l’entête'],
+  ['g3phDocumentTitle', 'titre dynamique de chaque impression'],
+  ['refreshGlobalPrintHeaderTitle', 'mise à jour automatique du titre avant impression'],
+  ["globalPrintHeaderHTML(company,'FACTURE / REÇU DE VENTE')", 'entête des factures et reçus'],
+  ["globalPrintHeaderHTML(company,'RAPPORT GÉNÉRAL DÉTAILLÉ DES SERVICES VENDUS')", 'entête des rapports de ventes'],
+  ["globalPrintHeaderHTML(company,'TABLEAU DE GESTION SUR 12 MOIS')", 'entête de la gestion annuelle'],
+  ["globalPrintHeaderHTML(company,'BILAN JOUR')", 'entête du bilan journalier'],
+  ["globalPrintHeaderHTML(company,'REÇU OFFICIEL D’ABONNEMENT')", 'entête du reçu d’abonnement']
+];
+for (const [needle, label] of unifiedPrintHeaderChecks) {
+  if (!app.includes(needle)) {
+    console.error(`[validate] Entête PDF universel incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+
 const reportStyle = fs.readFileSync('public/assets/style.css', 'utf8');
-if (!reportStyle.includes('.bilanOfficialReport') || !reportStyle.includes('@page{size:A4 portrait;margin:7mm 7mm 14mm}') || !reportStyle.includes('max-width:196mm!important')) {
+if (!reportStyle.includes('.bilanOfficialReport') || !reportStyle.includes('@page{size:A4 portrait;margin:7mm 7mm 14mm}') || !reportStyle.includes('max-width:196mm!important') || !reportStyle.includes('GLOBAL MARKET V4.1 - ENTETE OFFICIEL UNIFIE') || !reportStyle.includes('.printCompanyHeader .g3phIdentity')) {
   console.error('[validate] Mise en page A4 centrée et anti-débordement du rapport bilan absente.');
   process.exit(1);
 }
