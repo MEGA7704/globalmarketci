@@ -12,6 +12,46 @@ CREATE TABLE IF NOT EXISTS state_chunks (
   PRIMARY KEY (company_id, chunk_index)
 );
 
+
+
+CREATE TABLE IF NOT EXISTS global_state_meta_v2 (
+  document_id TEXT PRIMARY KEY,
+  revision TEXT NOT NULL,
+  chunk_count INTEGER NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS global_state_chunks_v2 (
+  document_id TEXT NOT NULL,
+  revision TEXT NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  data TEXT NOT NULL,
+  PRIMARY KEY (document_id, revision, chunk_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_global_state_chunks_v2_current
+ON global_state_chunks_v2(document_id, revision, chunk_index);
+
+CREATE TABLE IF NOT EXISTS company_state_meta (
+  company_id TEXT PRIMARY KEY,
+  revision TEXT NOT NULL,
+  chunk_count INTEGER NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS company_state_chunks (
+  company_id TEXT NOT NULL,
+  revision TEXT NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  data TEXT NOT NULL,
+  PRIMARY KEY (company_id, revision, chunk_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_company_state_chunks_current
+ON company_state_chunks(company_id, revision, chunk_index);
+
 CREATE TABLE IF NOT EXISTS backups (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   company_id TEXT NOT NULL,

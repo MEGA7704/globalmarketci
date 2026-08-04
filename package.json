@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "3.7.0",
+  "version": "3.8.0",
   "private": true,
-  "description": "GLOBAL MARKET - correction anti-503 : routes API ciblées, stockage KV/D1 allégé et initialisation fiable.",
+  "description": "GLOBAL MARKET - sauvegarde anti-503 : documents D1 par entreprise, lots limités, file d’attente et reprises automatiques.",
   "type": "module",
   "engines": {
     "node": ">=20"

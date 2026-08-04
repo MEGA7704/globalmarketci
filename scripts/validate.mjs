@@ -29,6 +29,18 @@ if (!worker.includes('KV_STATE_MAX_BYTES') || !worker.includes('ensureLegacyCred
   console.error('[validate] Protection anti-503 KV/D1 incomplète.');
   process.exit(1);
 }
+if (!worker.includes('writeCompanySnapshot') || !worker.includes('company_state_chunks') || !worker.includes('runD1Batches')) {
+  console.error('[validate] Sauvegarde D1 par entreprise anti-503 incomplète.');
+  process.exit(1);
+}
+if (!worker.includes('writeGlobalStateV2') || !worker.includes('global_state_chunks_v2') || !worker.includes("storage: 'd1-versioned'")) {
+  console.error('[validate] Sauvegarde globale D1 versionnée anti-503 incomplète.');
+  process.exit(1);
+}
+if (!app.includes('CLOUD_SAVE_IN_FLIGHT') || !app.includes('sendCloudSavePayload') || !app.includes('isTransientCloudSaveError')) {
+  console.error('[validate] File d’attente et reprises automatiques de sauvegarde absentes.');
+  process.exit(1);
+}
 if (worker.includes("new HttpError(503, 'Initialisation de sécurité requise")) {
   console.error('[validate] Une erreur de configuration est encore exposée comme 503.');
   process.exit(1);

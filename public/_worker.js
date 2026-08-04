@@ -8,6 +8,10 @@ const CLIENT_SESSION_TTL = 60 * 60 * 24 * 30;
 const PASSWORD_ITERATIONS = 100000;
 const D1_CHUNK_MAX_BYTES = 1_500_000;
 const D1_BACKUP_MAX_BYTES = 1_500_000;
+const GLOBAL_CHUNK_MAX_BYTES = 400_000;
+const COMPANY_CHUNK_MAX_BYTES = 240_000;
+const COMPANY_BATCH_SIZE = 8;
+const MAX_COMPANY_STATE_BYTES = 7_500_000;
 const KV_STATE_MAX_BYTES = 20_000_000;
 const MAX_STATE_BYTES = 60_000_000;
 const LEGACY_CREDENTIAL_MIGRATION_KEY = 'security:credentials:migrated:v4';
@@ -77,7 +81,14 @@ function errorResponse(error) {
     });
   }
   console.error(error);
-  return json({ success: false, error: 'Erreur interne sécurisée.', code: 'INTERNAL_ERROR' }, { status: 500 });
+  const message = String(error?.message || error || '');
+  if (/overload|too many|rate.?limit|quota|temporar|network connection lost/i.test(message)) {
+    return json({ success: false, error: 'Le stockage est momentanément occupé. La sauvegarde sera automatiquement réessayée.', code: 'STORAGE_BUSY' }, { status: 429 });
+  }
+  if (/too big|too large|SQLITE_TOOBIG|maximum.*size|memory/i.test(message)) {
+    return json({ success: false, error: 'Les données à enregistrer sont trop volumineuses. Réduisez les images ou captures.', code: 'STORAGE_TOO_LARGE' }, { status: 413 });
+  }
+  return json({ success: false, error: 'La sauvegarde n’a pas pu être terminée. Réessayez sans fermer la page.', code: 'STORAGE_WRITE_FAILED' }, { status: 500 });
 }
 
 function needBindings(env) {
@@ -261,6 +272,34 @@ async function ensureDB(env) {
         data TEXT NOT NULL,
         PRIMARY KEY (company_id, chunk_index)
       )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS global_state_meta_v2 (
+        document_id TEXT PRIMARY KEY,
+        revision TEXT NOT NULL,
+        chunk_count INTEGER NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+      )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS global_state_chunks_v2 (
+        document_id TEXT NOT NULL,
+        revision TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        data TEXT NOT NULL,
+        PRIMARY KEY (document_id, revision, chunk_index)
+      )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS company_state_meta (
+        company_id TEXT PRIMARY KEY,
+        revision TEXT NOT NULL,
+        chunk_count INTEGER NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+      )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS company_state_chunks (
+        company_id TEXT NOT NULL,
+        revision TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        data TEXT NOT NULL,
+        PRIMARY KEY (company_id, revision, chunk_index)
+      )`),
       env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS backups (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         company_id TEXT NOT NULL,
@@ -276,6 +315,8 @@ async function ensureDB(env) {
         ip_hash TEXT,
         created_at TEXT NOT NULL
       )`),
+      env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_global_state_chunks_v2_current ON global_state_chunks_v2(document_id, revision, chunk_index)'),
+      env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_company_state_chunks_current ON company_state_chunks(company_id, revision, chunk_index)'),
       env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_backups_company_id ON backups(company_id, id DESC)'),
       env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events(created_at DESC)')
     ]).catch(error => {
@@ -422,6 +463,152 @@ async function writeD1State(env, companyId, raw) {
   return { chunkCount: chunks.length, sizeBytes, historicalBackup: sizeBytes <= D1_BACKUP_MAX_BYTES };
 }
 
+
+async function runD1Batches(db, statements, batchSize = COMPANY_BATCH_SIZE) {
+  for (let index = 0; index < statements.length; index += batchSize) {
+    await db.batch(statements.slice(index, index + batchSize));
+  }
+}
+
+async function writeGlobalStateV2(env, raw) {
+  const sizeBytes = new TextEncoder().encode(raw).byteLength;
+  const revision = `${Date.now().toString(36)}_${randomHex(8)}`;
+  const chunks = chunksOf(raw, GLOBAL_CHUNK_MAX_BYTES);
+  if (chunks.length + 3 > 50) {
+    throw new HttpError(413, 'La base globale dépasse la capacité de sauvegarde du plan Cloudflare actuel. Réduisez les images et captures.', 'GLOBAL_STATE_TOO_LARGE');
+  }
+  const inserts = chunks.map((chunk, chunkIndex) => env.GLOBAL_MARKET_D1.prepare(
+    'INSERT INTO global_state_chunks_v2(document_id, revision, chunk_index, data) VALUES (?, ?, ?, ?)'
+  ).bind(STATE_ID, revision, chunkIndex, chunk));
+  await runD1Batches(env.GLOBAL_MARKET_D1, inserts);
+  const updatedAt = new Date().toISOString();
+  await env.GLOBAL_MARKET_D1.prepare(`INSERT INTO global_state_meta_v2(document_id, revision, chunk_count, size_bytes, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(document_id) DO UPDATE SET revision=excluded.revision, chunk_count=excluded.chunk_count,
+      size_bytes=excluded.size_bytes, updated_at=excluded.updated_at`
+  ).bind(STATE_ID, revision, chunks.length, sizeBytes, updatedAt).run();
+  try {
+    await env.GLOBAL_MARKET_D1.prepare(
+      'DELETE FROM global_state_chunks_v2 WHERE document_id = ? AND revision <> ?'
+    ).bind(STATE_ID, revision).run();
+  } catch (error) {
+    console.warn('Nettoyage différé des anciennes révisions globales', error?.message || error);
+  }
+  return { revision, chunkCount: chunks.length, sizeBytes, historicalBackup: false };
+}
+
+async function readGlobalStateV2(env) {
+  const meta = await env.GLOBAL_MARKET_D1.prepare(
+    'SELECT revision, chunk_count FROM global_state_meta_v2 WHERE document_id = ?'
+  ).bind(STATE_ID).first();
+  if (!meta?.revision) return null;
+  const result = await env.GLOBAL_MARKET_D1.prepare(
+    'SELECT data FROM global_state_chunks_v2 WHERE document_id = ? AND revision = ? ORDER BY chunk_index ASC'
+  ).bind(STATE_ID, meta.revision).all();
+  if ((result.results || []).length !== Number(meta.chunk_count || 0)) return null;
+  return parseState((result.results || []).map(row => row.data || '').join(''));
+}
+
+function companySnapshotFromState(state, companyId) {
+  return scopeState(state, { role: 'admin', companyId });
+}
+
+async function writeCompanySnapshot(env, companyId, state) {
+  await ensureDB(env);
+  const snapshot = companySnapshotFromState(state, companyId);
+  for (const user of snapshot.users || []) stripCredentialFields(user);
+  for (const client of snapshot.marketClients || []) stripCredentialFields(client);
+  snapshot.app = { ...(snapshot.app || {}), updatedAt: new Date().toISOString() };
+  const raw = JSON.stringify(snapshot);
+  const sizeBytes = new TextEncoder().encode(raw).byteLength;
+  if (sizeBytes > MAX_COMPANY_STATE_BYTES) {
+    throw new HttpError(413, 'Les données de cette entreprise sont trop volumineuses pour une sauvegarde fiable. Réduisez surtout les anciennes captures et les images.', 'COMPANY_STATE_TOO_LARGE');
+  }
+  const revision = `${Date.now().toString(36)}_${randomHex(8)}`;
+  const chunks = chunksOf(raw, COMPANY_CHUNK_MAX_BYTES);
+  const inserts = chunks.map((chunk, chunkIndex) => env.GLOBAL_MARKET_D1.prepare(
+    'INSERT INTO company_state_chunks(company_id, revision, chunk_index, data) VALUES (?, ?, ?, ?)'
+  ).bind(companyId, revision, chunkIndex, chunk));
+
+  // Les petits lots évitent d'envoyer plusieurs mégaoctets dans un seul db.batch().
+  await runD1Batches(env.GLOBAL_MARKET_D1, inserts);
+  const updatedAt = new Date().toISOString();
+  await env.GLOBAL_MARKET_D1.prepare(`INSERT INTO company_state_meta(company_id, revision, chunk_count, size_bytes, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(company_id) DO UPDATE SET revision=excluded.revision, chunk_count=excluded.chunk_count,
+      size_bytes=excluded.size_bytes, updated_at=excluded.updated_at`
+  ).bind(companyId, revision, chunks.length, sizeBytes, updatedAt).run();
+
+  // Le pointeur est déjà publié : le nettoyage ne doit jamais bloquer la sauvegarde.
+  try {
+    await env.GLOBAL_MARKET_D1.prepare(
+      'DELETE FROM company_state_chunks WHERE company_id = ? AND revision <> ?'
+    ).bind(companyId, revision).run();
+  } catch (error) {
+    console.warn('Nettoyage différé des anciennes révisions entreprise', companyId, error?.message || error);
+  }
+  return { companyId, revision, chunkCount: chunks.length, sizeBytes, storage: 'd1-company' };
+}
+
+async function readCompanySnapshots(env, companyId = null) {
+  await ensureDB(env);
+  const query = companyId
+    ? env.GLOBAL_MARKET_D1.prepare(`SELECT c.company_id, c.chunk_index, c.data, m.chunk_count
+        FROM company_state_chunks c
+        INNER JOIN company_state_meta m ON m.company_id = c.company_id AND m.revision = c.revision
+        WHERE c.company_id = ?
+        ORDER BY c.company_id ASC, c.chunk_index ASC`).bind(companyId)
+    : env.GLOBAL_MARKET_D1.prepare(`SELECT c.company_id, c.chunk_index, c.data, m.chunk_count
+        FROM company_state_chunks c
+        INNER JOIN company_state_meta m ON m.company_id = c.company_id AND m.revision = c.revision
+        ORDER BY c.company_id ASC, c.chunk_index ASC`);
+  const result = await query.all();
+  const groups = new Map();
+  for (const row of result.results || []) {
+    if (!groups.has(row.company_id)) groups.set(row.company_id, { count: Number(row.chunk_count || 0), chunks: [] });
+    groups.get(row.company_id).chunks.push(row.data || '');
+  }
+  const snapshots = [];
+  for (const [id, group] of groups) {
+    if (group.chunks.length !== group.count) continue;
+    const parsed = parseState(group.chunks.join(''));
+    if (parsed) snapshots.push({ companyId: id, state: parsed });
+  }
+  return snapshots;
+}
+
+function applyCompanySnapshot(globalState, companyId, snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return globalState;
+  return mergeScopedState(globalState, snapshot, { role: 'admin', companyId });
+}
+
+function removeCompanyOperationalData(state, companyId) {
+  const compacted = cleanClone(state);
+  for (const key of COMPANY_ARRAY_KEYS) {
+    if (key === 'payments' || key === 'passwordResetRequests') continue;
+    compacted[key] = (compacted[key] || []).filter(row => row?.companyId !== companyId);
+  }
+  for (const key of COMPANY_OBJECT_KEYS) {
+    if (compacted[key] && typeof compacted[key] === 'object') delete compacted[key][companyId];
+  }
+  const clientIds = new Set((state.marketClients || []).filter(row => row?.companyId === companyId).map(row => row.id));
+  if (compacted.clientDeletedOrders && typeof compacted.clientDeletedOrders === 'object') {
+    for (const clientId of clientIds) delete compacted.clientDeletedOrders[clientId];
+  }
+  return compacted;
+}
+
+async function compactGlobalBaseAfterCompanySave(env, state, companyId) {
+  try {
+    const compacted = removeCompanyOperationalData(state, companyId);
+    await saveState(env, compacted);
+  } catch (error) {
+    // La sauvegarde entreprise est déjà durable. Une compaction ratée ne doit jamais
+    // transformer une sauvegarde réussie en erreur 503 côté utilisateur.
+    console.warn('Compaction globale différée non effectuée', companyId, error?.message || error);
+  }
+}
+
 function stripCredentialFields(object) {
   if (!object || typeof object !== 'object') return false;
   let changed = false;
@@ -521,27 +708,30 @@ async function saveState(env, state) {
     throw new HttpError(413, 'La base de données globale est trop volumineuse. Réduisez les images et captures enregistrées.', 'STATE_TOO_LARGE');
   }
 
-  // D1 est la source durable. KV sert de cache rapide lorsque la taille le permet.
-  const d1 = await writeD1State(env, STATE_ID, raw);
-  if (sizeBytes <= KV_STATE_MAX_BYTES) {
-    await env.GLOBAL_MARKET_KV.put(STATE_KEY, raw);
-  } else {
-    await env.GLOBAL_MARKET_KV.put(STATE_KEY, makeStateStorageMarker(sizeBytes, normalized.app.updatedAt));
-  }
-  return { state: normalized, d1, storage: sizeBytes <= KV_STATE_MAX_BYTES ? 'kv+d1' : 'd1' };
+  // D1 versionné est la source durable. Aucun PUT répété sur la même clé KV :
+  // cela supprime la limite KV d'une écriture par seconde qui provoquait des échecs.
+  const d1 = await writeGlobalStateV2(env, raw);
+  return { state: normalized, d1, storage: 'd1-versioned' };
 }
 
-async function loadState(env) {
+async function loadState(env, companyId = '*') {
   await ensureDB(env);
-  const kvRaw = await env.GLOBAL_MARKET_KV.get(STATE_KEY);
-  const marker = parseStateStorageMarker(kvRaw);
-  let state = marker ? null : parseState(kvRaw);
-  if (!state) state = await readD1State(env, STATE_ID);
-  if (!state) state = defaultState();
+  let state = await readGlobalStateV2(env);
+  if (!state) {
+    const kvRaw = await env.GLOBAL_MARKET_KV.get(STATE_KEY);
+    const marker = parseStateStorageMarker(kvRaw);
+    state = marker ? null : parseState(kvRaw);
+    if (!state) state = await readD1State(env, STATE_ID);
+    if (!state) state = defaultState();
+  }
   state = normalizeState(state);
-  const migrated = await ensureLegacyCredentialsMigrated(env, state);
-  if (migrated || !kvRaw) await saveState(env, state);
-  return state;
+  await ensureLegacyCredentialsMigrated(env, state);
+
+  // Les modifications courantes sont lues depuis de petits documents par entreprise.
+  // Un utilisateur normal ne charge que son entreprise, ce qui réduit fortement CPU et mémoire.
+  const snapshots = await readCompanySnapshots(env, companyId === '*' ? null : companyId);
+  for (const entry of snapshots) state = applyCompanySnapshot(state, entry.companyId, entry.state);
+  return normalizeState(state);
 }
 
 async function ensureSuperAdminCredential(env, state) {
@@ -712,7 +902,7 @@ async function getEmployeeSession(request, env, requireCsrf = false) {
     const csrf = request.headers.get('X-CSRF-Token') || '';
     if (!csrf || !constantTimeEqual(csrf, session.csrfToken)) throw new HttpError(403, 'Jeton de sécurité invalide.', 'CSRF_REJECTED');
   }
-  const state = await loadState(env);
+  const state = await loadState(env, session.role === 'superadmin' ? '*' : session.companyId);
   const user = state.users.find(u => u.id === session.userId);
   const auth = user ? await getAuth(env, user.id) : null;
   if (!user || user.status !== 'active' || !auth || Number(auth.version) !== Number(session.authVersion)) {
@@ -749,7 +939,7 @@ async function getClientSession(request, env, requireCsrf = false) {
     const csrf = request.headers.get('X-CSRF-Token') || '';
     if (!csrf || !constantTimeEqual(csrf, session.csrfToken)) throw new HttpError(403, 'Jeton de sécurité client invalide.', 'CSRF_REJECTED');
   }
-  const state = await loadState(env);
+  const state = await loadState(env, session.companyId);
   const client = state.marketClients.find(c => c.id === session.clientId && c.companyId === session.companyId);
   const auth = client ? await getClientAuth(env, client.id) : null;
   if (!client || !auth || Number(auth.version) !== Number(session.authVersion)) throw new HttpError(401, 'Session client invalidée.', 'CLIENT_SESSION_INVALIDATED');
@@ -1235,7 +1425,7 @@ async function handlePublicClientRegister(request, env) {
   const client = { id: `clt_${crypto.randomUUID()}`, companyId, name, phone, email, createdAt: new Date().toISOString() };
   state.marketClients.push(client);
   await writeClientCredential(env, client, password);
-  await saveState(env, state);
+  await writeCompanySnapshot(env, companyId, state);
   const created = await createClientSession(env, client, await getClientAuth(env, client.id));
   return json({ success: true, client: cleanClone(client), session: publicClientSessionView(created.session) }, {
     status: 201,
@@ -1301,7 +1491,7 @@ async function handlePublicOrder(request, env) {
     delivery: 'En attente de validation', source: 'lot panier boutique client'
   };
   ctx.state.orders.push(order);
-  await saveState(env, ctx.state);
+  await writeCompanySnapshot(env, ctx.client.companyId, ctx.state);
   return json({ success: true, order: cleanClone(order) }, { status: 201 });
 }
 
@@ -1317,11 +1507,11 @@ async function handlePublicOrderDelete(request, env) {
   ctx.state.clientDeletedOrders = ctx.state.clientDeletedOrders || {};
   ctx.state.clientDeletedOrders[ctx.client.id] = ctx.state.clientDeletedOrders[ctx.client.id] || [];
   if (!ctx.state.clientDeletedOrders[ctx.client.id].includes(order.id)) ctx.state.clientDeletedOrders[ctx.client.id].push(order.id);
-  await saveState(env, ctx.state);
+  await writeCompanySnapshot(env, ctx.client.companyId, ctx.state);
   return json({ success: true });
 }
 
-async function handleApi(request, env) {
+async function handleApi(request, env, executionCtx) {
   needBindings(env);
   const url = new URL(request.url);
   try {
@@ -1337,6 +1527,7 @@ async function handleApi(request, env) {
         setupRequired: !auth?.hash,
         superAdminEmailConfigured: Boolean(configuredSuperAdminIdentifier(env)),
         superAdminPasswordSecretConfigured: Boolean(String(env.SUPER_ADMIN_INITIAL_PASSWORD || '')),
+        saveMode: 'versioned-d1-company-v6',
         time: new Date().toISOString()
       });
     }
@@ -1380,8 +1571,13 @@ async function handleApi(request, env) {
       const body = await readJson(request);
       const incoming = body.data && typeof body.data === 'object' ? body.data : body;
       const merged = mergeScopedState(ctx.state, incoming, ctx.user);
-      const result = await saveState(env, merged);
-      return json({ success: true, message: 'Sauvegarde sécurisée effectuée.', d1: result.d1, storage: result.storage });
+      if (ctx.user.role === 'superadmin') {
+        const result = await saveState(env, merged);
+        return json({ success: true, message: 'Sauvegarde globale effectuée.', d1: result.d1, storage: result.storage });
+      }
+      const result = await writeCompanySnapshot(env, ctx.user.companyId, merged);
+      if (executionCtx?.waitUntil) executionCtx.waitUntil(compactGlobalBaseAfterCompanySave(env, merged, ctx.user.companyId));
+      return json({ success: true, message: 'Sauvegarde sécurisée effectuée.', d1: result, storage: result.storage });
     }
 
     if (url.pathname === '/api/companies/delete' && request.method === 'POST') return await handleDeleteCompany(request, env);
@@ -1409,9 +1605,9 @@ async function handleApi(request, env) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, executionCtx) {
     const url = new URL(request.url);
-    if (url.pathname.startsWith('/api/')) return handleApi(request, env);
+    if (url.pathname.startsWith('/api/')) return handleApi(request, env, executionCtx);
 
     const assetResponse = await env.ASSETS.fetch(request);
     const headers = new Headers(assetResponse.headers);
