@@ -136,6 +136,26 @@ for (const [needle, label] of targetedSaleChecks) {
   }
 }
 
+const connectedCompanyReportChecks = [
+  ['companyReportProfile', 'profil dynamique de l’entreprise connectée'],
+  ['buildBilanOfficialReport', 'modèle A4 du rapport bilan'],
+  ['s.companyId===company.id&&isInActiveExercise(s)', 'filtrage des ventes par entreprise et exercice'],
+  ['getObligationsForMonth(d,company.id', 'filtrage des obligations mensuelles par entreprise'],
+  ['Exporter Excel (CSV)', 'export Excel du rapport bilan'],
+  ['Rapport sécurisé : profil, ventes, charges et obligations', 'indication d’isolation des données']
+];
+for (const [needle, label] of connectedCompanyReportChecks) {
+  if (!app.includes(needle)) {
+    console.error(`[validate] Rapport entreprise connectée incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+const reportStyle = fs.readFileSync('public/assets/style.css', 'utf8');
+if (!reportStyle.includes('.bilanOfficialReport') || !reportStyle.includes('@page{size:A4 portrait')) {
+  console.error('[validate] Mise en page A4 du rapport bilan absente.');
+  process.exit(1);
+}
+
 const officialShopChecks = [
   ['officialStore', 'nouvelle boutique officielle premium'],
   ['officialHeaderMain', 'en-tête e-commerce responsive'],

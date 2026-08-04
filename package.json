@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "3.8.0",
+  "version": "3.9.0",
   "private": true,
-  "description": "GLOBAL MARKET - sauvegarde anti-503 : documents D1 par entreprise, lots limités, file d’attente et reprises automatiques.",
+  "description": "GLOBAL MARKET - rapport bilan PDF dynamique lié à l’entreprise connectée, avec isolation D1/KV anti-503.",
   "type": "module",
   "engines": {
     "node": ">=20"
