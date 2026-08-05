@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "4.1.0",
+  "version": "4.2.0",
   "private": true,
-  "description": "GLOBAL MARKET - entête officiel dynamique de l’entreprise connectée appliqué à toutes les impressions PDF, avec pages A4 centrées et sans débordement.",
+  "description": "GLOBAL MARKET - sauvegarde incrémentielle D1 anti-503, reprise automatique silencieuse et en-têtes PDF A4 dynamiques.",
   "type": "module",
   "engines": {
     "node": ">=20"

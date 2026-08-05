@@ -46,6 +46,23 @@ if (worker.includes("new HttpError(503, 'Initialisation de sécurité requise"))
   process.exit(1);
 }
 
+if (!worker.includes("url.pathname === '/api/save-delta'") || !worker.includes('company_state_patches') || !worker.includes('persistStateDelta')) {
+  console.error('[validate] Sauvegarde incrémentielle D1 anti-503 V4.2 incomplète.');
+  process.exit(1);
+}
+if (!worker.includes("saveMode: 'incremental-d1-delta-v7'") || !worker.includes('deleted_companies')) {
+  console.error('[validate] Mode de stockage incrémentiel ou suppression logique sécurisée absent.');
+  process.exit(1);
+}
+if (!app.includes('buildCloudDelta') || !app.includes("'/api/save-delta'") || !app.includes('scheduleCloudSaveRetry')) {
+  console.error('[validate] File de sauvegarde différentielle et reprise automatique absentes.');
+  process.exit(1);
+}
+if (app.includes('La sauvegarde sécurisée a échoué :')) {
+  console.error('[validate] L’ancien message bloquant Erreur serveur 503 est encore présent.');
+  process.exit(1);
+}
+
 try {
   new Function(app);
   console.log('[validate] public/assets/app.js : syntaxe valide');

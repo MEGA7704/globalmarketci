@@ -14,6 +14,8 @@ const COMPANY_BATCH_SIZE = 8;
 const MAX_COMPANY_STATE_BYTES = 7_500_000;
 const KV_STATE_MAX_BYTES = 20_000_000;
 const MAX_STATE_BYTES = 60_000_000;
+const PATCH_RECORD_MAX_BYTES = 1_250_000;
+const PATCH_GLOBAL_SCOPE = '__global__';
 const LEGACY_CREDENTIAL_MIGRATION_KEY = 'security:credentials:migrated:v4';
 let dbReadyPromise = null;
 let legacyMigrationChecked = false;
@@ -300,6 +302,19 @@ async function ensureDB(env) {
         data TEXT NOT NULL,
         PRIMARY KEY (company_id, revision, chunk_index)
       )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS company_state_patches (
+        company_id TEXT NOT NULL,
+        section TEXT NOT NULL,
+        record_id TEXT NOT NULL,
+        deleted INTEGER NOT NULL DEFAULT 0,
+        data TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (company_id, section, record_id)
+      )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS deleted_companies (
+        company_id TEXT PRIMARY KEY,
+        deleted_at TEXT NOT NULL
+      )`),
       env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS backups (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         company_id TEXT NOT NULL,
@@ -317,6 +332,7 @@ async function ensureDB(env) {
       )`),
       env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_global_state_chunks_v2_current ON global_state_chunks_v2(document_id, revision, chunk_index)'),
       env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_company_state_chunks_current ON company_state_chunks(company_id, revision, chunk_index)'),
+      env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_company_state_patches_scope ON company_state_patches(company_id, section, record_id)'),
       env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_backups_company_id ON backups(company_id, id DESC)'),
       env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events(created_at DESC)')
     ]).catch(error => {
@@ -731,6 +747,8 @@ async function loadState(env, companyId = '*') {
   // Un utilisateur normal ne charge que son entreprise, ce qui réduit fortement CPU et mémoire.
   const snapshots = await readCompanySnapshots(env, companyId === '*' ? null : companyId);
   for (const entry of snapshots) state = applyCompanySnapshot(state, entry.companyId, entry.state);
+  state = await applyStoredStatePatches(env, state, companyId);
+  state = await applyDeletedCompanies(env, state, companyId);
   return normalizeState(state);
 }
 
@@ -1043,6 +1061,237 @@ function mergeScopedState(globalState, incoming, user) {
 }
 
 
+function patchJson(value) {
+  const raw = JSON.stringify(value === undefined ? null : cleanClone(value));
+  const size = new TextEncoder().encode(raw).byteLength;
+  if (size > PATCH_RECORD_MAX_BYTES) {
+    throw new HttpError(413, 'Un élément à enregistrer est trop volumineux. Réduisez la taille de l’image ou de la pièce jointe.', 'PATCH_RECORD_TOO_LARGE');
+  }
+  return raw;
+}
+
+function applyArrayPatch(state, key, recordId, deleted, value) {
+  if (!Array.isArray(state[key])) state[key] = [];
+  const index = state[key].findIndex(row => String(row?.id || '') === String(recordId));
+  if (deleted) {
+    if (index >= 0) state[key].splice(index, 1);
+    return;
+  }
+  const incoming = value && typeof value === 'object' ? value : {};
+  if (key === 'companies' && incoming.__partialCompanyPatch) {
+    const partial = incoming.value && typeof incoming.value === 'object' ? incoming.value : {};
+    if (index >= 0) state[key][index] = { ...state[key][index], ...partial, id: recordId };
+    else state[key].push({ ...partial, id: recordId });
+    return;
+  }
+  if (index >= 0) state[key][index] = incoming;
+  else state[key].push(incoming);
+}
+
+function applyObjectPatch(state, key, recordId, deleted, value) {
+  if (!state[key] || typeof state[key] !== 'object' || Array.isArray(state[key])) state[key] = {};
+  if (deleted) delete state[key][recordId];
+  else state[key][recordId] = value;
+}
+
+async function applyStoredStatePatches(env, state, companyId = '*') {
+  await ensureDB(env);
+  const query = companyId === '*'
+    ? env.GLOBAL_MARKET_D1.prepare('SELECT company_id, section, record_id, deleted, data FROM company_state_patches ORDER BY updated_at ASC')
+    : env.GLOBAL_MARKET_D1.prepare('SELECT company_id, section, record_id, deleted, data FROM company_state_patches WHERE company_id IN (?, ?) ORDER BY updated_at ASC').bind(companyId, PATCH_GLOBAL_SCOPE);
+  const result = await query.all();
+  for (const row of result.results || []) {
+    const deleted = Number(row.deleted || 0) === 1;
+    let value = null;
+    if (!deleted && row.data) {
+      try { value = JSON.parse(row.data); } catch { continue; }
+    }
+    if (String(row.section).startsWith('array:')) {
+      applyArrayPatch(state, String(row.section).slice(6), row.record_id, deleted, value);
+    } else if (String(row.section).startsWith('object:')) {
+      applyObjectPatch(state, String(row.section).slice(7), row.record_id, deleted, value);
+    } else if (String(row.section).startsWith('value:')) {
+      const key = String(row.section).slice(6);
+      if (deleted) delete state[key]; else state[key] = value;
+    }
+  }
+  return normalizeState(state);
+}
+
+
+async function applyDeletedCompanies(env, state, companyId = '*') {
+  await ensureDB(env);
+  const result = companyId === '*'
+    ? await env.GLOBAL_MARKET_D1.prepare('SELECT company_id FROM deleted_companies').all()
+    : await env.GLOBAL_MARKET_D1.prepare('SELECT company_id FROM deleted_companies WHERE company_id = ?').bind(companyId).all();
+  for (const row of result.results || []) removeCompanyDataFromState(state, row.company_id);
+  return state;
+}
+
+async function markCompanyDeleted(env, companyId) {
+  const now = new Date().toISOString();
+  await env.GLOBAL_MARKET_D1.batch([
+    env.GLOBAL_MARKET_D1.prepare(`INSERT INTO deleted_companies(company_id, deleted_at) VALUES (?, ?)
+      ON CONFLICT(company_id) DO UPDATE SET deleted_at=excluded.deleted_at`).bind(companyId, now),
+    env.GLOBAL_MARKET_D1.prepare('DELETE FROM company_state_chunks WHERE company_id = ?').bind(companyId),
+    env.GLOBAL_MARKET_D1.prepare('DELETE FROM company_state_meta WHERE company_id = ?').bind(companyId),
+    env.GLOBAL_MARKET_D1.prepare('DELETE FROM company_state_patches WHERE company_id = ?').bind(companyId)
+  ]);
+}
+
+async function writePatchStatements(env, statements) {
+  if (!statements.length) return { patchCount: 0, storage: 'd1-delta' };
+  await runD1Batches(env.GLOBAL_MARKET_D1, statements, 6);
+  return { patchCount: statements.length, storage: 'd1-delta' };
+}
+
+function allowedDeltaArrayKeys(role) {
+  if (role === 'superadmin' || role === 'system') return new Set(['companies', 'users', ...COMPANY_ARRAY_KEYS]);
+  if (role === 'caisse') return new Set(['items', 'sales', 'orders', 'stockEntries', 'stockOutputs', 'stockMovements', 'caisseLogs']);
+  return new Set(['companies', 'items', 'sales', 'orders', 'clients', 'marketClients', 'stockEntries', 'stockOutputs', 'stockMovements', 'caisseLogs']);
+}
+
+async function persistStateDelta(env, delta, actor) {
+  await ensureDB(env);
+  if (!delta || typeof delta !== 'object') throw new HttpError(400, 'Modification de sauvegarde invalide.', 'INVALID_DELTA');
+  if (containsCredentialFields(delta)) throw new HttpError(400, 'Les mots de passe ne doivent jamais être enregistrés dans les données de l’application.', 'CREDENTIALS_IN_STATE');
+  const role = actor?.role || 'caisse';
+  const actorCompanyId = String(actor?.companyId || '');
+  const isSuper = role === 'superadmin';
+  const isAdmin = isSuper || role === 'admin' || role === 'system';
+  const allowedArrays = allowedDeltaArrayKeys(role);
+  const now = new Date().toISOString();
+  const statements = [];
+  const upsertPatch = (companyId, section, recordId, value) => {
+    const raw = patchJson(value);
+    statements.push(env.GLOBAL_MARKET_D1.prepare(`INSERT INTO company_state_patches(company_id, section, record_id, deleted, data, updated_at)
+      VALUES (?, ?, ?, 0, ?, ?)
+      ON CONFLICT(company_id, section, record_id) DO UPDATE SET deleted=0, data=excluded.data, updated_at=excluded.updated_at`
+    ).bind(companyId, section, String(recordId), raw, now));
+  };
+  const deletePatch = (companyId, section, recordId) => {
+    statements.push(env.GLOBAL_MARKET_D1.prepare(`INSERT INTO company_state_patches(company_id, section, record_id, deleted, data, updated_at)
+      VALUES (?, ?, ?, 1, NULL, ?)
+      ON CONFLICT(company_id, section, record_id) DO UPDATE SET deleted=1, data=NULL, updated_at=excluded.updated_at`
+    ).bind(companyId, section, String(recordId), now));
+  };
+
+  for (const [key, changes] of Object.entries(delta.arrays || {})) {
+    if (!allowedArrays.has(key)) continue;
+    const section = `array:${key}`;
+    for (const source of Array.isArray(changes?.upserts) ? changes.upserts : []) {
+      if (!source || typeof source !== 'object' || !source.id) continue;
+      let targetCompanyId = key === 'companies' ? String(source.id) : String(source.companyId || actorCompanyId);
+      if (!isSuper) targetCompanyId = actorCompanyId;
+      if (!targetCompanyId) continue;
+      let value = cleanClone(source);
+      if (key === 'companies') {
+        if (!isAdmin || (!isSuper && String(source.id) !== actorCompanyId)) continue;
+        if (!isSuper && role !== 'system') {
+          const protectedFields = new Set(['id', 'status', 'plan', 'planCode', 'subscriptionStart', 'subscriptionEnd', 'createdAt']);
+          const partial = {};
+          for (const [field, fieldValue] of Object.entries(value)) if (!protectedFields.has(field)) partial[field] = fieldValue;
+          value = { __partialCompanyPatch: true, value: partial };
+        }
+      } else {
+        value.companyId = targetCompanyId;
+      }
+      upsertPatch(targetCompanyId, section, source.id, value);
+    }
+    for (const deletion of Array.isArray(changes?.deletes) ? changes.deletes : []) {
+      const recordId = String(deletion?.id || '');
+      if (!recordId || key === 'companies') continue;
+      let targetCompanyId = isSuper ? String(deletion?.companyId || '') : actorCompanyId;
+      if (!targetCompanyId) continue;
+      deletePatch(targetCompanyId, section, recordId);
+    }
+  }
+
+  if (isAdmin) {
+    for (const [key, changes] of Object.entries(delta.objects || {})) {
+      const section = `object:${key}`;
+      for (const source of Array.isArray(changes?.upserts) ? changes.upserts : []) {
+        const recordId = String(source?.recordId || '');
+        if (!recordId) continue;
+        let targetCompanyId = isSuper ? String(source?.companyId || recordId) : actorCompanyId;
+        if (!targetCompanyId) continue;
+        upsertPatch(targetCompanyId, section, recordId, source.value);
+      }
+      for (const deletion of Array.isArray(changes?.deletes) ? changes.deletes : []) {
+        const recordId = String(deletion?.recordId || '');
+        if (!recordId) continue;
+        let targetCompanyId = isSuper ? String(deletion?.companyId || recordId) : actorCompanyId;
+        if (!targetCompanyId) continue;
+        deletePatch(targetCompanyId, section, recordId);
+      }
+    }
+  }
+
+  if (isSuper) {
+    for (const [key, value] of Object.entries(delta.values || {})) upsertPatch(PATCH_GLOBAL_SCOPE, `value:${key}`, key, value);
+  }
+  return writePatchStatements(env, statements);
+}
+
+
+function buildStateDeltaForPersistence(before, after) {
+  const delta = { arrays: {}, objects: {}, values: {} };
+  const arrayKeys = new Set(['companies', 'users', ...COMPANY_ARRAY_KEYS]);
+  for (const key of arrayKeys) {
+    const oldRows = Array.isArray(before?.[key]) ? before[key] : [];
+    const newRows = Array.isArray(after?.[key]) ? after[key] : [];
+    const oldMap = new Map(oldRows.filter(row => row?.id).map(row => [String(row.id), row]));
+    const newMap = new Map(newRows.filter(row => row?.id).map(row => [String(row.id), row]));
+    const upserts = [], deletes = [];
+    for (const [id, row] of newMap) {
+      const old = oldMap.get(id);
+      if (!old || JSON.stringify(old) !== JSON.stringify(row)) upserts.push(row);
+    }
+    for (const [id, row] of oldMap) {
+      if (!newMap.has(id)) deletes.push({ id, companyId: String(row?.companyId || (key === 'companies' ? row.id : '')) });
+    }
+    if (upserts.length || deletes.length) delta.arrays[key] = { upserts, deletes };
+  }
+  const objectKeys = new Set([...COMPANY_OBJECT_KEYS, 'clientDeletedOrders']);
+  for (const key of objectKeys) {
+    const oldObj = before?.[key] && typeof before[key] === 'object' ? before[key] : {};
+    const newObj = after?.[key] && typeof after[key] === 'object' ? after[key] : {};
+    const upserts = [], deletes = [];
+    for (const recordId of new Set([...Object.keys(oldObj), ...Object.keys(newObj)])) {
+      let companyId = recordId;
+      if (key === 'clientDeletedOrders') {
+        const client = [...(after?.marketClients || []), ...(before?.marketClients || [])].find(row => String(row?.id || '') === String(recordId));
+        companyId = String(client?.companyId || '');
+      }
+      if (!Object.prototype.hasOwnProperty.call(newObj, recordId)) {
+        deletes.push({ recordId, companyId });
+      } else if (!Object.prototype.hasOwnProperty.call(oldObj, recordId) || JSON.stringify(oldObj[recordId]) !== JSON.stringify(newObj[recordId])) {
+        upserts.push({ recordId, companyId, value: newObj[recordId] });
+      }
+    }
+    if (upserts.length || deletes.length) delta.objects[key] = { upserts, deletes };
+  }
+  return delta;
+}
+
+async function getEmployeeSessionLight(request, env) {
+  const sid = getCookie(request, EMPLOYEE_SESSION_COOKIE);
+  if (!sid) throw new HttpError(401, 'Connexion requise.', 'UNAUTHENTICATED');
+  const session = await env.GLOBAL_MARKET_KV.get(`session:${sid}`, 'json');
+  if (!session || Number(session.expiresAt || 0) <= Date.now()) {
+    if (sid) await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);
+    throw new HttpError(401, 'Session expirée. Reconnectez-vous.', 'SESSION_EXPIRED');
+  }
+  const auth = await getAuth(env, session.userId);
+  if (!auth || Number(auth.version || 0) !== Number(session.authVersion || 0)) {
+    await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);
+    throw new HttpError(401, 'Session invalidée. Reconnectez-vous.', 'SESSION_INVALIDATED');
+  }
+  const user = { id: session.userId, companyId: session.companyId || null, role: session.role, status: 'active' };
+  return { sid, session, user, auth };
+}
+
+
 async function deleteKvSessionsForCompany(env, companyId) {
   for (const prefix of ['session:', 'client-session:']) {
     let cursor;
@@ -1107,7 +1356,8 @@ async function handleDeleteCompany(request, env) {
   }
 
   removeCompanyDataFromState(ctx.state, companyId);
-  const saved = await saveState(env, ctx.state);
+  await markCompanyDeleted(env, companyId);
+  const saved = { state: ctx.state };
   await deleteKvSessionsForCompany(env, companyId);
   await audit(
     env,
@@ -1246,7 +1496,10 @@ async function handleRegisterCompany(request, env) {
   state.companies.push(company);
   state.users.push(user);
   await writeUserCredential(env, user, password);
-  const saved = await saveState(env, state);
+  await persistStateDelta(env, { arrays: {
+    companies: { upserts: [company], deletes: [] },
+    users: { upserts: [user], deletes: [] }
+  } }, { role: 'system', companyId: cid });
   const auth = await getAuth(env, user.id);
   const created = await createEmployeeSession(env, user, auth);
   await env.GLOBAL_MARKET_KV.put(rateKey, JSON.stringify({ count: (rec.count || 0) + 1, resetAt: Date.now() + 3600000 }), { expirationTtl: 3600 });
@@ -1254,7 +1507,7 @@ async function handleRegisterCompany(request, env) {
   return json({
     success: true,
     session: publicSessionView(created.session),
-    data: scopeState(saved.state, user)
+    data: scopeState(state, user)
   }, {
     status: 201,
     headers: { 'Set-Cookie': setCookie(EMPLOYEE_SESSION_COOKIE, created.sid, created.ttl) }
@@ -1270,7 +1523,7 @@ async function handlePasswordChange(request, env) {
   }
   await writeUserCredential(env, ctx.user, newPassword, { mustChangePassword: false });
   ctx.user.mustChangePassword = false;
-  await saveState(env, ctx.state);
+  await persistStateDelta(env, { arrays: { users: { upserts: [ctx.user], deletes: [] } } }, { role: 'system', companyId: ctx.user.companyId || PATCH_GLOBAL_SCOPE });
   await env.GLOBAL_MARKET_KV.delete(`session:${ctx.sid}`);
   await audit(env, 'PASSWORD_CHANGED', ctx.user.id, ctx.user.companyId, 'Toutes les sessions ont été invalidées', requestIp(request));
   return json({ success: true, reloginRequired: true }, {
@@ -1297,7 +1550,8 @@ async function handlePasswordResetRequest(request, env) {
         email: user.email, role: user.role, phone: String(body.phone || ''), reason: String(body.reason || 'Mot de passe oublié'),
         status: 'pending', createdAt: new Date().toISOString()
       });
-      await saveState(env, state);
+      const latestRequest = state.passwordResetRequests[state.passwordResetRequests.length - 1];
+      await persistStateDelta(env, { arrays: { passwordResetRequests: { upserts: [latestRequest], deletes: [] } } }, { role: 'system', companyId: user.companyId });
     }
   }
   await env.GLOBAL_MARKET_KV.put(key, JSON.stringify({ count: (rec.count || 0) + 1, resetAt: Date.now() + 3600000 }), { expirationTtl: 3600 });
@@ -1323,7 +1577,7 @@ async function handleCreateUser(request, env) {
   };
   ctx.state.users.push(user);
   await writeUserCredential(env, user, password, { mustChangePassword: Boolean(body.mustChangePassword) });
-  await saveState(env, ctx.state);
+  await persistStateDelta(env, { arrays: { users: { upserts: [user], deletes: [] } } }, { role: 'system', companyId });
   await audit(env, 'USER_CREATED', ctx.user.id, companyId, user.id, requestIp(request));
   return json({ success: true, user: cleanClone(user) }, { status: 201 });
 }
@@ -1336,6 +1590,8 @@ async function handleUpdateUser(request, env) {
   if (!target || target.role === 'superadmin') throw new HttpError(404, 'Utilisateur introuvable.', 'USER_NOT_FOUND');
   if (ctx.user.role !== 'superadmin' && target.companyId !== ctx.user.companyId) throw new HttpError(403, 'Utilisateur hors de votre entreprise.', 'FORBIDDEN');
   const oldEmail = normalizeIdentifier(target.email);
+  const previousRole = target.role;
+  const previousStatus = target.status;
   const newEmail = normalizeIdentifier(body.email || target.email);
   if (newEmail !== oldEmail && (await env.GLOBAL_MARKET_KV.get(authIndexKey(newEmail)) || ctx.state.users.some(u => u.id !== target.id && normalizeIdentifier(u.email) === newEmail))) {
     throw new HttpError(409, 'Cet e-mail est déjà utilisé.', 'EMAIL_EXISTS');
@@ -1362,7 +1618,15 @@ async function handleUpdateUser(request, env) {
     await env.GLOBAL_MARKET_KV.put(authKey(target.id), JSON.stringify(auth));
   }
   target.mustChangePassword = body.password ? Boolean(body.mustChangePassword) : Boolean(body.mustChangePassword ?? target.mustChangePassword);
-  await saveState(env, ctx.state);
+  if (target.role !== previousRole || target.status !== previousStatus) {
+    const latestAuth = await getAuth(env, target.id);
+    if (latestAuth) {
+      latestAuth.version = Number(latestAuth.version || 1) + 1;
+      latestAuth.updatedAt = new Date().toISOString();
+      await env.GLOBAL_MARKET_KV.put(authKey(target.id), JSON.stringify(latestAuth));
+    }
+  }
+  await persistStateDelta(env, { arrays: { users: { upserts: [target], deletes: [] } } }, { role: 'system', companyId: target.companyId });
   await audit(env, 'USER_UPDATED', ctx.user.id, target.companyId, target.id, requestIp(request));
   return json({ success: true, user: cleanClone(target) });
 }
@@ -1380,7 +1644,7 @@ async function handleDeleteUser(request, env) {
   if (auth?.identifier) await env.GLOBAL_MARKET_KV.delete(authIndexKey(auth.identifier));
   await env.GLOBAL_MARKET_KV.delete(authKey(target.id));
   ctx.state.users = ctx.state.users.filter(u => u.id !== target.id);
-  await saveState(env, ctx.state);
+  await persistStateDelta(env, { arrays: { users: { upserts: [], deletes: [{ id: target.id, companyId: target.companyId }] } } }, { role: 'system', companyId: target.companyId });
   await audit(env, 'USER_DELETED', ctx.user.id, target.companyId, target.id, requestIp(request));
   return json({ success: true });
 }
@@ -1405,7 +1669,11 @@ async function handleResetUserPassword(request, env) {
       reset.status = 'done'; reset.doneAt = new Date().toISOString(); reset.doneBy = ctx.user.id;
     }
   }
-  await saveState(env, ctx.state);
+  const resetChanges = body.requestId ? (ctx.state.passwordResetRequests || []).filter(r => r.id === body.requestId) : [];
+  await persistStateDelta(env, { arrays: {
+    users: { upserts: [target], deletes: [] },
+    passwordResetRequests: { upserts: resetChanges, deletes: [] }
+  } }, { role: 'system', companyId: target.companyId });
   await audit(env, 'PASSWORD_RESET', ctx.user.id, target.companyId, target.id, requestIp(request));
   return json({ success: true, temporaryPassword: tempPassword });
 }
@@ -1425,7 +1693,7 @@ async function handlePublicClientRegister(request, env) {
   const client = { id: `clt_${crypto.randomUUID()}`, companyId, name, phone, email, createdAt: new Date().toISOString() };
   state.marketClients.push(client);
   await writeClientCredential(env, client, password);
-  await writeCompanySnapshot(env, companyId, state);
+  await persistStateDelta(env, { arrays: { marketClients: { upserts: [client], deletes: [] } } }, { role: 'system', companyId });
   const created = await createClientSession(env, client, await getClientAuth(env, client.id));
   return json({ success: true, client: cleanClone(client), session: publicClientSessionView(created.session) }, {
     status: 201,
@@ -1491,7 +1759,11 @@ async function handlePublicOrder(request, env) {
     delivery: 'En attente de validation', source: 'lot panier boutique client'
   };
   ctx.state.orders.push(order);
-  await writeCompanySnapshot(env, ctx.client.companyId, ctx.state);
+  const changedItems = orderItems.map(line => ctx.state.items.find(item => item.id === line.itemId)).filter(Boolean);
+  await persistStateDelta(env, { arrays: {
+    items: { upserts: changedItems, deletes: [] },
+    orders: { upserts: [order], deletes: [] }
+  } }, { role: 'system', companyId: ctx.client.companyId });
   return json({ success: true, order: cleanClone(order) }, { status: 201 });
 }
 
@@ -1507,7 +1779,15 @@ async function handlePublicOrderDelete(request, env) {
   ctx.state.clientDeletedOrders = ctx.state.clientDeletedOrders || {};
   ctx.state.clientDeletedOrders[ctx.client.id] = ctx.state.clientDeletedOrders[ctx.client.id] || [];
   if (!ctx.state.clientDeletedOrders[ctx.client.id].includes(order.id)) ctx.state.clientDeletedOrders[ctx.client.id].push(order.id);
-  await writeCompanySnapshot(env, ctx.client.companyId, ctx.state);
+  await persistStateDelta(env, {
+    arrays: {
+      orders: { upserts: [order], deletes: [] },
+      marketClients: { upserts: [ctx.client], deletes: [] }
+    },
+    objects: {
+      clientDeletedOrders: { upserts: [{ recordId: ctx.client.id, companyId: ctx.client.companyId, value: ctx.state.clientDeletedOrders[ctx.client.id] }], deletes: [] }
+    }
+  }, { role: 'system', companyId: ctx.client.companyId });
   return json({ success: true });
 }
 
@@ -1527,7 +1807,7 @@ async function handleApi(request, env, executionCtx) {
         setupRequired: !auth?.hash,
         superAdminEmailConfigured: Boolean(configuredSuperAdminIdentifier(env)),
         superAdminPasswordSecretConfigured: Boolean(String(env.SUPER_ADMIN_INITIAL_PASSWORD || '')),
-        saveMode: 'versioned-d1-company-v6',
+        saveMode: 'incremental-d1-delta-v7',
         time: new Date().toISOString()
       });
     }
@@ -1561,6 +1841,13 @@ async function handleApi(request, env, executionCtx) {
       const ctx = await getEmployeeSession(request, env, false);
       return json(scopeState(ctx.state, ctx.user));
     }
+    if (url.pathname === '/api/save-delta' && request.method === 'POST') {
+      assertSameOrigin(request);
+      const ctx = await getEmployeeSessionLight(request, env);
+      const body = await readJson(request, 2_500_000);
+      const result = await persistStateDelta(env, body.delta, ctx.user);
+      return json({ success: true, message: 'Enregistrement sécurisé effectué.', storage: result.storage, patchCount: result.patchCount });
+    }
     if (url.pathname === '/api/save' && request.method === 'POST') {
       // Les enregistrements courants restent protégés par la session HttpOnly,
       // le contrôle d'origine et l'isolation des données de l'entreprise.
@@ -1570,14 +1857,11 @@ async function handleApi(request, env, executionCtx) {
       const ctx = await getEmployeeSession(request, env, false);
       const body = await readJson(request);
       const incoming = body.data && typeof body.data === 'object' ? body.data : body;
+      const before = cleanClone(ctx.state);
       const merged = mergeScopedState(ctx.state, incoming, ctx.user);
-      if (ctx.user.role === 'superadmin') {
-        const result = await saveState(env, merged);
-        return json({ success: true, message: 'Sauvegarde globale effectuée.', d1: result.d1, storage: result.storage });
-      }
-      const result = await writeCompanySnapshot(env, ctx.user.companyId, merged);
-      if (executionCtx?.waitUntil) executionCtx.waitUntil(compactGlobalBaseAfterCompanySave(env, merged, ctx.user.companyId));
-      return json({ success: true, message: 'Sauvegarde sécurisée effectuée.', d1: result, storage: result.storage });
+      const delta = buildStateDeltaForPersistence(before, merged);
+      const result = await persistStateDelta(env, delta, ctx.user);
+      return json({ success: true, message: 'Enregistrement sécurisé effectué.', storage: result.storage, patchCount: result.patchCount });
     }
 
     if (url.pathname === '/api/companies/delete' && request.method === 'POST') return await handleDeleteCompany(request, env);
@@ -1625,7 +1909,7 @@ export default {
       headers.set('Cache-Control', 'no-cache, must-revalidate, max-age=0');
     }
 
-    headers.set('X-Global-Market-Cache-Fix', '2026-07-26-r1');
+    headers.set('X-Global-Market-Cache-Fix', '2026-08-05-v4.2-delta');
     return new Response(assetResponse.body, {
       status: assetResponse.status,
       statusText: assetResponse.statusText,
