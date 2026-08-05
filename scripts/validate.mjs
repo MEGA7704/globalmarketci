@@ -197,8 +197,6 @@ const officialShopChecks = [
   ['officialStore', 'nouvelle boutique officielle premium'],
   ['officialHeaderMain', 'en-tête e-commerce responsive'],
   ['officialShopSearch', 'recherche produits et marques'],
-  ['officialCategoriesGrid', 'catégories populaires'],
-  ['officialTrustStats', 'statistiques de confiance'],
   ['filterOfficialShop', 'filtres de catalogue'],
   ['addToPublicCart', 'panier public conservé'],
   ['deliveryFeeRateForSubtotal', 'barème automatique des frais de livraison'],
@@ -210,6 +208,33 @@ const officialShopChecks = [
 for (const [needle, label] of officialShopChecks) {
   if (!app.includes(needle) && !fs.readFileSync('public/assets/style.css', 'utf8').includes(needle)) {
     console.error(`[validate] Boutique officielle incomplète : ${label}.`);
+    process.exit(1);
+  }
+}
+
+const targetedUiV43Checks = [
+  ['SERVICE_REPORT_PAGE_SIZE=30', 'pagination du rapport limitée à 30 lignes'],
+  ['serviceReportPagination', 'commandes Suivant et Précédent du rapport'],
+  ['openReportSaleRow', 'lignes de ventes cliquables dans le rapport'],
+  ['serviceSaleRowClickable', 'style des lignes de ventes cliquables'],
+  ['contractClientListPage hidden', 'liste des clients masquée par défaut'],
+  ['showContractClientList(this)', 'affichage de la liste sur clic explicite']
+];
+for (const [needle, label] of targetedUiV43Checks) {
+  if (!app.includes(needle) && !reportStyle.includes(needle)) {
+    console.error(`[validate] Correction ciblée V4.3 incomplète : ${label}.`);
+    process.exit(1);
+  }
+}
+const removedOfficialShopBlocks = [
+  ['<h2>Catégories populaires</h2>', 'section Catégories populaires'],
+  ['<section class="officialTrustStats">', 'cartes statistiques de confiance'],
+  ['GLOBAL MARKET • Caisse enregistreuse', 'bannière de la caisse enregistreuse'],
+  ['Vente rapide produits & services', 'titre de la bannière de caisse']
+];
+for (const [needle, label] of removedOfficialShopBlocks) {
+  if (app.includes(needle)) {
+    console.error(`[validate] Élément demandé comme supprimé encore présent : ${label}.`);
     process.exit(1);
   }
 }
