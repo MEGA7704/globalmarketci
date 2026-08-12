@@ -136,7 +136,7 @@ for (const [needle, label] of planChecks) {
 }
 
 const targetedSaleChecks = [
-  ['id="saleCartClientsServed"', 'champ Nb de Clients servis dans le formulaire de vente'],
+  ['saleBatchClients', 'champ Nb de Clients servis dans le formulaire multi-lignes'],
   ['clientsServed,unit,total', 'enregistrement du nombre de clients servis'],
   ['r.clientsServed+=saleClientsServedValue(s)', 'comptabilisation dans le bilan détaillé'],
   ['initFlexibleHorizontalMenu', 'menu horizontal flexible au défilement'],
@@ -212,31 +212,27 @@ for (const [needle, label] of officialShopChecks) {
   }
 }
 
-const targetedUiV43Checks = [
-  ['SERVICE_REPORT_PAGE_SIZE=30', 'pagination du rapport limitée à 30 lignes'],
-  ['serviceReportPagination', 'commandes Suivant et Précédent du rapport'],
-  ['openReportSaleRow', 'lignes de ventes cliquables dans le rapport'],
-  ['serviceSaleRowClickable', 'style des lignes de ventes cliquables'],
-  ['contractClientListPage hidden', 'liste des clients masquée par défaut'],
-  ['showContractClientList(this)', 'affichage de la liste sur clic explicite']
+
+const v44Checks = [
+  ['saleCartBatchCard', 'popup premium multi-lignes'],
+  ['saleCartBatchRow', 'lignes multiples du popup'],
+  ['Ajouter une ligne', 'ajout dynamique de ligne'],
+  ['ENREGISTRER LES SERVICES', 'validation multi-lignes'],
+  ['Ajout multiple au panier', 'transfert de toutes les lignes vers le panier'],
+  ['serviceReportPageSize(){return 30;}', 'pagination rapports à 30 lignes'],
+  ['serviceReportPagination', 'contrôles Précédent / Suivant'],
+  ['serviceSaleRowClickable', 'lignes de rapport cliquables'],
+  ['contractClientListPage hidden', 'liste clients masquée par défaut']
 ];
-for (const [needle, label] of targetedUiV43Checks) {
+for (const [needle, label] of v44Checks) {
   if (!app.includes(needle) && !reportStyle.includes(needle)) {
-    console.error(`[validate] Correction ciblée V4.3 incomplète : ${label}.`);
+    console.error(`[validate] GLOBAL MARKET V4.4 incomplet : ${label}.`);
     process.exit(1);
   }
 }
-const removedOfficialShopBlocks = [
-  ['<h2>Catégories populaires</h2>', 'section Catégories populaires'],
-  ['<section class="officialTrustStats">', 'cartes statistiques de confiance'],
-  ['GLOBAL MARKET • Caisse enregistreuse', 'bannière de la caisse enregistreuse'],
-  ['Vente rapide produits & services', 'titre de la bannière de caisse']
-];
-for (const [needle, label] of removedOfficialShopBlocks) {
-  if (app.includes(needle)) {
-    console.error(`[validate] Élément demandé comme supprimé encore présent : ${label}.`);
-    process.exit(1);
-  }
+if (app.includes('Catégories populaires') || app.includes('officialTrustStats') || app.includes('GLOBAL MARKET • Caisse enregistreuse')) {
+  console.error('[validate] Des sections supprimées en V4.3 sont revenues dans l’interface.');
+  process.exit(1);
 }
 
 if (/passwordHash|passwordSalt|derivePasswordHash/.test(app)) {
