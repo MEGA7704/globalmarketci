@@ -178,3 +178,10 @@ Répertoire racine : vide
 ## V4.8 — Connexion D1 prioritaire
 
 La connexion Administrateur, Caisse et Client utilise désormais D1 en priorité pour les secrets et les sessions. Les anciens secrets KV sont migrés de façon ciblée à leur première utilisation. Les messages et compteurs visibles « service cloud occupé / nouvelle tentative » ont été supprimés de l’interface.
+
+
+## V4.9 — Articles Marketplace visibles
+- Correction du chargement des boutiques publiques dont le lien est basé sur le nom de l’entreprise.
+- Résolution par `shopSlug` ou par nom normalisé.
+- Chargement fiable des articles depuis le snapshot/patch D1 de l’entreprise.
+- Les articles en rupture restent affichés, mais leur ajout au panier est désactivé.

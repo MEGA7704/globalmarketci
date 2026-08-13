@@ -268,7 +268,7 @@ const v48Checks = [
 ];
 for (const [needle, label] of v48Checks) {
   if (!worker.includes(needle)) {
-    console.error(`[validate] GLOBAL MARKET V4.8 incomplet : ${label}.`);
+    console.error(`[validate] GLOBAL MARKET V4.9 incomplet : ${label}.`);
     process.exit(1);
   }
 }

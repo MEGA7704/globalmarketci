@@ -1635,6 +1635,15 @@ async function handleDeleteCompany(request, env) {
   });
 }
 
+function publicShopSlug(value) {
+  return String(value || 'boutique')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'boutique';
+}
+
 function publicCompany(company) {
   if (!company) return null;
   const allowed = ['id', 'name', 'legalForm', 'rccm', 'taxAccount', 'capital', 'logo', 'currency', 'activity', 'phone', 'email', 'address', 'businessType', 'shopSlug', 'shopBanner', 'shopColor', 'marketWaveBusinessLink', 'marketUsdtTrc20', 'status', 'plan', 'planCode', 'subscriptionEnd'];
@@ -1661,12 +1670,33 @@ async function publicLoadPayload(request, env) {
     state = await withStorageRetry(() => loadState(env, scopedCompanyId), 4);
   } else if (requestedSlug) {
     const base = await withStorageRetry(() => loadBaseState(env), 4);
-    const baseCompany = (base.companies || []).find(c => String(c.shopSlug || '').toLowerCase() === requestedSlug);
+    // Les liens historiques de la boutique sont générés à partir du nom de l'entreprise,
+    // alors que certaines anciennes fiches n'ont jamais reçu shopSlug. On accepte donc
+    // les deux formes afin de toujours retrouver le bon snapshot D1 de l'entreprise.
+    let baseCompany = (base.companies || []).find(c => {
+      const savedSlug = publicShopSlug(c.shopSlug || '');
+      const nameSlug = publicShopSlug(c.name || '');
+      return savedSlug === requestedSlug || nameSlug === requestedSlug;
+    });
     if (baseCompany) {
       scopedCompanyId = baseCompany.id;
       state = await withStorageRetry(() => loadState(env, scopedCompanyId), 4);
     } else {
-      state = base;
+      // Secours pour une entreprise récemment créée/modifiée dont l'identité se trouve
+      // encore uniquement dans un snapshot/patch entreprise : on fusionne une fois les
+      // données puis on isole immédiatement l'entreprise correspondante.
+      const merged = await withStorageRetry(() => loadState(env), 4);
+      baseCompany = (merged.companies || []).find(c => {
+        const savedSlug = publicShopSlug(c.shopSlug || '');
+        const nameSlug = publicShopSlug(c.name || '');
+        return savedSlug === requestedSlug || nameSlug === requestedSlug;
+      });
+      if (baseCompany) {
+        scopedCompanyId = baseCompany.id;
+        state = await withStorageRetry(() => loadState(env, scopedCompanyId), 4);
+      } else {
+        state = merged;
+      }
     }
   } else {
     state = await withStorageRetry(() => loadState(env), 4);
