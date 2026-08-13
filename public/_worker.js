@@ -85,33 +85,12 @@ function errorResponse(error) {
   console.error(error);
   const message = String(error?.message || error || '');
   if (/overload|too many|rate.?limit|quota|temporar|network connection lost/i.test(message)) {
-    return json({ success: false, error: 'L’opération n’a pas pu être finalisée. Réessayez.', code: 'STORAGE_BUSY' }, { status: 429 });
+    return json({ success: false, error: 'Le stockage est momentanément occupé. La sauvegarde sera automatiquement réessayée.', code: 'STORAGE_BUSY' }, { status: 429 });
   }
   if (/too big|too large|SQLITE_TOOBIG|maximum.*size|memory/i.test(message)) {
     return json({ success: false, error: 'Les données à enregistrer sont trop volumineuses. Réduisez les images ou captures.', code: 'STORAGE_TOO_LARGE' }, { status: 413 });
   }
   return json({ success: false, error: 'La sauvegarde n’a pas pu être terminée. Réessayez sans fermer la page.', code: 'STORAGE_WRITE_FAILED' }, { status: 500 });
-}
-
-function isTransientStorageFailure(error) {
-  if (!error || error instanceof HttpError) return false;
-  const message = String(error?.message || error?.cause?.message || error || '');
-  return /overload|too many|rate.?limit|quota|temporar|busy|network|connection|timeout|timed out|internal error|service unavailable|reset|D1_ERROR/i.test(message);
-}
-
-async function withStorageRetry(operation, attempts = 4) {
-  let lastError = null;
-  const delays = [120, 300, 700, 1400];
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      return await operation();
-    } catch (error) {
-      lastError = error;
-      if (!isTransientStorageFailure(error) || attempt === attempts - 1) throw error;
-      await new Promise(resolve => setTimeout(resolve, delays[Math.min(attempt, delays.length - 1)] + Math.floor(Math.random() * 120)));
-    }
-  }
-  throw lastError || new Error('Stockage temporairement indisponible.');
 }
 
 function needBindings(env) {
@@ -221,127 +200,12 @@ function authIndexKey(identifier) { return `auth:index:${normalizeIdentifier(ide
 function clientAuthKey(clientId) { return `auth:client:${clientId}`; }
 function clientIndexKey(companyId, phone) { return `auth:client-index:${companyId}:${normalizePhone(phone)}`; }
 
-async function safeKvGet(env, key, type = null) {
-  if (!env.GLOBAL_MARKET_KV) return null;
-  let lastError = null;
-  for (const delay of [0, 90, 240]) {
-    if (delay) await new Promise(resolve => setTimeout(resolve, delay));
-    try { return type ? await env.GLOBAL_MARKET_KV.get(key, type) : await env.GLOBAL_MARKET_KV.get(key); }
-    catch (error) { lastError = error; }
-  }
-  console.warn('KV lecture différée', key, lastError?.message || lastError);
-  return null;
-}
-
-async function safeKvPut(env, key, value, options) {
-  if (!env.GLOBAL_MARKET_KV) return false;
-  try { await env.GLOBAL_MARKET_KV.put(key, value, options); return true; }
-  catch (error) { console.warn('KV écriture différée', key, error?.message || error); return false; }
-}
-
-async function safeKvDelete(env, key) {
-  if (!env.GLOBAL_MARKET_KV) return false;
-  try { await env.GLOBAL_MARKET_KV.delete(key); return true; }
-  catch (error) { console.warn('KV suppression différée', key, error?.message || error); return false; }
-}
-
-function employeeAuthFromRow(row) {
-  if (!row) return null;
-  return {
-    userId: row.user_id, identifier: row.identifier, salt: row.salt, iterations: Number(row.iterations || PASSWORD_ITERATIONS),
-    hash: row.hash, version: Number(row.version || 1), mustChangePassword: Boolean(row.must_change_password),
-    bootstrapVersion: row.bootstrap_version || null, updatedAt: row.updated_at || ''
-  };
-}
-
-function clientAuthFromRow(row) {
-  if (!row) return null;
-  return {
-    clientId: row.client_id, companyId: row.company_id, phone: row.phone, salt: row.salt,
-    iterations: Number(row.iterations || PASSWORD_ITERATIONS), hash: row.hash, version: Number(row.version || 1), updatedAt: row.updated_at || ''
-  };
-}
-
-async function writeEmployeeAuthD1(env, record) {
-  await ensureDB(env);
-  await env.GLOBAL_MARKET_D1.prepare(`INSERT INTO employee_auth(user_id,identifier,company_id,salt,iterations,hash,version,must_change_password,bootstrap_version,updated_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET identifier=excluded.identifier,company_id=excluded.company_id,salt=excluded.salt,iterations=excluded.iterations,hash=excluded.hash,version=excluded.version,must_change_password=excluded.must_change_password,bootstrap_version=excluded.bootstrap_version,updated_at=excluded.updated_at`)
-    .bind(record.userId, record.identifier || '', record.companyId || null, record.salt, Number(record.iterations || PASSWORD_ITERATIONS), record.hash, Number(record.version || 1), record.mustChangePassword ? 1 : 0, record.bootstrapVersion || null, record.updatedAt || new Date().toISOString()).run();
-}
-
-async function writeClientAuthD1(env, record) {
-  await ensureDB(env);
-  await env.GLOBAL_MARKET_D1.prepare(`INSERT INTO client_auth(client_id,company_id,phone,salt,iterations,hash,version,updated_at)
-    VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(client_id) DO UPDATE SET company_id=excluded.company_id,phone=excluded.phone,salt=excluded.salt,iterations=excluded.iterations,hash=excluded.hash,version=excluded.version,updated_at=excluded.updated_at`)
-    .bind(record.clientId, record.companyId || '', record.phone || '', record.salt, Number(record.iterations || PASSWORD_ITERATIONS), record.hash, Number(record.version || 1), record.updatedAt || new Date().toISOString()).run();
-}
-
 async function getAuth(env, userId) {
-  try {
-    await ensureDB(env);
-    const row = await env.GLOBAL_MARKET_D1.prepare('SELECT * FROM employee_auth WHERE user_id=? LIMIT 1').bind(userId).first();
-    if (row) return employeeAuthFromRow(row);
-  } catch (error) {
-    console.warn('Lecture auth D1 différée', userId, error?.message || error);
-  }
-  const legacy = await safeKvGet(env, authKey(userId), 'json');
-  if (legacy?.hash) {
-    const record = { ...legacy, userId: legacy.userId || userId };
-    try { await writeEmployeeAuthD1(env, record); } catch (error) { console.warn('Migration auth D1 différée', error?.message || error); }
-    return record;
-  }
-  return null;
+  return env.GLOBAL_MARKET_KV.get(authKey(userId), 'json');
 }
 
 async function getClientAuth(env, clientId) {
-  try {
-    await ensureDB(env);
-    const row = await env.GLOBAL_MARKET_D1.prepare('SELECT * FROM client_auth WHERE client_id=? LIMIT 1').bind(clientId).first();
-    if (row) return clientAuthFromRow(row);
-  } catch (error) {
-    console.warn('Lecture auth client D1 différée', clientId, error?.message || error);
-  }
-  const legacy = await safeKvGet(env, clientAuthKey(clientId), 'json');
-  if (legacy?.hash) {
-    const record = { ...legacy, clientId: legacy.clientId || clientId };
-    try { await writeClientAuthD1(env, record); } catch (error) { console.warn('Migration auth client D1 différée', error?.message || error); }
-    return record;
-  }
-  return null;
-}
-
-async function persistEmployeeAuthRecord(env, record) {
-  if (!record?.userId || !record?.hash) return null;
-  let d1Ok = false;
-  try { await writeEmployeeAuthD1(env, record); d1Ok = true; }
-  catch (error) { console.warn('Auth D1 non écrit immédiatement', error?.message || error); }
-  const kvOk = await safeKvPut(env, authKey(record.userId), JSON.stringify(record));
-  if (record.identifier) await safeKvPut(env, authIndexKey(record.identifier), record.userId);
-  if (!d1Ok && !kvOk) throw new HttpError(503, 'Authentification momentanément indisponible.', 'AUTH_STORAGE_UNAVAILABLE');
-  return record;
-}
-
-async function persistClientAuthRecord(env, record) {
-  if (!record?.clientId || !record?.hash) return null;
-  let d1Ok = false;
-  try { await writeClientAuthD1(env, record); d1Ok = true; }
-  catch (error) { console.warn('Auth client D1 non écrit immédiatement', error?.message || error); }
-  const kvOk = await safeKvPut(env, clientAuthKey(record.clientId), JSON.stringify(record));
-  if (record.companyId && record.phone) await safeKvPut(env, clientIndexKey(record.companyId, record.phone), record.clientId);
-  if (!d1Ok && !kvOk) throw new HttpError(503, 'Authentification client momentanément indisponible.', 'AUTH_STORAGE_UNAVAILABLE');
-  return record;
-}
-
-async function deleteEmployeeAuth(env, userId, identifier = '') {
-  try { await ensureDB(env); await env.GLOBAL_MARKET_D1.prepare('DELETE FROM employee_auth WHERE user_id=?').bind(userId).run(); } catch (error) { console.warn('Suppression auth D1 différée', error?.message || error); }
-  if (identifier) await safeKvDelete(env, authIndexKey(identifier));
-  await safeKvDelete(env, authKey(userId));
-}
-
-async function deleteClientAuth(env, clientId, companyId = '', phone = '') {
-  try { await ensureDB(env); await env.GLOBAL_MARKET_D1.prepare('DELETE FROM client_auth WHERE client_id=?').bind(clientId).run(); } catch (error) { console.warn('Suppression auth client D1 différée', error?.message || error); }
-  if (companyId && phone) await safeKvDelete(env, clientIndexKey(companyId, phone));
-  await safeKvDelete(env, clientAuthKey(clientId));
+  return env.GLOBAL_MARKET_KV.get(clientAuthKey(clientId), 'json');
 }
 
 async function writeUserCredential(env, profile, password, options = {}) {
@@ -349,27 +213,39 @@ async function writeUserCredential(env, profile, password, options = {}) {
   const old = await getAuth(env, profile.id);
   const salt = randomHex(16);
   const record = {
-    userId: profile.id, companyId: profile.companyId || null, identifier: normalizeIdentifier(profile.email || profile.username), salt,
-    iterations: PASSWORD_ITERATIONS, hash: await derivePasswordHash(password, salt, PASSWORD_ITERATIONS),
-    version: Number(old?.version || 0) + 1, mustChangePassword: Boolean(options.mustChangePassword),
-    bootstrapVersion: old?.bootstrapVersion || null, updatedAt: new Date().toISOString()
+    userId: profile.id,
+    identifier: normalizeIdentifier(profile.email || profile.username),
+    salt,
+    iterations: PASSWORD_ITERATIONS,
+    hash: await derivePasswordHash(password, salt, PASSWORD_ITERATIONS),
+    version: Number(old?.version || 0) + 1,
+    mustChangePassword: Boolean(options.mustChangePassword),
+    bootstrapVersion: old?.bootstrapVersion || null,
+    updatedAt: new Date().toISOString()
   };
-  await persistEmployeeAuthRecord(env, record);
-  if (old?.identifier && old.identifier !== record.identifier) await safeKvDelete(env, authIndexKey(old.identifier));
+  if (old?.identifier && old.identifier !== record.identifier) await env.GLOBAL_MARKET_KV.delete(authIndexKey(old.identifier));
+  await env.GLOBAL_MARKET_KV.put(authKey(profile.id), JSON.stringify(record));
+  await env.GLOBAL_MARKET_KV.put(authIndexKey(record.identifier), profile.id);
   return record;
 }
 
-async function writeClientCredential(env, client, password, options = {}) {
-  if (!options.allowLegacyWeak) validatePassword(password, 'client');
+async function writeClientCredential(env, client, password) {
+  validatePassword(password, 'client');
   const old = await getClientAuth(env, client.id);
   const salt = randomHex(16);
   const record = {
-    clientId: client.id, companyId: client.companyId, phone: normalizePhone(client.phone), salt,
-    iterations: PASSWORD_ITERATIONS, hash: await derivePasswordHash(password, salt, PASSWORD_ITERATIONS),
-    version: Number(old?.version || 0) + 1, updatedAt: new Date().toISOString()
+    clientId: client.id,
+    companyId: client.companyId,
+    phone: normalizePhone(client.phone),
+    salt,
+    iterations: PASSWORD_ITERATIONS,
+    hash: await derivePasswordHash(password, salt, PASSWORD_ITERATIONS),
+    version: Number(old?.version || 0) + 1,
+    updatedAt: new Date().toISOString()
   };
-  await persistClientAuthRecord(env, record);
-  if (old?.phone && old.phone !== record.phone) await safeKvDelete(env, clientIndexKey(client.companyId, old.phone));
+  if (old?.phone && old.phone !== record.phone) await env.GLOBAL_MARKET_KV.delete(clientIndexKey(client.companyId, old.phone));
+  await env.GLOBAL_MARKET_KV.put(clientAuthKey(client.id), JSON.stringify(record));
+  await env.GLOBAL_MARKET_KV.put(clientIndexKey(client.companyId, record.phone), client.id);
   return record;
 }
 
@@ -453,55 +329,6 @@ async function ensureDB(env) {
         detail TEXT,
         ip_hash TEXT,
         created_at TEXT NOT NULL
-      )`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS employee_auth (
-        user_id TEXT PRIMARY KEY,
-        identifier TEXT NOT NULL,
-        company_id TEXT,
-        salt TEXT NOT NULL,
-        iterations INTEGER NOT NULL,
-        hash TEXT NOT NULL,
-        version INTEGER NOT NULL DEFAULT 1,
-        must_change_password INTEGER NOT NULL DEFAULT 0,
-        bootstrap_version TEXT,
-        updated_at TEXT NOT NULL
-      )`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_employee_auth_identifier ON employee_auth(identifier)`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS client_auth (
-        client_id TEXT PRIMARY KEY,
-        company_id TEXT NOT NULL,
-        phone TEXT NOT NULL,
-        salt TEXT NOT NULL,
-        iterations INTEGER NOT NULL,
-        hash TEXT NOT NULL,
-        version INTEGER NOT NULL DEFAULT 1,
-        updated_at TEXT NOT NULL
-      )`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_client_auth_company_phone ON client_auth(company_id, phone)`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS employee_sessions (
-        sid TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        company_id TEXT,
-        role TEXT NOT NULL,
-        auth_version INTEGER NOT NULL,
-        csrf_token TEXT NOT NULL,
-        login_at INTEGER NOT NULL,
-        expires_at INTEGER NOT NULL
-      )`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE INDEX IF NOT EXISTS idx_employee_sessions_user ON employee_sessions(user_id, expires_at)`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS client_sessions (
-        sid TEXT PRIMARY KEY,
-        client_id TEXT NOT NULL,
-        company_id TEXT NOT NULL,
-        auth_version INTEGER NOT NULL,
-        csrf_token TEXT NOT NULL,
-        expires_at INTEGER NOT NULL
-      )`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE INDEX IF NOT EXISTS idx_client_sessions_client ON client_sessions(client_id, expires_at)`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS login_rate_limits (
-        rate_key TEXT PRIMARY KEY,
-        count INTEGER NOT NULL DEFAULT 0,
-        reset_at INTEGER NOT NULL
       )`),
       env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_global_state_chunks_v2_current ON global_state_chunks_v2(document_id, revision, chunk_index)'),
       env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_company_state_chunks_current ON company_state_chunks(company_id, revision, chunk_index)'),
@@ -865,7 +692,7 @@ async function migrateLegacyCredentials(env, state) {
       await env.GLOBAL_MARKET_KV.put(clientAuthKey(client.id), JSON.stringify(record));
       await env.GLOBAL_MARKET_KV.put(clientIndexKey(client.companyId, record.phone), client.id);
     } else if (!existing && typeof client.password === 'string' && client.password) {
-      await writeClientCredential(env, client, client.password, { allowLegacyWeak: true });
+      await writeClientCredential(env, client, client.password);
     }
     changed = stripCredentialFields(client) || changed;
   }
@@ -903,7 +730,7 @@ async function saveState(env, state) {
   return { state: normalized, d1, storage: 'd1-versioned' };
 }
 
-async function loadBaseState(env) {
+async function loadState(env, companyId = '*') {
   await ensureDB(env);
   let state = await readGlobalStateV2(env);
   if (!state) {
@@ -914,16 +741,10 @@ async function loadBaseState(env) {
     if (!state) state = defaultState();
   }
   state = normalizeState(state);
-  // V4.8 : aucune migration globale de mots de passe pendant la connexion.
-  // Les anciens identifiants sont migrés individuellement vers D1 lors de leur première utilisation.
-  return state;
-}
-
-async function loadState(env, companyId = '*') {
-  let state = await loadBaseState(env);
+  await ensureLegacyCredentialsMigrated(env, state);
 
   // Les modifications courantes sont lues depuis de petits documents par entreprise.
-  // Un utilisateur normal ne charge que son entreprise, ce qui réduit fortement CPU, mémoire et risques de 503.
+  // Un utilisateur normal ne charge que son entreprise, ce qui réduit fortement CPU et mémoire.
   const snapshots = await readCompanySnapshots(env, companyId === '*' ? null : companyId);
   for (const entry of snapshots) state = applyCompanySnapshot(state, entry.companyId, entry.state);
   state = await applyStoredStatePatches(env, state, companyId);
@@ -940,17 +761,14 @@ async function ensureSuperAdminCredential(env, state) {
   const needsCredentialSync = !existing?.hash;
 
   if (!needsCredentialSync) {
-    if (existing.identifier && existing.identifier !== identifier) await safeKvDelete(env, authIndexKey(existing.identifier));
+    if (existing.identifier && existing.identifier !== identifier) await env.GLOBAL_MARKET_KV.delete(authIndexKey(existing.identifier));
     if (existing.identifier !== identifier) {
       existing.identifier = identifier;
       existing.updatedAt = new Date().toISOString();
-      existing.userId = existing.userId || SUPER_ADMIN_ID;
-      existing.companyId = null;
-      await writeEmployeeAuthD1(env, existing);
-      await safeKvPut(env, authKey(SUPER_ADMIN_ID), JSON.stringify(existing));
+      await env.GLOBAL_MARKET_KV.put(authKey(SUPER_ADMIN_ID), JSON.stringify(existing));
     }
-    await safeKvPut(env, authIndexKey(identifier), SUPER_ADMIN_ID);
-    await safeKvPut(env, AUTH_INIT_KEY, new Date().toISOString());
+    await env.GLOBAL_MARKET_KV.put(authIndexKey(identifier), SUPER_ADMIN_ID);
+    if (!(await env.GLOBAL_MARKET_KV.get(AUTH_INIT_KEY))) await env.GLOBAL_MARKET_KV.put(AUTH_INIT_KEY, new Date().toISOString());
     return existing;
   }
 
@@ -964,12 +782,9 @@ async function ensureSuperAdminCredential(env, state) {
   const auth = await writeUserCredential(env, credentialProfile, initialPassword, { mustChangePassword: false });
   auth.bootstrapVersion = desiredBootstrapVersion;
   auth.updatedAt = new Date().toISOString();
-  auth.userId = SUPER_ADMIN_ID;
-  auth.companyId = null;
-  await writeEmployeeAuthD1(env, auth);
-  await safeKvPut(env, authKey(SUPER_ADMIN_ID), JSON.stringify(auth));
-  await safeKvPut(env, authIndexKey(identifier), SUPER_ADMIN_ID);
-  await safeKvPut(env, AUTH_INIT_KEY, new Date().toISOString());
+  await env.GLOBAL_MARKET_KV.put(authKey(SUPER_ADMIN_ID), JSON.stringify(auth));
+  await env.GLOBAL_MARKET_KV.put(authIndexKey(identifier), SUPER_ADMIN_ID);
+  await env.GLOBAL_MARKET_KV.put(AUTH_INIT_KEY, new Date().toISOString());
   await audit(
     env,
     existing?.hash ? 'SUPERADMIN_CREDENTIAL_RESYNCED' : 'SUPERADMIN_INITIALIZED',
@@ -1002,26 +817,7 @@ async function rateKeyHash(value) {
 }
 
 async function getRateRecord(env, key) {
-  try {
-    await ensureDB(env);
-    const row = await env.GLOBAL_MARKET_D1.prepare('SELECT count, reset_at FROM login_rate_limits WHERE rate_key=? LIMIT 1').bind(key).first();
-    return row ? { count: Number(row.count || 0), resetAt: Number(row.reset_at || 0) } : { count: 0, resetAt: 0 };
-  } catch (error) {
-    // Le contrôle anti-bruteforce ne doit jamais empêcher un utilisateur légitime de se connecter
-    // lorsqu'un stockage secondaire est momentanément indisponible.
-    console.warn('Rate-limit différé', error?.message || error);
-    return { count: 0, resetAt: 0, storageUnavailable: true };
-  }
-}
-
-async function putRateRecord(env, key, rec) {
-  if (rec?.storageUnavailable) return;
-  try {
-    await ensureDB(env);
-    await env.GLOBAL_MARKET_D1.prepare(`INSERT INTO login_rate_limits(rate_key,count,reset_at) VALUES(?,?,?)
-      ON CONFLICT(rate_key) DO UPDATE SET count=excluded.count, reset_at=excluded.reset_at`)
-      .bind(key, Number(rec.count || 0), Number(rec.resetAt || 0)).run();
-  } catch (error) { console.warn('Rate-limit non persisté', error?.message || error); }
+  return (await env.GLOBAL_MARKET_KV.get(key, 'json')) || { count: 0, resetAt: 0 };
 }
 
 async function assertLoginRateAllowed(env, ip, identifier) {
@@ -1029,7 +825,7 @@ async function assertLoginRateAllowed(env, ip, identifier) {
   const ipKey = `rate:login:ip:${await rateKeyHash(ip)}`;
   const accountKey = `rate:login:account:${await rateKeyHash(normalizeIdentifier(identifier))}`;
   const [ipRec, accountRec] = await Promise.all([getRateRecord(env, ipKey), getRateRecord(env, accountKey)]);
-  const normalize = rec => rec.resetAt > now ? rec : { count: 0, resetAt: now + 15 * 60 * 1000, storageUnavailable: Boolean(rec.storageUnavailable) };
+  const normalize = rec => rec.resetAt > now ? rec : { count: 0, resetAt: now + 15 * 60 * 1000 };
   const i = normalize(ipRec);
   const a = normalize(accountRec);
   if (i.count >= 30 || a.count >= 5) {
@@ -1041,21 +837,17 @@ async function assertLoginRateAllowed(env, ip, identifier) {
 }
 
 async function recordLoginFailure(env, rate) {
-  if (!rate) return;
+  const ttl = 15 * 60;
   rate.ipRec.count += 1;
   rate.accountRec.count += 1;
-  await Promise.all([putRateRecord(env, rate.ipKey, rate.ipRec), putRateRecord(env, rate.accountKey, rate.accountRec)]);
+  await Promise.all([
+    env.GLOBAL_MARKET_KV.put(rate.ipKey, JSON.stringify(rate.ipRec), { expirationTtl: ttl }),
+    env.GLOBAL_MARKET_KV.put(rate.accountKey, JSON.stringify(rate.accountRec), { expirationTtl: ttl })
+  ]);
 }
 
 async function clearLoginRate(env, rate) {
-  if (!rate) return;
-  try {
-    await ensureDB(env);
-    await env.GLOBAL_MARKET_D1.batch([
-      env.GLOBAL_MARKET_D1.prepare('DELETE FROM login_rate_limits WHERE rate_key=?').bind(rate.ipKey),
-      env.GLOBAL_MARKET_D1.prepare('DELETE FROM login_rate_limits WHERE rate_key=?').bind(rate.accountKey)
-    ]);
-  } catch (error) { console.warn('Rate-limit non effacé', error?.message || error); }
+  await Promise.all([env.GLOBAL_MARKET_KV.delete(rate.ipKey), env.GLOBAL_MARKET_KV.delete(rate.accountKey)]);
 }
 
 function companyStatus(company) {
@@ -1099,75 +891,28 @@ function publicClientSessionView(session) {
   };
 }
 
-async function writeEmployeeSessionD1(env, sid, session) {
-  await ensureDB(env);
-  await env.GLOBAL_MARKET_D1.prepare(`INSERT OR REPLACE INTO employee_sessions(sid,user_id,company_id,role,auth_version,csrf_token,login_at,expires_at) VALUES(?,?,?,?,?,?,?,?)`)
-    .bind(sid, session.userId, session.companyId || null, session.role, Number(session.authVersion || 1), session.csrfToken, Number(session.loginAt || Date.now()), Number(session.expiresAt)).run();
-}
-
-async function readEmployeeSessionD1(env, sid) {
-  try {
-    await ensureDB(env);
-    const row = await env.GLOBAL_MARKET_D1.prepare('SELECT * FROM employee_sessions WHERE sid=? LIMIT 1').bind(sid).first();
-    return row ? { userId: row.user_id, companyId: row.company_id || null, role: row.role, authVersion: Number(row.auth_version || 1), csrfToken: row.csrf_token, loginAt: Number(row.login_at || 0), expiresAt: Number(row.expires_at || 0) } : null;
-  } catch (error) {
-    console.warn('Lecture session D1 différée', error?.message || error);
-    return null;
-  }
-}
-
-async function deleteEmployeeSession(env, sid) {
-  try { await ensureDB(env); await env.GLOBAL_MARKET_D1.prepare('DELETE FROM employee_sessions WHERE sid=?').bind(sid).run(); } catch (error) { console.warn('Suppression session D1 différée', error?.message || error); }
-  await safeKvDelete(env, `session:${sid}`);
-}
-
-async function writeClientSessionD1(env, sid, session) {
-  await ensureDB(env);
-  await env.GLOBAL_MARKET_D1.prepare(`INSERT OR REPLACE INTO client_sessions(sid,client_id,company_id,auth_version,csrf_token,expires_at) VALUES(?,?,?,?,?,?)`)
-    .bind(sid, session.clientId, session.companyId, Number(session.authVersion || 1), session.csrfToken, Number(session.expiresAt)).run();
-}
-
-async function readClientSessionD1(env, sid) {
-  try {
-    await ensureDB(env);
-    const row = await env.GLOBAL_MARKET_D1.prepare('SELECT * FROM client_sessions WHERE sid=? LIMIT 1').bind(sid).first();
-    return row ? { clientId: row.client_id, companyId: row.company_id, authVersion: Number(row.auth_version || 1), csrfToken: row.csrf_token, expiresAt: Number(row.expires_at || 0) } : null;
-  } catch (error) {
-    console.warn('Lecture session client D1 différée', error?.message || error);
-    return null;
-  }
-}
-
-async function deleteClientSession(env, sid) {
-  try { await ensureDB(env); await env.GLOBAL_MARKET_D1.prepare('DELETE FROM client_sessions WHERE sid=?').bind(sid).run(); } catch (error) { console.warn('Suppression session client D1 différée', error?.message || error); }
-  await safeKvDelete(env, `client-session:${sid}`);
-}
-
 async function createEmployeeSession(env, user, auth) {
   const sid = randomHex(32);
   const ttl = user.role === 'caisse' ? Math.max(5, Number(user.sessionMinutes || 60)) * 60 : EMPLOYEE_SESSION_TTL;
   const session = {
-    userId: user.id, companyId: user.companyId || null, role: user.role, authVersion: Number(auth.version || 1),
-    csrfToken: randomHex(24), loginAt: Date.now(), expiresAt: Date.now() + ttl * 1000
+    userId: user.id,
+    companyId: user.companyId || null,
+    role: user.role,
+    authVersion: Number(auth.version || 1),
+    csrfToken: randomHex(24),
+    loginAt: Date.now(),
+    expiresAt: Date.now() + ttl * 1000
   };
-  let d1Ok = false;
-  try { await writeEmployeeSessionD1(env, sid, session); d1Ok = true; }
-  catch (error) { console.warn('Session D1 différée', error?.message || error); }
-  const kvOk = await safeKvPut(env, `session:${sid}`, JSON.stringify(session), { expirationTtl: ttl });
-  if (!d1Ok && !kvOk) throw new HttpError(503, 'Connexion momentanément indisponible.', 'SESSION_STORAGE_UNAVAILABLE');
+  await env.GLOBAL_MARKET_KV.put(`session:${sid}`, JSON.stringify(session), { expirationTtl: ttl });
   return { sid, ttl, session };
 }
 
 async function getEmployeeSession(request, env, requireCsrf = false) {
   const sid = getCookie(request, EMPLOYEE_SESSION_COOKIE);
   if (!sid) throw new HttpError(401, 'Connexion requise.', 'UNAUTHENTICATED');
-  let session = await readEmployeeSessionD1(env, sid);
-  if (!session) {
-    session = await safeKvGet(env, `session:${sid}`, 'json');
-    if (session) try { await writeEmployeeSessionD1(env, sid, session); } catch {}
-  }
+  const session = await env.GLOBAL_MARKET_KV.get(`session:${sid}`, 'json');
   if (!session || Number(session.expiresAt || 0) <= Date.now()) {
-    if (sid) await deleteEmployeeSession(env, sid);
+    if (sid) await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);
     throw new HttpError(401, 'Session expirée. Reconnectez-vous.', 'SESSION_EXPIRED');
   }
   if (requireCsrf) {
@@ -1179,11 +924,11 @@ async function getEmployeeSession(request, env, requireCsrf = false) {
   const user = state.users.find(u => u.id === session.userId);
   const auth = user ? await getAuth(env, user.id) : null;
   if (!user || user.status !== 'active' || !auth || Number(auth.version) !== Number(session.authVersion)) {
-    await deleteEmployeeSession(env, sid);
+    await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);
     throw new HttpError(401, 'Session invalidée. Reconnectez-vous.', 'SESSION_INVALIDATED');
   }
   if (user.role !== session.role || (user.companyId || null) !== (session.companyId || null)) {
-    await deleteEmployeeSession(env, sid);
+    await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);
     throw new HttpError(401, 'Session incohérente.', 'SESSION_INVALIDATED');
   }
   return { sid, session, state, user, auth };
@@ -1191,23 +936,21 @@ async function getEmployeeSession(request, env, requireCsrf = false) {
 
 async function createClientSession(env, client, auth) {
   const sid = randomHex(32);
-  const session = { clientId: client.id, companyId: client.companyId, authVersion: Number(auth.version || 1), csrfToken: randomHex(24), expiresAt: Date.now() + CLIENT_SESSION_TTL * 1000 };
-  let d1Ok = false;
-  try { await writeClientSessionD1(env, sid, session); d1Ok = true; }
-  catch (error) { console.warn('Session client D1 différée', error?.message || error); }
-  const kvOk = await safeKvPut(env, `client-session:${sid}`, JSON.stringify(session), { expirationTtl: CLIENT_SESSION_TTL });
-  if (!d1Ok && !kvOk) throw new HttpError(503, 'Connexion client momentanément indisponible.', 'SESSION_STORAGE_UNAVAILABLE');
+  const session = {
+    clientId: client.id,
+    companyId: client.companyId,
+    authVersion: Number(auth.version || 1),
+    csrfToken: randomHex(24),
+    expiresAt: Date.now() + CLIENT_SESSION_TTL * 1000
+  };
+  await env.GLOBAL_MARKET_KV.put(`client-session:${sid}`, JSON.stringify(session), { expirationTtl: CLIENT_SESSION_TTL });
   return { sid, session };
 }
 
 async function getClientSession(request, env, requireCsrf = false) {
   const sid = getCookie(request, CLIENT_SESSION_COOKIE);
   if (!sid) throw new HttpError(401, 'Connexion client requise.', 'CLIENT_UNAUTHENTICATED');
-  let session = await readClientSessionD1(env, sid);
-  if (!session) {
-    session = await safeKvGet(env, `client-session:${sid}`, 'json');
-    if (session) try { await writeClientSessionD1(env, sid, session); } catch {}
-  }
+  const session = await env.GLOBAL_MARKET_KV.get(`client-session:${sid}`, 'json');
   if (!session || Number(session.expiresAt || 0) <= Date.now()) throw new HttpError(401, 'Session client expirée.', 'CLIENT_SESSION_EXPIRED');
   if (requireCsrf) {
     assertSameOrigin(request);
@@ -1534,18 +1277,14 @@ function buildStateDeltaForPersistence(before, after) {
 async function getEmployeeSessionLight(request, env) {
   const sid = getCookie(request, EMPLOYEE_SESSION_COOKIE);
   if (!sid) throw new HttpError(401, 'Connexion requise.', 'UNAUTHENTICATED');
-  let session = await readEmployeeSessionD1(env, sid);
-  if (!session) {
-    session = await safeKvGet(env, `session:${sid}`, 'json');
-    if (session) try { await writeEmployeeSessionD1(env, sid, session); } catch {}
-  }
+  const session = await env.GLOBAL_MARKET_KV.get(`session:${sid}`, 'json');
   if (!session || Number(session.expiresAt || 0) <= Date.now()) {
-    if (sid) await deleteEmployeeSession(env, sid);
+    if (sid) await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);
     throw new HttpError(401, 'Session expirée. Reconnectez-vous.', 'SESSION_EXPIRED');
   }
   const auth = await getAuth(env, session.userId);
   if (!auth || Number(auth.version || 0) !== Number(session.authVersion || 0)) {
-    await deleteEmployeeSession(env, sid);
+    await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);
     throw new HttpError(401, 'Session invalidée. Reconnectez-vous.', 'SESSION_INVALIDATED');
   }
   const user = { id: session.userId, companyId: session.companyId || null, role: session.role, status: 'active' };
@@ -1606,12 +1345,14 @@ async function handleDeleteCompany(request, env) {
 
   for (const user of companyUsers) {
     const auth = await getAuth(env, user.id);
-    await deleteEmployeeAuth(env, user.id, auth?.identifier || '');
+    if (auth?.identifier) await env.GLOBAL_MARKET_KV.delete(authIndexKey(auth.identifier));
+    await env.GLOBAL_MARKET_KV.delete(authKey(user.id));
   }
   for (const client of companyClients) {
     const auth = await getClientAuth(env, client.id);
     const phone = auth?.phone || normalizePhone(client.phone);
-    await deleteClientAuth(env, client.id, companyId, phone || '');
+    if (phone) await env.GLOBAL_MARKET_KV.delete(clientIndexKey(companyId, phone));
+    await env.GLOBAL_MARKET_KV.delete(clientAuthKey(client.id));
   }
 
   removeCompanyDataFromState(ctx.state, companyId);
@@ -1635,18 +1376,9 @@ async function handleDeleteCompany(request, env) {
   });
 }
 
-function publicShopSlug(value) {
-  return String(value || 'boutique')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'boutique';
-}
-
 function publicCompany(company) {
   if (!company) return null;
-  const allowed = ['id', 'name', 'legalForm', 'rccm', 'taxAccount', 'capital', 'logo', 'currency', 'activity', 'phone', 'email', 'address', 'businessType', 'shopSlug', 'shopBanner', 'shopColor', 'marketWaveBusinessLink', 'marketUsdtTrc20', 'status', 'plan', 'planCode', 'subscriptionEnd'];
+  const allowed = ['id', 'name', 'activity', 'phone', 'email', 'address', 'businessType', 'shopSlug', 'shopBanner', 'shopColor', 'marketWaveBusinessLink', 'marketUsdtTrc20', 'status', 'plan', 'planCode', 'subscriptionEnd'];
   return Object.fromEntries(allowed.map(k => [k, company[k]]));
 }
 
@@ -1656,68 +1388,22 @@ function publicItem(item) {
 }
 
 async function publicLoadPayload(request, env) {
-  const url = new URL(request.url);
-  let clientAuth = null;
-  try { clientAuth = await getClientSession(request, env, false); } catch {}
-
-  let state;
-  let scopedCompanyId = clientAuth?.client?.companyId || String(url.searchParams.get('companyId') || '');
-  const requestedSlug = String(url.searchParams.get('slug') || '').trim().toLowerCase();
-
-  if (clientAuth) {
-    state = clientAuth.state;
-  } else if (scopedCompanyId) {
-    state = await withStorageRetry(() => loadState(env, scopedCompanyId), 4);
-  } else if (requestedSlug) {
-    const base = await withStorageRetry(() => loadBaseState(env), 4);
-    // Les liens historiques de la boutique sont générés à partir du nom de l'entreprise,
-    // alors que certaines anciennes fiches n'ont jamais reçu shopSlug. On accepte donc
-    // les deux formes afin de toujours retrouver le bon snapshot D1 de l'entreprise.
-    let baseCompany = (base.companies || []).find(c => {
-      const savedSlug = publicShopSlug(c.shopSlug || '');
-      const nameSlug = publicShopSlug(c.name || '');
-      return savedSlug === requestedSlug || nameSlug === requestedSlug;
-    });
-    if (baseCompany) {
-      scopedCompanyId = baseCompany.id;
-      state = await withStorageRetry(() => loadState(env, scopedCompanyId), 4);
-    } else {
-      // Secours pour une entreprise récemment créée/modifiée dont l'identité se trouve
-      // encore uniquement dans un snapshot/patch entreprise : on fusionne une fois les
-      // données puis on isole immédiatement l'entreprise correspondante.
-      const merged = await withStorageRetry(() => loadState(env), 4);
-      baseCompany = (merged.companies || []).find(c => {
-        const savedSlug = publicShopSlug(c.shopSlug || '');
-        const nameSlug = publicShopSlug(c.name || '');
-        return savedSlug === requestedSlug || nameSlug === requestedSlug;
-      });
-      if (baseCompany) {
-        scopedCompanyId = baseCompany.id;
-        state = await withStorageRetry(() => loadState(env, scopedCompanyId), 4);
-      } else {
-        state = merged;
-      }
-    }
-  } else {
-    state = await withStorageRetry(() => loadState(env), 4);
-  }
-
-  const companyFilter = scopedCompanyId ? c => c.id === scopedCompanyId : () => true;
-  const itemFilter = scopedCompanyId ? i => i.companyId === scopedCompanyId : () => true;
+  const state = await loadState(env);
   const payload = {
-    companies: (state.companies || []).filter(companyFilter).map(publicCompany),
-    items: (state.items || []).filter(itemFilter).map(publicItem),
+    companies: state.companies.map(publicCompany),
+    items: state.items.map(publicItem),
     marketClients: [],
     orders: [],
     clientDeletedOrders: {},
     app: state.app || {}
   };
-  if (clientAuth) {
+  try {
+    const clientAuth = await getClientSession(request, env, false);
     payload.marketClients = [cleanClone(clientAuth.client)];
-    payload.orders = (state.orders || []).filter(o => o.companyId === clientAuth.client.companyId && o.clientId === clientAuth.client.id).map(cleanClone);
+    payload.orders = state.orders.filter(o => o.companyId === clientAuth.client.companyId && o.clientId === clientAuth.client.id).map(cleanClone);
     payload.clientDeletedOrders[clientAuth.client.id] = (state.clientDeletedOrders || {})[clientAuth.client.id] || [];
     payload.clientSession = publicClientSessionView(clientAuth.session);
-  } else {
+  } catch {
     payload.clientSession = null;
   }
   return payload;
@@ -1743,18 +1429,12 @@ async function handleLogin(request, env) {
   const requestedRole = String(body.role || '');
   if (!identifier || !password) throw new HttpError(400, 'Identifiant et mot de passe obligatoires.', 'MISSING_CREDENTIALS');
   const ip = requestIp(request);
-
-  // V4.8 : authentification directe, sans boucle de migration globale et sans dépendance
-  // aux index KV. Le profil vient de D1, le secret est lu dans D1 avec secours KV ciblé.
   const rate = await assertLoginRateAllowed(env, ip, identifier);
-  const baseState = await loadBaseState(env);
+  const state = await loadState(env);
   const superIdentifier = configuredSuperAdminIdentifier(env);
-  if (superIdentifier && identifier === superIdentifier) {
-    await ensureSuperAdminCredential(env, baseState);
-  }
-
-  let user = baseState.users.find(u => normalizeIdentifier(u.email || u.username) === identifier);
-  if (!user && superIdentifier && identifier === superIdentifier) user = baseState.users.find(u => u.id === SUPER_ADMIN_ID);
+  if (superIdentifier && identifier === superIdentifier) await ensureSuperAdminCredential(env, state);
+  const indexedId = await env.GLOBAL_MARKET_KV.get(authIndexKey(identifier));
+  const user = state.users.find(u => u.id === indexedId) || state.users.find(u => normalizeIdentifier(u.email || u.username) === identifier);
   const auth = user ? await getAuth(env, user.id) : null;
   const valid = user && user.status === 'active' && await verifyCredential(auth, password);
   if (!valid) {
@@ -1763,21 +1443,14 @@ async function handleLogin(request, env) {
     await new Promise(resolve => setTimeout(resolve, 250));
     throw new HttpError(401, 'Identifiant ou mot de passe incorrect.', 'INVALID_CREDENTIALS');
   }
-
   if (requestedRole === 'caisse' && user.role !== 'caisse') throw new HttpError(403, 'Profil incorrect : sélectionnez Administrateur.', 'ROLE_MISMATCH');
   if (requestedRole === 'admin' && !['admin', 'superadmin'].includes(user.role)) throw new HttpError(403, 'Profil incorrect : sélectionnez La Caisse.', 'ROLE_MISMATCH');
   if (user.role === 'caisse' && !isCashierInAllowedHours(user)) throw new HttpError(403, 'Accès caisse refusé hors de la plage horaire autorisée.', 'OUTSIDE_ALLOWED_HOURS');
-
-  const state = await loadState(env, user.role === 'superadmin' ? '*' : user.companyId);
-  user = state.users.find(u => u.id === user.id) || user;
-  if (!user || user.status !== 'active') throw new HttpError(403, 'Compte désactivé ou indisponible.', 'ACCOUNT_DISABLED');
-
   if (user.companyId) {
     const company = state.companies.find(c => c.id === user.companyId);
     const status = companyStatus(company);
     if (['expired', 'blocked', 'suspended'].includes(status)) throw new HttpError(403, `Accès entreprise ${status}.`, 'COMPANY_ACCESS_BLOCKED');
   }
-
   await clearLoginRate(env, rate);
   const created = await createEmployeeSession(env, user, auth);
   await audit(env, 'LOGIN_SUCCESS', user.id, user.companyId, 'Connexion réussie', ip);
@@ -1786,7 +1459,9 @@ async function handleLogin(request, env) {
     session: publicSessionView(created.session),
     mustChangePassword: Boolean(auth.mustChangePassword),
     data: scopeState(state, user)
-  }, { headers: { 'Set-Cookie': setCookie(EMPLOYEE_SESSION_COOKIE, created.sid, created.ttl) } });
+  }, {
+    headers: { 'Set-Cookie': setCookie(EMPLOYEE_SESSION_COOKIE, created.sid, created.ttl) }
+  });
 }
 
 async function handleRegisterCompany(request, env) {
@@ -1801,7 +1476,7 @@ async function handleRegisterCompany(request, env) {
   const password = validatePassword(body.password, 'admin');
   if (!name || !email) throw new HttpError(400, 'Raison sociale et e-mail obligatoires.', 'MISSING_FIELDS');
   const state = await loadState(env);
-  if (state.users.some(u => normalizeIdentifier(u.email) === email)) {
+  if (await env.GLOBAL_MARKET_KV.get(authIndexKey(email)) || state.users.some(u => normalizeIdentifier(u.email) === email)) {
     throw new HttpError(409, 'Cet e-mail est déjà utilisé.', 'EMAIL_EXISTS');
   }
   const cid = `ent_${crypto.randomUUID()}`;
@@ -1827,7 +1502,7 @@ async function handleRegisterCompany(request, env) {
   } }, { role: 'system', companyId: cid });
   const auth = await getAuth(env, user.id);
   const created = await createEmployeeSession(env, user, auth);
-  await putRateRecord(env, rateKey, { count: (rec.count || 0) + 1, resetAt: Date.now() + 3600000 });
+  await env.GLOBAL_MARKET_KV.put(rateKey, JSON.stringify({ count: (rec.count || 0) + 1, resetAt: Date.now() + 3600000 }), { expirationTtl: 3600 });
   await audit(env, 'COMPANY_REGISTERED', user.id, company.id, company.name, ip);
   return json({
     success: true,
@@ -1849,7 +1524,7 @@ async function handlePasswordChange(request, env) {
   await writeUserCredential(env, ctx.user, newPassword, { mustChangePassword: false });
   ctx.user.mustChangePassword = false;
   await persistStateDelta(env, { arrays: { users: { upserts: [ctx.user], deletes: [] } } }, { role: 'system', companyId: ctx.user.companyId || PATCH_GLOBAL_SCOPE });
-  await deleteEmployeeSession(env, ctx.sid);
+  await env.GLOBAL_MARKET_KV.delete(`session:${ctx.sid}`);
   await audit(env, 'PASSWORD_CHANGED', ctx.user.id, ctx.user.companyId, 'Toutes les sessions ont été invalidées', requestIp(request));
   return json({ success: true, reloginRequired: true }, {
     headers: { 'Set-Cookie': setCookie(EMPLOYEE_SESSION_COOKIE, '', 0) }
@@ -1879,7 +1554,7 @@ async function handlePasswordResetRequest(request, env) {
       await persistStateDelta(env, { arrays: { passwordResetRequests: { upserts: [latestRequest], deletes: [] } } }, { role: 'system', companyId: user.companyId });
     }
   }
-  await putRateRecord(env, key, { count: (rec.count || 0) + 1, resetAt: Date.now() + 3600000 });
+  await env.GLOBAL_MARKET_KV.put(key, JSON.stringify({ count: (rec.count || 0) + 1, resetAt: Date.now() + 3600000 }), { expirationTtl: 3600 });
   return json({ success: true, message: 'Si le compte existe, la demande a été transmise.' });
 }
 
@@ -1894,7 +1569,7 @@ async function handleCreateUser(request, env) {
   const email = normalizeIdentifier(body.email);
   const password = validatePassword(body.password, role);
   if (!email) throw new HttpError(400, 'E-mail obligatoire.', 'MISSING_EMAIL');
-  if (ctx.state.users.some(u => normalizeIdentifier(u.email) === email)) throw new HttpError(409, 'Cet e-mail est déjà utilisé.', 'EMAIL_EXISTS');
+  if (await env.GLOBAL_MARKET_KV.get(authIndexKey(email)) || ctx.state.users.some(u => normalizeIdentifier(u.email) === email)) throw new HttpError(409, 'Cet e-mail est déjà utilisé.', 'EMAIL_EXISTS');
   const user = {
     id: `usr_${crypto.randomUUID()}`, companyId, name: String(body.name || ''), email, role, status: 'active',
     sessionMinutes: 0, caisseStartTime: role === 'caisse' ? String(body.caisseStartTime || '07:00') : '',
@@ -1918,7 +1593,7 @@ async function handleUpdateUser(request, env) {
   const previousRole = target.role;
   const previousStatus = target.status;
   const newEmail = normalizeIdentifier(body.email || target.email);
-  if (newEmail !== oldEmail && ctx.state.users.some(u => u.id !== target.id && normalizeIdentifier(u.email) === newEmail)) {
+  if (newEmail !== oldEmail && (await env.GLOBAL_MARKET_KV.get(authIndexKey(newEmail)) || ctx.state.users.some(u => u.id !== target.id && normalizeIdentifier(u.email) === newEmail))) {
     throw new HttpError(409, 'Cet e-mail est déjà utilisé.', 'EMAIL_EXISTS');
   }
   if (body.name !== undefined) target.name = String(body.name);
@@ -1930,28 +1605,25 @@ async function handleUpdateUser(request, env) {
   const auth = await getAuth(env, target.id);
   if (body.password) await writeUserCredential(env, target, body.password, { mustChangePassword: Boolean(body.mustChangePassword) });
   else if (auth && auth.identifier !== newEmail) {
-    await safeKvDelete(env, authIndexKey(auth.identifier));
+    await env.GLOBAL_MARKET_KV.delete(authIndexKey(auth.identifier));
     auth.identifier = newEmail;
-    auth.companyId = target.companyId || null;
     auth.version = Number(auth.version || 1) + 1;
     auth.updatedAt = new Date().toISOString();
-    await persistEmployeeAuthRecord(env, auth);
+    await env.GLOBAL_MARKET_KV.put(authKey(target.id), JSON.stringify(auth));
+    await env.GLOBAL_MARKET_KV.put(authIndexKey(newEmail), target.id);
   }
   if (body.mustChangePassword !== undefined && !body.password && auth) {
     auth.mustChangePassword = Boolean(body.mustChangePassword);
-    auth.companyId = target.companyId || null;
     auth.version = Number(auth.version || 1) + 1;
-    auth.updatedAt = new Date().toISOString();
-    await persistEmployeeAuthRecord(env, auth);
+    await env.GLOBAL_MARKET_KV.put(authKey(target.id), JSON.stringify(auth));
   }
   target.mustChangePassword = body.password ? Boolean(body.mustChangePassword) : Boolean(body.mustChangePassword ?? target.mustChangePassword);
   if (target.role !== previousRole || target.status !== previousStatus) {
     const latestAuth = await getAuth(env, target.id);
     if (latestAuth) {
-      latestAuth.companyId = target.companyId || null;
       latestAuth.version = Number(latestAuth.version || 1) + 1;
       latestAuth.updatedAt = new Date().toISOString();
-      await persistEmployeeAuthRecord(env, latestAuth);
+      await env.GLOBAL_MARKET_KV.put(authKey(target.id), JSON.stringify(latestAuth));
     }
   }
   await persistStateDelta(env, { arrays: { users: { upserts: [target], deletes: [] } } }, { role: 'system', companyId: target.companyId });
@@ -1969,7 +1641,8 @@ async function handleDeleteUser(request, env) {
   const remaining = ctx.state.users.filter(u => u.companyId === target.companyId && u.id !== target.id);
   if (!remaining.length) throw new HttpError(400, 'Impossible de supprimer le dernier utilisateur.', 'LAST_USER');
   const auth = await getAuth(env, target.id);
-  await deleteEmployeeAuth(env, target.id, auth?.identifier || '');
+  if (auth?.identifier) await env.GLOBAL_MARKET_KV.delete(authIndexKey(auth.identifier));
+  await env.GLOBAL_MARKET_KV.delete(authKey(target.id));
   ctx.state.users = ctx.state.users.filter(u => u.id !== target.id);
   await persistStateDelta(env, { arrays: { users: { upserts: [], deletes: [{ id: target.id, companyId: target.companyId }] } } }, { role: 'system', companyId: target.companyId });
   await audit(env, 'USER_DELETED', ctx.user.id, target.companyId, target.id, requestIp(request));
@@ -2008,15 +1681,15 @@ async function handleResetUserPassword(request, env) {
 async function handlePublicClientRegister(request, env) {
   assertSameOrigin(request);
   const body = await readJson(request, 50_000);
+  const state = await loadState(env);
   const companyId = String(body.companyId || '');
-  const state = await withStorageRetry(() => loadState(env, companyId), 4);
   if (!state.companies.some(c => c.id === companyId)) throw new HttpError(404, 'Boutique introuvable.', 'COMPANY_NOT_FOUND');
   const name = String(body.name || '').trim();
   const phone = normalizePhone(body.phone);
   const email = normalizeIdentifier(body.email);
   const password = validatePassword(body.password, 'client');
   if (!name || !phone) throw new HttpError(400, 'Nom et téléphone obligatoires.', 'MISSING_FIELDS');
-  if ((state.marketClients||[]).some(c=>c.companyId===companyId&&normalizePhone(c.phone)===phone)) throw new HttpError(409, 'Ce téléphone est déjà inscrit.', 'PHONE_EXISTS');
+  if (await env.GLOBAL_MARKET_KV.get(clientIndexKey(companyId, phone))) throw new HttpError(409, 'Ce téléphone est déjà inscrit.', 'PHONE_EXISTS');
   const client = { id: `clt_${crypto.randomUUID()}`, companyId, name, phone, email, createdAt: new Date().toISOString() };
   state.marketClients.push(client);
   await writeClientCredential(env, client, password);
@@ -2034,13 +1707,11 @@ async function handlePublicClientLogin(request, env) {
   const companyId = String(body.companyId || '');
   const phone = normalizePhone(body.phone);
   const password = String(body.password || '');
-  if (!companyId || !phone || !password) throw new HttpError(400, 'Téléphone et mot de passe obligatoires.', 'MISSING_FIELDS');
   const ip = requestIp(request);
   const rate = await assertLoginRateAllowed(env, ip, `client:${companyId}:${phone}`);
-
-  // V4.8 : recherche directe dans les données de l'entreprise, sans index KV obligatoire.
-  const state = await loadState(env, companyId);
-  const client = (state.marketClients || []).find(c => c.companyId === companyId && normalizePhone(c.phone) === phone) || null;
+  const state = await loadState(env);
+  const clientId = await env.GLOBAL_MARKET_KV.get(clientIndexKey(companyId, phone));
+  const client = state.marketClients.find(c => c.id === clientId && c.companyId === companyId);
   const auth = client ? await getClientAuth(env, client.id) : null;
   if (!client || !(await verifyCredential(auth, password))) {
     await recordLoginFailure(env, rate);
@@ -2051,61 +1722,6 @@ async function handlePublicClientLogin(request, env) {
   return json({ success: true, client: cleanClone(client), session: publicClientSessionView(created.session) }, {
     headers: { 'Set-Cookie': setCookie(CLIENT_SESSION_COOKIE, created.sid, CLIENT_SESSION_TTL) }
   });
-}
-
-async function handlePublicClientPasswordResetRequest(request, env) {
-  assertSameOrigin(request);
-  const body = await readJson(request, 30_000);
-  const companyId = String(body.companyId || '');
-  const phone = normalizePhone(body.phone);
-  const email = normalizeIdentifier(body.email);
-  const preferredChannel = ['SMS','EMAIL','SMS_EMAIL'].includes(String(body.preferredChannel || '').toUpperCase()) ? String(body.preferredChannel).toUpperCase() : 'SMS_EMAIL';
-  const reason = String(body.reason || 'Mot de passe oublié').trim().slice(0, 500);
-  if (!companyId || (!phone && !email)) throw new HttpError(400, 'Téléphone ou e-mail obligatoire.', 'MISSING_FIELDS');
-
-  const ip = requestIp(request);
-  const rate = await withStorageRetry(() => assertLoginRateAllowed(env, ip, `client-reset:${companyId}:${phone || email}`), 4);
-  const state = await withStorageRetry(() => loadState(env, companyId), 4);
-  let client = null;
-  if (phone) client = (state.marketClients || []).find(c => c.companyId === companyId && normalizePhone(c.phone) === phone) || null;
-  if (!client && email) client = (state.marketClients || []).find(c => c.companyId === companyId && normalizeIdentifier(c.email) === email) || null;
-
-  if (client) {
-    state.passwordResetRequests = state.passwordResetRequests || [];
-    const pending = state.passwordResetRequests.find(r => r.companyId === companyId && r.role === 'client' && (r.clientId === client.id || r.userId === client.id) && r.status === 'pending');
-    if (!pending) {
-      const reset = {
-        id: `rst_${crypto.randomUUID()}`, companyId, clientId: client.id, userId: client.id,
-        clientName: client.name || '', userName: client.name || '', phone: client.phone || phone,
-        email: client.email || email, role: 'client', preferredChannel, reason,
-        status: 'pending', createdAt: new Date().toISOString()
-      };
-      state.passwordResetRequests.push(reset);
-      await persistStateDelta(env, { arrays: { passwordResetRequests: { upserts: [reset], deletes: [] } } }, { role: 'system', companyId });
-      await audit(env, 'CLIENT_PASSWORD_RESET_REQUESTED', client.id, companyId, reset.id, ip);
-    }
-  }
-  await withStorageRetry(() => clearLoginRate(env, rate), 3).catch(() => {});
-  return json({ success: true, message: 'Votre demande a été transmise à l’administrateur de la boutique. Le nouveau mot de passe vous sera communiqué par SMS ou par e-mail.' });
-}
-
-async function handleResetClientPassword(request, env) {
-  const ctx = await getEmployeeSession(request, env, true);
-  requireRole(ctx.user, ['admin', 'superadmin']);
-  const body = await readJson(request, 30_000);
-  const requestId = String(body.requestId || '');
-  const reset = (ctx.state.passwordResetRequests || []).find(r => r.id === requestId && r.role === 'client');
-  if (!reset) throw new HttpError(404, 'Demande client introuvable.', 'RESET_REQUEST_NOT_FOUND');
-  if (ctx.user.role !== 'superadmin' && reset.companyId !== ctx.user.companyId) throw new HttpError(403, 'Cette demande appartient à une autre entreprise.', 'FORBIDDEN');
-  const clientId = String(body.clientId || reset.clientId || reset.userId || '');
-  const client = (ctx.state.marketClients || []).find(c => c.id === clientId && c.companyId === reset.companyId);
-  if (!client) throw new HttpError(404, 'Client introuvable.', 'CLIENT_NOT_FOUND');
-  const temporaryPassword = generateTempPassword();
-  await withStorageRetry(() => writeClientCredential(env, client, temporaryPassword), 4);
-  reset.status = 'done'; reset.doneAt = new Date().toISOString(); reset.doneBy = ctx.user.id;
-  await persistStateDelta(env, { arrays: { passwordResetRequests: { upserts: [reset], deletes: [] } } }, { role: 'system', companyId: client.companyId });
-  await audit(env, 'CLIENT_PASSWORD_RESET', ctx.user.id, client.companyId, client.id, requestIp(request));
-  return json({ success: true, temporaryPassword, client: { id: client.id, name: client.name || '', phone: client.phone || '', email: client.email || '', companyId: client.companyId } });
 }
 
 async function handlePublicOrder(request, env) {
@@ -2124,35 +1740,23 @@ async function handlePublicOrder(request, env) {
     const unit = Number(item.sell || 0);
     orderItems.push({ itemId: item.id, item: item.name, category: item.cat || '', type: isProduct ? 'Produit' : 'Service', qty, unit, total: unit * qty });
   }
-  const subtotal = orderItems.reduce((sum, line) => sum + line.total, 0);
-  const deliveryFeeRate = subtotal <= 0 ? 0 : subtotal <= 4999 ? 0.10 : subtotal <= 24999 ? 0.05 : subtotal <= 99999 ? 0.02 : 0.015;
-  const deliveryFee = Math.round(subtotal * deliveryFeeRate);
-  const total = subtotal + deliveryFee;
-  const method = String(body.paymentMethod || 'PAIEMENT À LA LIVRAISON').slice(0, 50);
-  const payOnDelivery = method.toUpperCase() === 'PAIEMENT À LA LIVRAISON';
-  const paymentRef = String(body.transactionId || body.paymentRef || '').trim().slice(0, 200);
-  if (!payOnDelivery && !paymentRef) throw new HttpError(400, 'Identifiant de transaction obligatoire pour un paiement immédiat.', 'PAYMENT_REFERENCE_REQUIRED');
   for (const line of orderItems) {
     const item = ctx.state.items.find(i => i.id === line.itemId);
     if (line.type === 'Produit' && item.stockType !== 'unlimited') item.stock = Number(item.stock || 0) - line.qty;
   }
+  const total = orderItems.reduce((sum, line) => sum + line.total, 0);
+  const method = String(body.paymentMethod || 'WAVE').slice(0, 50);
   const order = {
     id: `cmd_${crypto.randomUUID()}`, companyId: ctx.client.companyId, clientId: ctx.client.id,
-    client: ctx.client.name, clientPhone: ctx.client.phone, clientEmail: ctx.client.email || '', date: new Date().toISOString(), items: orderItems,
-    item: orderItems.map(x => x.item).join(', '), qty: orderItems.reduce((a, x) => a + x.qty, 0), subtotal, deliveryFeeRate, deliveryFee, total,
-    paymentMethod: method, paymentTiming: payOnDelivery ? 'delivery' : 'now', paymentStatus: payOnDelivery ? 'À payer à la livraison' : 'Paiement déclaré par le client',
-    paymentCurrency: method === 'USDT TRC20' ? 'USD' : 'FCFA',
-    paymentAmount: method === 'USDT TRC20' ? Number((total / 600).toFixed(2)) : total,
-    transactionId: payOnDelivery ? '' : paymentRef,
-    paymentProofType: payOnDelivery ? 'none' : String(body.paymentProofType || 'transaction_id'), paymentRef: payOnDelivery ? '' : paymentRef,
+    client: ctx.client.name, clientPhone: ctx.client.phone, date: new Date().toISOString(), items: orderItems,
+    item: orderItems.map(x => x.item).join(', '), qty: orderItems.reduce((a, x) => a + x.qty, 0), total,
+    paymentMethod: method, paymentCurrency: method === 'WAVE' ? 'FCFA' : 'USD',
+    paymentAmount: method === 'WAVE' ? total : Number((total / 600).toFixed(2)),
+    paymentProofType: String(body.paymentProofType || 'ref'), paymentRef: String(body.paymentRef || '').slice(0, 200),
     paymentCaptureName: String(body.paymentCaptureName || '').slice(0, 200),
     paymentCaptureData: String(body.paymentCaptureData || '').slice(0, 6_000_000),
-    deliveryRecipient: String(body.deliveryRecipient || ctx.client.name || '').slice(0, 200),
-    deliveryPhone: String(body.deliveryPhone || ctx.client.phone || '').slice(0, 100),
-    deliveryCity: String(body.deliveryCity || '').slice(0, 120), deliveryDistrict: String(body.deliveryDistrict || '').slice(0, 120),
-    deliveryAddress: String(body.deliveryAddress || '').slice(0, 500), deliveryMode: String(body.deliveryMode || 'Livraison standard').slice(0, 120),
-    validationStatus: 'En attente de validation', deliveryStatus: 'En attente de validation', afterSaleStatus: '',
-    delivery: 'En attente de validation', source: 'lot panier boutique client avec frais de livraison'
+    validationStatus: 'En attente de validation', deliveryStatus: 'En cours de livraison', afterSaleStatus: '',
+    delivery: 'En attente de validation', source: 'lot panier boutique client'
   };
   ctx.state.orders.push(order);
   const changedItems = orderItems.map(line => ctx.state.items.find(item => item.id === line.itemId)).filter(Boolean);
@@ -2185,47 +1789,6 @@ async function handlePublicOrderDelete(request, env) {
     }
   }, { role: 'system', companyId: ctx.client.companyId });
   return json({ success: true });
-}
-
-
-async function handlePublicOrderAction(request, env) {
-  const ctx = await getClientSession(request, env, true);
-  const body = await readJson(request, 20_000);
-  const order = ctx.state.orders.find(o => String(o.id) === String(body.orderId) && o.clientId === ctx.client.id && o.companyId === ctx.client.companyId);
-  if (!order) throw new HttpError(404, 'Commande introuvable.', 'ORDER_NOT_FOUND');
-  const action = String(body.action || '');
-  const validationStatus = String(order.validationStatus || '').toLowerCase();
-  const deliveryStatus = String(order.deliveryStatus || order.delivery || '').toLowerCase();
-  const afterSaleStatus = String(order.afterSaleStatus || '').toLowerCase();
-  const changedItems = [];
-  if (action === 'cancel') {
-    const alreadyTaken = ['validée', 'validee', 'validé', 'valide', 'terminer'].includes(validationStatus) || deliveryStatus.includes('en cours de livraison') || deliveryStatus.includes('livrée') || deliveryStatus.includes('expédi') || deliveryStatus.includes('expedi');
-    if (alreadyTaken) {
-      throw new HttpError(409, 'Cette commande a déjà été prise en charge et ne peut plus être annulée depuis l’espace client.', 'ORDER_NOT_CANCELLABLE');
-    }
-    if (!order.stockRestored) {
-      for (const line of Array.isArray(order.items) ? order.items : []) {
-        const item = ctx.state.items.find(i => i.id === line.itemId && i.companyId === ctx.client.companyId);
-        if (item && line.type === 'Produit' && item.stockType !== 'unlimited') { item.stock = Number(item.stock || 0) + Number(line.qty || 0); changedItems.push(item); }
-      }
-      order.stockRestored = true;
-    }
-    order.validationStatus = 'Annuler'; order.deliveryStatus = 'Aucune action'; order.afterSaleStatus = 'Annulée'; order.delivery = 'Annulée'; order.cancelledByClientAt = new Date().toISOString();
-  } else if (action === 'confirm_receipt') {
-    if (validationStatus.includes('annul') || deliveryStatus.includes('annul') || afterSaleStatus.includes('rembours')) throw new HttpError(409, 'Une commande annulée ou remboursée ne peut pas être confirmée reçue.', 'ORDER_STATUS_CONFLICT');
-    const deliverable = deliveryStatus.includes('en cours de livraison') || deliveryStatus.includes('livrée') || validationStatus.includes('termin');
-    if (!deliverable) {
-      throw new HttpError(409, 'La commande n’est pas encore en phase de livraison.', 'ORDER_NOT_DELIVERABLE');
-    }
-    order.clientReceptionConfirmed = true; order.clientReceptionConfirmedAt = new Date().toISOString(); order.validationStatus = 'Terminer'; order.deliveryStatus = 'Livrée'; order.delivery = 'Livrée';
-  } else {
-    throw new HttpError(400, 'Action de commande invalide.', 'INVALID_ORDER_ACTION');
-  }
-  await persistStateDelta(env, { arrays: {
-    items: { upserts: changedItems, deletes: [] },
-    orders: { upserts: [order], deletes: [] }
-  } }, { role: 'system', companyId: ctx.client.companyId });
-  return json({ success: true, order: cleanClone(order) });
 }
 
 async function handleApi(request, env, executionCtx) {
@@ -2269,7 +1832,7 @@ async function handleApi(request, env, executionCtx) {
       const sid = getCookie(request, EMPLOYEE_SESSION_COOKIE);
       if (sid) {
         try { await getEmployeeSession(request, env, true); } catch (error) { if (!(error instanceof HttpError) || error.code !== 'SESSION_EXPIRED') throw error; }
-        await deleteEmployeeSession(env, sid);
+        await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);
       }
       return json({ success: true }, { headers: { 'Set-Cookie': setCookie(EMPLOYEE_SESSION_COOKIE, '', 0) } });
     }
@@ -2307,20 +1870,17 @@ async function handleApi(request, env, executionCtx) {
     if (url.pathname === '/api/users/update' && request.method === 'POST') return await handleUpdateUser(request, env);
     if (url.pathname === '/api/users/delete' && request.method === 'POST') return await handleDeleteUser(request, env);
     if (url.pathname === '/api/users/reset-password' && request.method === 'POST') return await handleResetUserPassword(request, env);
-    if (url.pathname === '/api/clients/reset-password' && request.method === 'POST') return await handleResetClientPassword(request, env);
 
     if (url.pathname === '/api/public/load' && request.method === 'GET') return json(await publicLoadPayload(request, env));
     if (url.pathname === '/api/public/client/register' && request.method === 'POST') return await handlePublicClientRegister(request, env);
     if (url.pathname === '/api/public/client/login' && request.method === 'POST') return await handlePublicClientLogin(request, env);
-    if (url.pathname === '/api/public/client/password-reset/request' && request.method === 'POST') return await handlePublicClientPasswordResetRequest(request, env);
     if (url.pathname === '/api/public/client/session' && request.method === 'DELETE') {
       const sid = getCookie(request, CLIENT_SESSION_COOKIE);
-      if (sid) await deleteClientSession(env, sid);
+      if (sid) await env.GLOBAL_MARKET_KV.delete(`client-session:${sid}`);
       return json({ success: true }, { headers: { 'Set-Cookie': setCookie(CLIENT_SESSION_COOKIE, '', 0) } });
     }
     if (url.pathname === '/api/public/order' && request.method === 'POST') return await handlePublicOrder(request, env);
     if (url.pathname === '/api/public/order/delete' && request.method === 'POST') return await handlePublicOrderDelete(request, env);
-    if (url.pathname === '/api/public/order/action' && request.method === 'POST') return await handlePublicOrderAction(request, env);
 
     throw new HttpError(404, `API introuvable : ${url.pathname}`, 'NOT_FOUND');
   } catch (error) {

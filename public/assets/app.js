@@ -162,7 +162,7 @@ function premiumSaleInvoiceHTML(company,s,ref,dt){
 }
 
 function getSubscriptionInfo(company,users=[]){const end=new Date((company?.subscriptionEnd||today())+'T23:59:59'); const left=Math.max(0,Math.ceil((end-new Date())/86400000)); return {left,status:statusCompany(company),users:users.length}}
-function marketplaceUrl(company){const shopSlug=String(company?.shopSlug||slugify(company?.name||'entreprise'));return location.origin+location.pathname+'#boutique/'+encodeURIComponent(shopSlug)}
+function marketplaceUrl(company){return location.origin+location.pathname+'#boutique/'+slugify(company?.name||'entreprise')}
 function shareText(txt){if(navigator.share){navigator.share({text:txt}).catch(()=>{})}else{navigator.clipboard?.writeText(txt); alert('Lien copié / prêt à partager.')}}
 
 const YK='GLOBAL3_MANAGEMENT_YEAR_V1';
@@ -275,7 +275,7 @@ function normalizeData(d){d=d&&typeof d==='object'?d:{}; if(d.data&&typeof d.dat
 function rememberCloudCache(){/* Sécurité : aucune base complète n'est conservée dans localStorage. */}
 function readCloudCache(){return null}
 async function fetchWithTimeout(url,opts={},ms=6500){const c=new AbortController(); const t=setTimeout(()=>c.abort(),ms); try{return await fetch(url,{...opts,credentials:'same-origin',signal:c.signal});}finally{clearTimeout(t)}}
-async function readApiPayload(r){const j=await r.json().catch(()=>({})); if(!r.ok){const fallback=`La requête n’a pas pu être terminée (code ${r.status}).`; const e=new Error(j.error||fallback); e.status=r.status; e.code=j.code||''; e.payload=j; throw e;} return j}
+async function readApiPayload(r){const j=await r.json().catch(()=>({})); if(!r.ok){const temporary=[408,425,429,500,502,503,504].includes(Number(r.status)); const fallback=temporary?'Le service cloud est momentanément occupé. Une nouvelle tentative sera effectuée.':`Requête refusée (code ${r.status}).`; const e=new Error(j.error||fallback); e.status=r.status; e.code=j.code||''; e.payload=j; throw e;} return j}
 function employeeSecurityHeaders(extra={}){return {'Content-Type':'application/json',...(CLOUD_SESSION?.csrfToken?{'X-CSRF-Token':CLOUD_SESSION.csrfToken}:{}),...extra}}
 function clientSecurityHeaders(extra={}){return {'Content-Type':'application/json',...(PUBLIC_CLIENT_SESSION?.csrfToken?{'X-CSRF-Token':PUBLIC_CLIENT_SESSION.csrfToken}:{}),...extra}}
 function cloneCloudData(value){return value==null?value:JSON.parse(JSON.stringify(value))}
@@ -319,20 +319,7 @@ function buildCloudDelta(previous,current){
 }
 function cloudDeltaIsEmpty(delta){return !Object.keys(delta?.arrays||{}).length&&!Object.keys(delta?.objects||{}).length&&!Object.keys(delta?.values||{}).length}
 async function cloudLoadData(){const r=await fetchWithTimeout('/api/load',{cache:'no-store'},12000); const j=await readApiPayload(r); CLOUD_DATA=normalizeData(j); CLOUD_LAST_ACK_DATA=cloneCloudData(CLOUD_DATA); CLOUD_DATA_READY=true; return CLOUD_DATA}
-async function cloudLoadPublicData(companyId='',shopSlug=''){
-  const qs=new URLSearchParams();
-  if(companyId)qs.set('companyId',String(companyId));
-  if(shopSlug)qs.set('slug',String(shopSlug));
-  const url='/api/public/load'+(qs.toString()?'?'+qs.toString():'');
-  const r=await fetchWithTimeout(url,{cache:'no-store'},16000);
-  const j=await readApiPayload(r);
-  PUBLIC_CLIENT_SESSION=j.clientSession||null;
-  CLOUD_DATA=normalizeData(j);
-  CLOUD_LAST_ACK_DATA=cloneCloudData(CLOUD_DATA);
-  CLOUD_DATA_READY=true;
-  if(PUBLIC_CLIENT_SESSION?.clientId) window.publicShopClientId=PUBLIC_CLIENT_SESSION.clientId; else window.publicShopClientId='';
-  return CLOUD_DATA;
-}
+async function cloudLoadPublicData(){const r=await fetchWithTimeout('/api/public/load',{cache:'no-store'},12000); const j=await readApiPayload(r); PUBLIC_CLIENT_SESSION=j.clientSession||null; CLOUD_DATA=normalizeData(j); CLOUD_LAST_ACK_DATA=cloneCloudData(CLOUD_DATA); CLOUD_DATA_READY=true; if(PUBLIC_CLIENT_SESSION?.clientId) window.publicShopClientId=PUBLIC_CLIENT_SESSION.clientId; else window.publicShopClientId=''; return CLOUD_DATA}
 function waitMs(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
 function isTransientCloudSaveError(error){return !error?.status||[408,425,429,500,502,503,504].includes(Number(error.status))||error?.name==='AbortError'}
 function scheduleCloudSaveRetry(){
@@ -434,9 +421,7 @@ async function cloudStart(){
 
   try{
     if(publicRoute){
-      const shopMatch=location.hash.match(/^#boutique\/(.+)$/);
-      const shopSlug=shopMatch?decodeURIComponent(shopMatch[1]||''):'';
-      await cloudLoadPublicData('',shopSlug);
+      await cloudLoadPublicData();
       if(sequence===CLOUD_BOOT_SEQUENCE) render();
       return;
     }
@@ -963,8 +948,8 @@ function requestPasswordReset(){
 }
 function passwordResetRequestsBox(){
   const {d,company}=current();
-  const rows=(d.passwordResetRequests||[]).filter(r=>r.companyId===company.id && ['caisse','client'].includes(r.role)).slice().sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
-  return `<div class="superTableWrap"><table class="g2table"><tr><th>Date</th><th>Utilisateur / Client</th><th>Profil</th><th>Contact</th><th>Réception</th><th>Motif</th><th>Statut</th><th>Action</th></tr>${rows.map(r=>`<tr><td>${new Date(r.createdAt).toLocaleString('fr-FR')}</td><td>${esc(r.userName||r.clientName||r.email||r.phone||'Compte client')}<br><small>${esc(r.email||'')}</small></td><td>${r.role==='client'?'<span class="saleBadge">Client boutique</span>':esc(r.role||'')}</td><td>${esc(r.phone||'-')}<br><small>${esc(r.email||'')}</small></td><td>${esc(r.preferredChannel||'-')}</td><td>${esc(r.reason||'')}</td><td>${esc(r.status||'')}</td><td class="actionCell">${r.status==='pending'?`<button onclick="resetPasswordRequestByAdmin('${r.id}')">Générer nouveau mot de passe</button>`:'<span class="saleBadge">traité</span>'}</td></tr>`).join('')||'<tr><td colspan="8">Aucune demande de mot de passe oublié.</td></tr>'}</table></div>`;
+  const rows=(d.passwordResetRequests||[]).filter(r=>r.companyId===company.id && r.role==='caisse').slice().sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  return `<div class="superTableWrap"><table class="g2table"><tr><th>Date</th><th>Utilisateur</th><th>Profil</th><th>Contact</th><th>Motif</th><th>Statut</th><th>Action</th></tr>${rows.map(r=>`<tr><td>${new Date(r.createdAt).toLocaleString('fr-FR')}</td><td>${esc(r.userName||r.email)}<br><small>${esc(r.email||'')}</small></td><td>${esc(r.role||'')}</td><td>${esc(r.phone||'')}</td><td>${esc(r.reason||'')}</td><td>${esc(r.status||'')}</td><td class="actionCell">${r.status==='pending'?`<button onclick="resetPasswordRequestByAdmin('${r.id}')">Générer mot de passe</button>`:'<span class="saleBadge">traité</span>'}</td></tr>`).join('')||'<tr><td colspan="7">Aucune demande de mot de passe oublié.</td></tr>'}</table></div>`;
 }
 async function resetPasswordRequestByAdmin(rid){
   if(!requireAdmin('Réservé à l’administrateur.')) return;
@@ -1663,7 +1648,7 @@ function renderDash(sec='home'){
   <section id="rapports" class="section printable ${sec==='rapports'?'active':''}"><div class="g2panel"><div class="reportActions"><button onclick="renderDash('rapports')">Actualiser le rapport</button><button onclick="openServiceReportPdfPage()">Imprimer / PDF</button>${admin?'<button onclick="showBilan()">Rapport bilan détaillé</button><button onclick="showBilanJourPage()">BILAN JOUR</button>':''}</div><div class="reportBox"><h1>RAPPORT GÉNÉRAL DÉTAILLÉ DES SERVICES VENDUS</h1><h3>${esc(company.name)} — GLOBAL MARKET — Exercice actif : ${monthsList[activeMonth]} ${manageYear}</h3>${serviceReport(items,sales,admin)}<div id="serviceReportTotalLine" class="totalLine">TOTAL EXERCICE ${monthsList[activeMonth]} ${manageYear} : ${money(exerciseCa)}${admin?' | Bénéfice : '+money(exerciseProfit):''}</div></div></div></section>
   <section id="contrats" class="section ${sec==='contrats'?'active':''}"><div class="g2panel contractSection"><h2><span></span> Clients sous contrat</h2>${clientContractSection(clients,admin,sales)}</div></section>
   <section id="mois" class="section ${sec==='mois'?'active':''}"><div class="g2panel yearManagePanel"><h2><span></span> Année de gestion administrateur</h2><div class="notice"><b>Année et mois appliqués uniquement à cette entreprise : ${manageYear} — Exercice actif : ${monthsList[activeMonth]} ${manageYear} — ${activeExerciseBadge()}</b></div><div class="yearControlBar"><button class="btn2" onclick="setManageYear(-1)">← Année précédente</button><label>Année de gestion<input id="managementYear" type="number" min="1" value="${manageYear}" placeholder="Ex: 2026"></label><label>Mois actif<select id="managementMonth">${monthsList.map((m,i)=>`<option value="${i}" ${i===activeMonth?'selected':''}>${m}</option>`).join('')}</select></label><button onclick="applyManagementYear()">Appliquer</button><button class="btn2" onclick="setManageYear(1)">Année suivante →</button></div><p class="sub">Quand vous cliquez sur Appliquer, l’année et l’exercice actif deviennent la référence de toute l’entreprise : rapports, consommations, bilans et impressions.</p><div class="reportActions no-print"><button onclick="openYearManagementPdfPage()">Imprimer l’exercice / PDF</button><button class="btn2" onclick="renderDash('rapports')">Voir les rapports de l’exercice</button><button class="btn2" onclick="setActiveExerciseState('open')">Ouvrir l’exercice</button><button class="darkBtn" onclick="setActiveExerciseState('locked')">Verrouiller</button><button class="danger" onclick="setActiveExerciseState('closed')">Clôturer</button></div></div><div class="g2panel"><div class="reportBox slim yearlyReport"><h1>TABLEAU DE GESTION SUR 12 MOIS</h1><h3>${esc(company.name)} — Année ${manageYear}</h3>${monthsGrid(admin?sales:[], admin?obligations:[])}</div></div></section>
-  <section id="param" class="section ${sec==='param'?'active':''}"><div class="g2panel"><h2><span></span> Paramètres — Base de calcul des charges</h2><p class="sub">Liste complète des produits et services. Les pourcentages servent automatiquement au calcul des rapports.</p><div class="reportActions"><button onclick="saveChargePercentages()">Enregistrer les pourcentages</button><button onclick="renderDash('param')">Actualiser la liste</button><button onclick="showFichePaiement()">Créer fiche de paiement</button></div><div class="notice"><b>Exercice actif :</b> ${monthsList[activeMonth]} ${manageYear}</div>${chargesBase(admin?items:[])}</div><div class="g2panel"><h2><span></span> Obligations mensuelles</h2><p class="sub">Chaque administrateur peut ajouter ou supprimer ses obligations mensuelles.</p>${admin?obligationForm():''}${obligationsBox(admin?exerciseProfit:0,admin?obligations:[],admin)}</div><div class="g2panel"><h2><span></span> Utilisateurs internes</h2><p class="notice">Limite du plan : ${userLimitLabel(company)} utilisateur(s).</p>${admin?`<div class="formCard"><div class="grid three"><input id="uName" placeholder="Nom"><input id="uEmail" placeholder="Email"><input id="uPass" type="password" minlength="6" autocomplete="new-password" placeholder="Mot de passe sécurisé"><select id="uRole" onchange="toggleNewCaisseHours('u')"><option value="caisse">Caisse</option><option value="admin">Admin</option></select><span class="caisseHourFields uCaisseOnly"><input id="uStart" type="time" value="07:00" title="Heure début caisse"></span><span class="caisseHourFields uCaisseOnly"><input id="uEnd" type="time" value="22:00" title="Heure fin caisse"></span><button onclick="addUser()">Créer utilisateur</button></div></div>`:'<p class="notice">Réservé admin.</p>'}${usersTable(users,admin)}</div><div class="g2panel"><h2><span></span> Journal automatique des actions caisse</h2><p class="sub">Historique sécurisé des connexions, ventes, validations, impressions et actions sensibles des comptes caisse.</p>${admin?caisseLogsTable():'<p class="notice">Réservé admin.</p>'}</div><div class="g2panel"><h2><span></span> Demandes de mot de passe oublié</h2><p class="sub">Règle de sécurité : l’administrateur d’entreprise peut traiter les demandes de ses comptes Caisse et de ses clients boutique. Les comptes Administrateur restent réinitialisés par le Super Admin GLOBAL MARKET.</p>${admin?passwordResetRequestsBox():'<p class="notice">Réservé admin.</p>'}</div></section>`,sec)
+  <section id="param" class="section ${sec==='param'?'active':''}"><div class="g2panel"><h2><span></span> Paramètres — Base de calcul des charges</h2><p class="sub">Liste complète des produits et services. Les pourcentages servent automatiquement au calcul des rapports.</p><div class="reportActions"><button onclick="saveChargePercentages()">Enregistrer les pourcentages</button><button onclick="renderDash('param')">Actualiser la liste</button><button onclick="showFichePaiement()">Créer fiche de paiement</button></div><div class="notice"><b>Exercice actif :</b> ${monthsList[activeMonth]} ${manageYear}</div>${chargesBase(admin?items:[])}</div><div class="g2panel"><h2><span></span> Obligations mensuelles</h2><p class="sub">Chaque administrateur peut ajouter ou supprimer ses obligations mensuelles.</p>${admin?obligationForm():''}${obligationsBox(admin?exerciseProfit:0,admin?obligations:[],admin)}</div><div class="g2panel"><h2><span></span> Utilisateurs internes</h2><p class="notice">Limite du plan : ${userLimitLabel(company)} utilisateur(s).</p>${admin?`<div class="formCard"><div class="grid three"><input id="uName" placeholder="Nom"><input id="uEmail" placeholder="Email"><input id="uPass" type="password" minlength="6" autocomplete="new-password" placeholder="Mot de passe sécurisé"><select id="uRole" onchange="toggleNewCaisseHours('u')"><option value="caisse">Caisse</option><option value="admin">Admin</option></select><span class="caisseHourFields uCaisseOnly"><input id="uStart" type="time" value="07:00" title="Heure début caisse"></span><span class="caisseHourFields uCaisseOnly"><input id="uEnd" type="time" value="22:00" title="Heure fin caisse"></span><button onclick="addUser()">Créer utilisateur</button></div></div>`:'<p class="notice">Réservé admin.</p>'}${usersTable(users,admin)}</div><div class="g2panel"><h2><span></span> Journal automatique des actions caisse</h2><p class="sub">Historique sécurisé des connexions, ventes, validations, impressions et actions sensibles des comptes caisse.</p>${admin?caisseLogsTable():'<p class="notice">Réservé admin.</p>'}</div><div class="g2panel"><h2><span></span> Demandes de mot de passe oublié</h2><p class="sub">Règle de sécurité : l’administrateur d’entreprise peut réinitialiser uniquement les comptes Caisse. Les comptes Administrateur sont réinitialisés par le Super Admin GLOBAL MARKET.</p>${admin?passwordResetRequestsBox():'<p class="notice">Réservé admin.</p>'}</div></section>`,sec)
 }
 
 /* === GLOBAL3 : interface Stocks professionnelle dynamique === */
@@ -3746,8 +3731,7 @@ function showMarketplacePage(){if(isCaisse()) return alert('Accès interdit : la
 function showMarketplaceAdminPage(type){window.marketplaceAdminSection=type||'stock'; showMarketplacePage();}
 function mkProductVisual(i){if(i&&i.photo){return `<img src="${esc(i.photo)}" alt="${esc(i.name||'Article')}" class="mkProductPhoto">`;} const n=(i.name||'').toLowerCase(); if(n.includes('imprim')) return '🖨️'; if(n.includes('souris')) return '🖱️'; if(n.includes('clé')||n.includes('usb')) return '💾'; if(n.includes('casque')||n.includes('audio')) return '🎧'; if(n.includes('montre')) return '⌚'; if(n.includes('phone')||n.includes('portable')||n.includes('laptop')||n.includes('ordinateur')) return '💻'; if(!isBoutiqueItem(i)) return '🛠️'; return '📦'}
 function itemMarketPrice(i){return Number(i.sell||i.price||0)}
-function marketItemCanOrder(i){return !isBoutiqueItem(i)||String(i.stockType||'limited').toLowerCase()==='unlimited'||Number(i.stock||0)>0}
-function marketStockLabel(i){return isBoutiqueItem(i)?(String(i.stockType||'limited').toLowerCase()==='unlimited'?'Stock illimité':(Number(i.stock||0)>0?'Stock : '+Number(i.stock||0):'Rupture de stock')):'Service disponible'}
+function marketStockLabel(i){return isBoutiqueItem(i)?(i.stockType==='unlimited'?'Stock illimité':'Stock : '+Number(i.stock||0)):'Service disponible'}
 function marketRecentRow(i){const rupture=(isBoutiqueItem(i)&&i.stockType!=='unlimited'&&Number(i.stock||0)<=0); return `<div class="mkRecentRow"><div class="mkThumb">${mkProductVisual(i)}</div><div><b>${esc(i.name)}</b><small>${esc(i.cat||'Sans catégorie')}</small></div><strong>${money(itemMarketPrice(i))}<small>${marketStockLabel(i)}</small></strong><span class="${rupture?'mkRupture':'mkOnline'}">${rupture?'RUPTURE':'VISIBLE'}</span><button class="miniBtn" onclick="toggleMarketplaceVisibility('${i.id}')">${i.marketplaceHidden?'👁':'🚫'}</button></div>`}
 function marketItemCard(i){const rupture=(isBoutiqueItem(i)&&i.stockType!=='unlimited'&&Number(i.stock||0)<=0); return `<div class="marketCard mkProductCard" data-search="${esc((i.name+' '+i.cat+' '+i.type+' '+(i.marketplacePromo||'')+' '+(i.marketplaceDesc||i.detail||'')).toLowerCase())}">${i.marketplacePromo?`<div class="mkPromoBadge">${esc(i.marketplacePromo)}</div>`:''}<div class="mkProductImg">${mkProductVisual(i)}</div><h3>${esc(i.name)}</h3><p>${esc(i.cat||'Sans catégorie')}</p><em class="mkCardDesc">${esc(i.marketplaceDesc||i.detail||'')}</em><div class="mkStars">★ 4.8 <small>(20)</small></div><b>${money(itemMarketPrice(i))}</b><small>${marketStockLabel(i)}</small><span class="${rupture?'mkRupture':'mkOnline'}">${rupture?'RUPTURE':'VISIBLE CLIENT'}</span><div class="marketCardActions"><button onclick="fakeCustomerOrder('${i.id}')">🛒</button><button class="btn2" onclick="toggleMarketplaceVisibility('${i.id}')">Masquer</button></div></div>`}
 function marketAdminRow(i){const hidden=!!i.marketplaceHidden; const rupture=(isBoutiqueItem(i)&&i.stockType!=='unlimited'&&Number(i.stock||0)<=0); return `<div class="mkRecentRow marketAdminRow" data-hidden="${hidden?'hidden':'visible'}" data-search="${esc((i.name+' '+i.cat+' '+i.code+' '+i.type+' '+(i.marketplaceDesc||i.detail||'')).toLowerCase())}"><div class="mkThumb">${mkProductVisual(i)}</div><div><b>${esc(i.name)}</b><small>${esc(i.code||'')} • ${esc(i.cat||'Sans catégorie')} • ${isBoutiqueItem(i)?'Produit':'Service'}</small></div><strong>${money(itemMarketPrice(i))}<small>${marketStockLabel(i)}</small></strong><span class="${hidden?'mkRupture':(rupture?'mkRupture':'mkOnline')}">${hidden?'MASQUÉ':(rupture?'RUPTURE':'VISIBLE')}</span><button class="miniBtn" onclick="toggleMarketplaceVisibility('${i.id}')">${hidden?'Afficher':'Masquer'}</button><button class="miniBtn" onclick="editMarketplaceInfo('${i.id}')">Promo</button></div>`}
@@ -3760,61 +3744,49 @@ function marketplaceOrderBenefit(d,o){
     const it=(d.items||[]).find(x=>x.id===line.itemId&&x.companyId===o.companyId);
     const total=Number(line.total||0); const qty=Number(line.qty||1);
     const product=isBoutiqueItem(it||{type:line.type});
-    if(!it) return sum;
-    if(product){
-      if(it.buy===undefined||it.buy===null||it.buy==='') return sum;
-      return sum+(total-(Number(it.buy||0)*qty));
-    }
-    if(it.charge===undefined||it.charge===null||it.charge==='') return sum;
-    return sum+(total-(total*(Number(it.charge||0)/100)));
+    const charges=product?Number(it?.buy||0)*qty:total*(Number(it?.charge||0)/100);
+    return sum+(total-charges);
   },0);
 }
-function marketplaceClientReportRange(period,from,to){
-  const now=new Date(); let start=null,end=null; const endDay=d=>new Date(d.getFullYear(),d.getMonth(),d.getDate(),23,59,59,999);
-  if(period==='week'){const day=(now.getDay()+6)%7;start=new Date(now);start.setHours(0,0,0,0);start.setDate(now.getDate()-day);end=endDay(now);}
-  else if(period==='month'){start=new Date(now.getFullYear(),now.getMonth(),1);end=endDay(now);}
-  else if(period==='year'){start=new Date(now.getFullYear(),0,1);end=endDay(now);}
-  else if(period==='custom'){if(from)start=new Date(from+'T00:00:00');if(to)end=new Date(to+'T23:59:59');}
-  return {start,end};
-}
-function marketplaceClientsReportSnapshot(filter=window.marketplaceClientsReportFilter||{}){
-  const {d,company}=current(); const cid=company.id; const search=String(filter.search||'').trim().toLowerCase(); const period=filter.period||'all'; const {start,end}=marketplaceClientReportRange(period,filter.from||'',filter.to||'');
-  const allClients=(d.marketClients||[]).filter(c=>c.companyId===cid);
-  const validOrders=(d.orders||[]).filter(o=>o.companyId===cid&&!o.adminDeleted&&!isMarketplaceOrderCancelled(o)).filter(o=>{const dt=new Date(o.date);return (!start||dt>=start)&&(!end||dt<=end)});
-  let stats=allClients.map(c=>{const os=validOrders.filter(o=>o.clientId===c.id).sort((a,b)=>new Date(b.date)-new Date(a.date));if(!os.length)return null;const ca=os.reduce((a,o)=>a+orderTotal(o),0);const benef=os.reduce((a,o)=>a+marketplaceOrderBenefit(d,o),0);const articles=os.reduce((a,o)=>a+orderItemsCount(o),0);const lastDate=os[0]?.date||'';return {c,os,ca,benef,articles,lastDate,last:lastDate?new Date(lastDate).toLocaleDateString('fr-FR'):'-'};}).filter(Boolean);
-  if(search)stats=stats.filter(x=>[x.c.name,x.c.phone,x.c.email].some(v=>String(v||'').toLowerCase().includes(search)));
-  stats.sort((a,b)=>b.ca-a.ca||b.os.length-a.os.length||new Date(b.lastDate||0)-new Date(a.lastDate||0));
-  return {d,company,cid,stats,totalClients:stats.length,totalOrders:stats.reduce((a,x)=>a+x.os.length,0),totalCa:stats.reduce((a,x)=>a+x.ca,0),totalBenef:stats.reduce((a,x)=>a+x.benef,0),filter:{search,period,from:filter.from||'',to:filter.to||''}};
-}
 function openMarketplaceClientsReport(){
-  document.getElementById('marketClientsReportModal')?.remove(); const snap=marketplaceClientsReportSnapshot(); window.marketplaceClientsReportFilter=snap.filter;
-  const medal=i=>i===0?'🥇':i===1?'🥈':i===2?'🥉':String(i+1);
-  const rows=snap.stats.map((x,i)=>`<tr class="clientReportRow rank${i<3?i+1:'Other'}"><td><span class="clientRankBadge">${medal(i)}</span></td><td><div class="clientIdentityCell"><span class="clientInitials">${esc(String(x.c.name||'?').split(/\s+/).slice(0,2).map(s=>s[0]||'').join('').toUpperCase())}</span><div><b>${esc(x.c.name)}</b><small>${esc(x.c.phone||'')} ${x.c.email?'— '+esc(x.c.email):''}</small></div></div></td><td>${new Date(x.c.createdAt||Date.now()).toLocaleDateString('fr-FR')}</td><td>${x.os.length}</td><td>${x.articles}</td><td><b>${money(x.ca)}</b></td><td>${money(x.benef)}</td><td>${x.last}</td><td><button class="clientReportViewBtn" onclick="openClientPurchaseDetails('${esc(x.c.id)}')">Voir</button></td></tr>`).join('');
-  const empty=`<div class="clientReportEmpty"><div>🗂</div><h3>Aucune donnée disponible</h3><p>Aucune donnée à afficher pour le moment.</p><small>Les statistiques apparaîtront ici dès qu’il y aura des transactions.</small></div>`;
-  const html=`<div class="marketPayModalBackdrop clientsReportBackdrop" id="marketClientsReportModal"><div class="marketPayModal clientsReportBox clientsReportPremium"><button class="marketPayClose" onclick="document.getElementById('marketClientsReportModal')?.remove()">×</button><div class="clientsReportHeading"><h2>Rapport général des clients et leurs achats</h2><div class="clientsReportGoldLine"></div></div>
-    <div class="clientReportStats"><div><span>👥</span><small>CLIENTS</small><b>${snap.totalClients}</b></div><div><span>🛒</span><small>COMMANDES</small><b>${snap.totalOrders}</b></div><div><span>▥</span><small>CHIFFRE D’AFFAIRES</small><b>${money(snap.totalCa)}</b></div><div><span>▣</span><small>BÉNÉFICE ESTIMÉ</small><b>${money(snap.totalBenef)}</b></div></div>
-    <div class="clientReportInfo">ⓘ <span>Classement automatique par chiffre d’affaires client. Les commandes annulées ne sont pas comptées dans les totaux.</span></div>
-    <div class="clientReportFilters"><label class="clientReportSearch">Rechercher un client...<input id="marketClientReportSearch" value="${esc(snap.filter.search)}" placeholder="Nom, téléphone ou email"></label><label>Période<select id="marketClientReportPeriod"><option value="all" ${snap.filter.period==='all'?'selected':''}>Tous les clients</option><option value="week" ${snap.filter.period==='week'?'selected':''}>Cette semaine</option><option value="month" ${snap.filter.period==='month'?'selected':''}>Ce mois</option><option value="year" ${snap.filter.period==='year'?'selected':''}>Cette année</option><option value="custom" ${snap.filter.period==='custom'?'selected':''}>Période personnalisée</option></select></label><label>Du<input id="marketClientReportFrom" type="date" value="${esc(snap.filter.from)}"></label><label>Au<input id="marketClientReportTo" type="date" value="${esc(snap.filter.to)}"></label><div class="clientReportFilterActions"><button onclick="applyMarketplaceClientsReportFilters()">Appliquer</button><button class="btn2" onclick="resetMarketplaceClientsReportFilters()">Réinitialiser</button></div></div>
-    ${snap.stats.length?`<div class="clientOrdersScroll"><table class="mkOrdersTable clientReportTable"><thead><tr><th>RANG</th><th>CLIENT</th><th>INSCRIPTION</th><th>LOTS</th><th>ARTICLES</th><th>CHIFFRE D’AFFAIRES</th><th>BÉNÉFICE ESTIMÉ</th><th>DERNIER ACHAT</th><th>DÉTAIL</th></tr></thead><tbody>${rows}</tbody></table></div>`:empty}
-    <div class="marketPayActions clientsReportFooter"><button onclick="printMarketplaceClientsReportOnly()">🖨 Imprimer</button><button class="btn2" onclick="document.getElementById('marketClientsReportModal')?.remove()">× Fermer</button></div></div></div>`;
+  const {d,company}=current(); const cid=company.id;
+  const clients=(d.marketClients||[]).filter(c=>c.companyId===cid);
+  const allOrders=(d.orders||[]).filter(o=>o.companyId===cid&&!o.adminDeleted);
+  const orders=allOrders.filter(o=>!isMarketplaceOrderCancelled(o));
+  const stats=clients.map(c=>{
+    const os=orders.filter(o=>o.clientId===c.id);
+    const ca=os.reduce((a,o)=>a+orderTotal(o),0);
+    const benef=os.reduce((a,o)=>a+marketplaceOrderBenefit(d,o),0);
+    const articles=os.reduce((a,o)=>a+orderItemsCount(o),0);
+    const last=os[0]?.date?new Date(os.sort((a,b)=>new Date(b.date)-new Date(a.date))[0].date).toLocaleDateString('fr-FR'):'-';
+    return {c,os,ca,benef,articles,last};
+  }).sort((a,b)=>b.ca-a.ca);
+  const totalCa=stats.reduce((a,x)=>a+x.ca,0), totalBenef=stats.reduce((a,x)=>a+x.benef,0), totalOrders=orders.length;
+  const rows=stats.map((x,i)=>`<tr class="clientReportRow rank${i<3?i+1:'Other'}"><td>${i+1}</td><td><b>${esc(x.c.name)}</b><small>${esc(x.c.phone||'')} ${x.c.email?'— '+esc(x.c.email):''}</small></td><td>${new Date(x.c.createdAt||Date.now()).toLocaleDateString('fr-FR')}</td><td>${x.os.length}</td><td>${x.articles}</td><td>${money(x.ca)}</td><td>${money(x.benef)}</td><td>${x.last}</td><td><button class="btn2" onclick="openClientPurchaseDetails('${esc(x.c.id)}')">Détails achats</button></td></tr>`).join('')||'<tr><td colspan="9">Aucun client enregistré.</td></tr>';
+  const html=`<div class="marketPayModalBackdrop" id="marketClientsReportModal"><div class="marketPayModal clientsReportBox"><button class="marketPayClose" onclick="document.getElementById('marketClientsReportModal')?.remove()">×</button><h2>Rapport général des clients et leurs achats</h2><div class="clientReportStats"><div><small>Clients</small><b>${clients.length}</b></div><div><small>Commandes</small><b>${totalOrders}</b></div><div><small>Chiffre d’affaires</small><b>${money(totalCa)}</b></div><div><small>Bénéfice estimé</small><b>${money(totalBenef)}</b></div></div><p class="sub">Classement automatique par chiffre d’affaires client. Les commandes annulées ne sont pas comptées dans les totaux.</p><div class="clientOrdersScroll"><table class="mkOrdersTable clientReportTable"><tr><th>Rang</th><th>Client</th><th>Inscription</th><th>Lots</th><th>Articles</th><th>Chiffre d’affaires</th><th>Bénéfice estimé</th><th>Dernier achat</th><th>Détail</th></tr>${rows}</table></div><div class="marketPayActions"><button onclick="printMarketplaceClientsReportOnly()">Imprimer</button><button class="btn2" onclick="document.getElementById('marketClientsReportModal')?.remove()">Fermer</button></div></div></div>`;
   document.body.insertAdjacentHTML('beforeend',html);
 }
-function applyMarketplaceClientsReportFilters(){window.marketplaceClientsReportFilter={search:($('#marketClientReportSearch')?.value||'').trim(),period:$('#marketClientReportPeriod')?.value||'all',from:$('#marketClientReportFrom')?.value||'',to:$('#marketClientReportTo')?.value||''};openMarketplaceClientsReport();}
-function resetMarketplaceClientsReportFilters(){window.marketplaceClientsReportFilter={search:'',period:'all',from:'',to:''};openMarketplaceClientsReport();}
 
 function printMarketplaceClientsReportOnly(){
-  const snap=marketplaceClientsReportSnapshot(); const rows=snap.stats.map((x,i)=>`<tr><td>${i+1}</td><td><b>${esc(x.c.name)}</b><small>${esc(x.c.phone||'')} ${x.c.email?'— '+esc(x.c.email):''}</small></td><td>${new Date(x.c.createdAt||Date.now()).toLocaleDateString('fr-FR')}</td><td>${x.os.length}</td><td>${x.articles}</td><td>${money(x.ca)}</td><td>${money(x.benef)}</td><td>${x.last}</td></tr>`).join('')||'<tr><td colspan="8">Aucune donnée disponible.</td></tr>';
-  const periodLabel=snap.filter.period==='week'?'Cette semaine':snap.filter.period==='month'?'Ce mois':snap.filter.period==='year'?'Cette année':snap.filter.period==='custom'?`Du ${esc(snap.filter.from||'-')} au ${esc(snap.filter.to||'-')}`:'Toutes périodes';
-  const w=window.open('','_blank'); if(!w)return alert('Autorisez les fenêtres popup pour imprimer.');
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Rapport général des clients</title><style>${globalPrintThemeStyles('landscape')}@page{size:A4 landscape;margin:7mm}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#fff;color:#17332d;-webkit-print-color-adjust:exact;print-color-adjust:exact}.toolbar{position:fixed;top:8px;right:8px;z-index:20;display:flex;gap:8px}.toolbar button{border:0;border-radius:9px;padding:9px 13px;font-weight:900;background:#004d40;color:#fff}.page{width:283mm;min-height:196mm;margin:0 auto}.title{text-align:center;margin:4mm 0}.title h1{margin:0;color:#004d40;font-size:5mm}.title p{margin:1mm 0;color:#62726e;font-size:2.8mm}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:3mm;margin:4mm 0}.stats div{border:1px solid #d9e7e3;background:#eaf7f4;border-radius:3mm;padding:3mm}.stats small{display:block;font-size:2.4mm;color:#62726e}.stats b{font-size:4mm;color:#003c35}table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:2.4mm}th{background:#004d40;color:#fff;padding:2mm 1mm;text-align:center}td{padding:1.8mm 1mm;border-bottom:.2mm solid #d9e7e3;text-align:center;word-break:break-word}td:nth-child(2),th:nth-child(2){text-align:left;width:22%}small{display:block;color:#62726e}@media print{.toolbar{display:none}.page{margin:0}}</style></head><body><div class="toolbar"><button onclick="window.print()">Imprimer</button><button onclick="window.close()">Fermer</button></div><main class="page">${globalPrintHeaderHTML(snap.company,'RAPPORT GÉNÉRAL DES CLIENTS ET DE LEURS ACHATS')}<div class="title"><h1>Rapport général des clients et leurs achats</h1><p>Période : ${periodLabel} · Date d’impression : ${new Date().toLocaleString('fr-FR')}</p></div><div class="stats"><div><small>CLIENTS</small><b>${snap.totalClients}</b></div><div><small>COMMANDES</small><b>${snap.totalOrders}</b></div><div><small>CHIFFRE D’AFFAIRES</small><b>${money(snap.totalCa)}</b></div><div><small>BÉNÉFICE ESTIMÉ</small><b>${money(snap.totalBenef)}</b></div></div><table><thead><tr><th>RANG</th><th>CLIENT</th><th>INSCRIPTION</th><th>LOTS</th><th>ARTICLES</th><th>CHIFFRE D’AFFAIRES</th><th>BÉNÉFICE</th><th>DERNIER ACHAT</th></tr></thead><tbody>${rows}</tbody></table>${globalPrintFooterHTML(snap.company,'Rapport clients')}</main></body></html>`);w.document.close();setTimeout(()=>w.print(),300);
+  const modal=document.getElementById('marketClientsReportModal');
+  const table=modal?.querySelector('.clientReportTable');
+  if(!table) return alert('Aucune liste de clients à imprimer.');
+  const cleanTable=table.cloneNode(true);
+  cleanTable.querySelectorAll('tr').forEach(tr=>{const cells=tr.children;if(cells.length){cells[cells.length-1].remove();}});
+  const {company}=current();
+  const w=window.open('','_blank');
+  if(!w) return alert('Autorisez les fenêtres popup pour imprimer.');
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Liste des clients enregistrés</title><style>${globalPrintThemeStyles('landscape')}@page{size:A4 landscape;margin:0}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#fff;color:#0f172a;-webkit-print-color-adjust:exact;print-color-adjust:exact}.toolbar{position:fixed;top:10px;right:10px;z-index:20;display:flex;gap:8px}.toolbar button{border:0;border-radius:10px;padding:10px 14px;font-weight:900;cursor:pointer;background:#0f766e;color:#fff}.page{position:relative;width:297mm;min-height:210mm;padding:6mm 7mm 18mm;margin:0 auto}.pageTitle{text-align:center;margin:0 0 5mm}.pageTitle h1{margin:0;color:#0f766e;font-size:6mm;text-transform:uppercase}.pageTitle h2{margin:1.5mm 0 0;font-size:3.2mm;color:#334155}table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:2.45mm}th{background:#0f766e;color:#fff;padding:2.2mm 1mm;border:.25mm solid #0b5f59;text-align:center}td{padding:2mm 1mm;border:.25mm solid #cbd5e1;text-align:center;word-break:break-word;color:#111827!important;font-weight:700}td:nth-child(2),th:nth-child(2){text-align:left;width:22%}tr:nth-child(even) td{background:#f5faf9!important}small{display:block;color:#334155!important;font-weight:700;margin-top:.8mm}@media print{.toolbar{display:none}.page{margin:0;width:297mm;min-height:210mm}.g3pf{left:7mm;right:7mm}}</style></head><body><div class="toolbar"><button onclick="window.print()">Imprimer</button><button onclick="window.close()">Fermer</button></div><main class="page">${globalPrintHeaderHTML(company,'RAPPORT GÉNÉRAL DES CLIENTS ET DE LEURS ACHATS')}<div class="pageTitle"><h1>Rapport général des clients et leurs achats</h1><h2>Liste des clients enregistrés seulement</h2></div>${cleanTable.outerHTML}${globalPrintFooterHTML(company,'Rapport clients')}</main></body></html>`);
+  w.document.close();
+  setTimeout(()=>w.print(),300);
 }
 
 function openClientPurchaseDetails(clientId){
-  document.getElementById('clientPurchaseDetailsModal')?.remove(); const {d,company}=current(); const client=(d.marketClients||[]).find(c=>c.id===clientId&&c.companyId===company.id); if(!client)return alert('Client introuvable.');
-  const orders=(d.orders||[]).filter(o=>o.companyId===company.id&&o.clientId===clientId).sort((a,b)=>new Date(b.date)-new Date(a.date)); const valid=orders.filter(o=>!isMarketplaceOrderCancelled(o));
-  const ca=valid.reduce((a,o)=>a+orderTotal(o),0),benef=valid.reduce((a,o)=>a+marketplaceOrderBenefit(d,o),0),articles=valid.reduce((a,o)=>a+orderItemsCount(o),0),last=valid[0]?.date?new Date(valid[0].date).toLocaleString('fr-FR'):'-';
-  const rows=orders.map(o=>`<tr class="${isMarketplaceOrderCancelled(o)?'cancelledOrderLine':'activeOrderLine'}"><td><button class="orderLinkBtn" onclick="openMarketplaceOrderPopup('${esc(o.id)}',true)">#${esc(o.id)}</button></td><td>${new Date(o.date).toLocaleString('fr-FR')}</td><td>${orderItemsCount(o)}</td><td>${money(orderTotal(o))}</td><td>${esc(o.paymentMethod||'-')}</td><td>${clientOrderStatusBadge(o)}</td><td>${isMarketplaceOrderCancelled(o)?'Non compté':money(marketplaceOrderBenefit(d,o))}</td><td><button class="clientReportViewBtn" onclick="openMarketplaceOrderPopup('${esc(o.id)}',true)">Voir</button></td></tr>`).join('')||'<tr><td colspan="8">Aucun achat.</td></tr>';
-  const html=`<div class="marketPayModalBackdrop" id="clientPurchaseDetailsModal"><div class="marketPayModal clientPurchaseDetailsBox clientPurchasePremium"><button class="marketPayClose" onclick="document.getElementById('clientPurchaseDetailsModal')?.remove()">×</button><div class="clientPurchaseHead"><h2>Rapport individuel du client</h2><div><b>${esc(client.name)}</b><span>☎ ${esc(client.phone||'-')} · ✉ ${esc(client.email||'-')}</span><small>Inscription : ${new Date(client.createdAt||Date.now()).toLocaleDateString('fr-FR')}</small></div></div><div class="clientPurchaseStats"><div><small>COMMANDES</small><b>${valid.length}</b></div><div><small>ARTICLES ACHETÉS</small><b>${articles}</b></div><div><small>CHIFFRE D’AFFAIRES</small><b>${money(ca)}</b></div><div><small>BÉNÉFICE ESTIMÉ</small><b>${money(benef)}</b></div><div><small>DERNIER ACHAT</small><b>${esc(last)}</b></div></div><h3>Historique complet des achats</h3><div class="clientOrdersScroll"><table class="mkOrdersTable clientPurchaseTable"><thead><tr><th>N° COMMANDE</th><th>DATE</th><th>ARTICLES</th><th>TOTAL</th><th>PAIEMENT</th><th>STATUT</th><th>BÉNÉFICE</th><th>DÉTAIL</th></tr></thead><tbody>${rows}</tbody></table></div><div class="marketPayActions"><button class="btn2" onclick="document.getElementById('clientPurchaseDetailsModal')?.remove()">Fermer</button></div></div></div>`;document.body.insertAdjacentHTML('beforeend',html);
+  const {d,company}=current(); const client=(d.marketClients||[]).find(c=>c.id===clientId&&c.companyId===company.id); if(!client) return;
+  const orders=(d.orders||[]).filter(o=>o.companyId===company.id&&o.clientId===clientId).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const rows=orders.map(o=>`<tr class="${isMarketplaceOrderCancelled(o)?'cancelledOrderLine':'activeOrderLine'}"><td><button class="orderLinkBtn" onclick="openMarketplaceOrderPopup('${esc(o.id)}',true)">#${esc(o.id)}</button></td><td>${new Date(o.date).toLocaleString('fr-FR')}</td><td>${orderItemsCount(o)} article(s)</td><td>${money(orderTotal(o))}</td><td>${isMarketplaceOrderCancelled(o)?'Non compté':money(marketplaceOrderBenefit(d,o))}</td><td>${esc(o.paymentMethod||'-')}</td><td><span class="${isMarketplaceOrderCancelled(o)?'cancelledBadge':'activeBadge'}">${esc(orderMainStatus(o))}</span></td></tr>`).join('')||'<tr><td colspan="7">Aucun achat.</td></tr>';
+  const html=`<div class="marketPayModalBackdrop" id="clientPurchaseDetailsModal"><div class="marketPayModal clientPurchaseDetailsBox"><button class="marketPayClose" onclick="document.getElementById('clientPurchaseDetailsModal')?.remove()">×</button><h2>Détails achats client</h2><p><b>${esc(client.name)}</b><br>Téléphone : ${esc(client.phone||'-')}<br>Email : ${esc(client.email||'-')}</p><div class="clientOrdersScroll"><table class="mkOrdersTable"><tr><th>N° commande</th><th>Date</th><th>Articles</th><th>Montant</th><th>Bénéfice</th><th>Paiement</th><th>Statut</th></tr>${rows}</table></div><div class="marketPayActions"><button class="btn2" onclick="document.getElementById('clientPurchaseDetailsModal')?.remove()">Fermer</button></div></div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
 }
 
 function openMarketplacePaymentConfig(){
@@ -3866,9 +3838,7 @@ async function addToPublicCart(companyId,itemId){
   if(!getPublicClient(companyId)){ alert('Veuillez vous inscrire ou vous connecter avant d’ajouter au panier.'); openClientRegisterPopup(companyId); return; }
   const d=seed(); const it=(d.items||[]).find(x=>x.id===itemId&&x.companyId===companyId&&!x.marketplaceHidden);
   if(!it) return alert('Article introuvable.');
-  if(!marketItemCanOrder(it)) return alert('Cet article est actuellement en rupture de stock.');
   const qty=isBoutiqueItem(it)?Math.max(1,Number(await g3Prompt('Quantité à ajouter au panier :','1','Quantité panier')||1)):1;
-  if(isBoutiqueItem(it)&&String(it.stockType||'limited').toLowerCase()!=='unlimited'&&qty>Number(it.stock||0)) return alert('Quantité demandée supérieure au stock disponible.');
   const cart=getPublicCart(companyId); const line=cart.find(x=>x.itemId===itemId);
   if(line) line.qty=Number(line.qty||0)+qty; else cart.push({itemId,qty});
   refreshPublicCartBadge(companyId);
@@ -3998,161 +3968,41 @@ function showOrderSentModal(companyId){
   const html=`<div class="marketPayModalBackdrop orderSentModal"><div class="marketPayModal orderSentBox"><h2>Commande Envoyée</h2><p>Votre commande a été envoyée au Marketplace administrateur.</p><button onclick="document.querySelector('.orderSentModal')?.remove();document.getElementById('publicCartModal')?.remove();renderPublicShop('${esc(c?.shopSlug||'')}')">OK</button></div></div>`;
   document.body.insertAdjacentHTML('beforeend',html);
 }
-function clientAuthEyeIcon(show=false){
-  return show
-    ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 10.7a2 2 0 002.7 2.7M9.9 4.2A10.8 10.8 0 0112 4c5 0 9 5.2 9 8a8.8 8.8 0 01-2.1 3.8M6.2 6.2C4.3 7.7 3 10 3 12c0 2.8 4 8 9 8 1.6 0 3.1-.5 4.4-1.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'
-    : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5 12 5s9.5 7 9.5 7S18 19 12 19 2.5 12 2.5 12z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>';
-}
-function togglePublicClientPassword(inputId,btn){
-  const input=document.getElementById(inputId); if(!input)return;
-  const show=input.type==='password'; input.type=show?'text':'password';
-  btn?.setAttribute('aria-pressed',String(show)); btn?.setAttribute('aria-label',show?'Masquer le mot de passe':'Afficher le mot de passe');
-  if(btn)btn.innerHTML=clientAuthEyeIcon(show);
-}
-function clientPasswordField(inputId,placeholder='Mot de passe',autocomplete='current-password'){
-  return `<div class="clientAuthPasswordShell"><input id="${inputId}" type="password" placeholder="${esc(placeholder)}" autocomplete="${autocomplete}"><button type="button" class="clientAuthPasswordToggle" aria-label="Afficher le mot de passe" aria-pressed="false" onclick="togglePublicClientPassword('${inputId}',this)">${clientAuthEyeIcon(false)}</button></div>`;
-}
-function setClientAuthMessage(message='',type='info'){
-  const box=document.getElementById('clientAuthMessage'); if(!box)return;
-  box.className='clientAuthMessage '+type; box.textContent=message; box.hidden=!message;
-}
 function openClientRegisterPopup(companyId){
-  document.getElementById('clientLoginModal')?.remove();
-  const html=`<div class="marketPayModalBackdrop clientAuthBackdrop" id="clientRegisterModal"><div class="marketPayModal clientAuthModal clientAuthPremium"><button class="marketPayClose" onclick="document.getElementById('clientRegisterModal')?.remove()">×</button><div class="clientAuthHead"><span class="clientAuthIcon">👤</span><div><small>GLOBAL MARKET</small><h2>Créer mon espace client</h2><p>Inscrivez-vous pour commander et suivre vos achats dans cette boutique.</p></div></div><div class="clientAuthDivider"></div><label>Nom complet<input id="clientRegName" placeholder="Nom et prénom" autocomplete="name"></label><label>Téléphone<input id="clientRegPhone" placeholder="Ex : 0700000000" autocomplete="tel"></label><label>Email<input id="clientRegEmail" type="email" placeholder="Email facultatif" autocomplete="email"></label><label>Mot de passe${clientPasswordField('clientRegPass','Créer un mot de passe sécurisé','new-password')}</label><small class="clientAuthHint">8 caractères minimum avec majuscule, minuscule, chiffre et caractère spécial.</small><div id="clientAuthMessage" class="clientAuthMessage" hidden></div><div class="marketPayActions clientAuthActions"><button onclick="savePublicClientRegister('${companyId}')">Créer mon espace client</button><button class="btn2" onclick="document.getElementById('clientRegisterModal')?.remove();openClientLoginPopup('${companyId}')">J’ai déjà un compte</button></div></div></div>`;
+  const html=`<div class="marketPayModalBackdrop" id="clientRegisterModal"><div class="marketPayModal clientAuthModal"><button class="marketPayClose" onclick="document.getElementById('clientRegisterModal')?.remove()">×</button><h2>Inscription nouveau client</h2><p>Inscription obligatoire avant toute commande dans la boutique client.</p><label>Nom complet<input id="clientRegName" placeholder="Nom et prénom"></label><label>Téléphone<input id="clientRegPhone" placeholder="Ex : 0700000000"></label><label>Email<input id="clientRegEmail" placeholder="Email facultatif"></label><label>Mot de passe<input id="clientRegPass" type="password" placeholder="Créer un mot de passe"></label><div class="marketPayActions"><button onclick="savePublicClientRegister('${companyId}')">Créer mon espace client</button><button class="btn2" onclick="openClientLoginPopup('${companyId}')">J’ai déjà un compte</button></div></div></div>`;
   document.body.insertAdjacentHTML('beforeend',html);
 }
 function openClientLoginPopup(companyId){
   document.getElementById('clientRegisterModal')?.remove();
   document.getElementById('clientSpaceModal')?.remove();
-  document.getElementById('clientForgotPasswordModal')?.remove();
-  const html=`<div class="marketPayModalBackdrop clientAuthBackdrop" id="clientLoginModal"><div class="marketPayModal clientAuthModal clientAuthPremium"><button class="marketPayClose" onclick="document.getElementById('clientLoginModal')?.remove()">×</button><div class="clientAuthHead"><span class="clientAuthIcon">🔐</span><div><small>ESPACE CLIENT</small><h2>Connexion à la boutique</h2><p>Accédez à vos commandes et à votre suivi client sécurisé.</p></div></div><div class="clientAuthDivider"></div><label>Téléphone<input id="clientLoginPhone" placeholder="Votre numéro de téléphone" autocomplete="tel"></label><label>Mot de passe${clientPasswordField('clientLoginPass','Votre mot de passe','current-password')}</label><div class="clientForgotLine"><button type="button" onclick="openClientForgotPasswordPopup('${companyId}')">Mot de passe oublié ?</button></div><div id="clientAuthMessage" class="clientAuthMessage" hidden></div><div class="marketPayActions clientAuthActions"><button id="clientLoginSubmit" onclick="loginPublicClient('${companyId}')">Ouvrir mon espace</button><button class="btn2" onclick="document.getElementById('clientLoginModal')?.remove();openClientRegisterPopup('${companyId}')">Créer un compte</button></div></div></div>`;
+  const html=`<div class="marketPayModalBackdrop" id="clientLoginModal"><div class="marketPayModal clientAuthModal"><button class="marketPayClose" onclick="document.getElementById('clientLoginModal')?.remove()">×</button><h2>Connexion espace client</h2><label>Téléphone<input id="clientLoginPhone" placeholder="Téléphone"></label><label>Mot de passe<input id="clientLoginPass" type="password" placeholder="Mot de passe"></label><div class="marketPayActions"><button onclick="loginPublicClient('${companyId}')">Ouvrir mon espace</button><button class="btn2" onclick="document.getElementById('clientLoginModal')?.remove();openClientRegisterPopup('${companyId}')">Inscription</button></div></div></div>`;
   document.body.insertAdjacentHTML('beforeend',html);
 }
-function openClientForgotPasswordPopup(companyId){
-  document.getElementById('clientForgotPasswordModal')?.remove();
-  const company=(seed().companies||[]).find(c=>c.id===companyId);
-  const currentPhone=($('#clientLoginPhone')?.value||'').trim();
-  const html=`<div class="marketPayModalBackdrop clientAuthBackdrop" id="clientForgotPasswordModal"><div class="marketPayModal clientAuthModal clientAuthPremium clientForgotPremium"><button class="marketPayClose" onclick="document.getElementById('clientForgotPasswordModal')?.remove()">×</button><div class="clientAuthHead"><span class="clientAuthIcon">🔑</span><div><small>${esc(company?.name||'GLOBAL MARKET')}</small><h2>Mot de passe oublié</h2><p>Envoyez votre demande à l’administrateur de la boutique. Il générera un nouveau mot de passe et vous le communiquera par SMS ou par e-mail.</p></div></div><div class="clientAuthDivider"></div><label>Téléphone du compte<input id="clientForgotPhone" value="${esc(currentPhone)}" placeholder="Ex : 0700000000" autocomplete="tel"></label><label>Adresse e-mail<input id="clientForgotEmail" type="email" placeholder="Votre e-mail si renseigné" autocomplete="email"></label><label>Mode souhaité de réception<select id="clientForgotChannel"><option value="SMS">SMS</option><option value="EMAIL">E-mail</option><option value="SMS_EMAIL">SMS ou e-mail</option></select></label><label>Message à l’administrateur<textarea id="clientForgotReason" rows="3" placeholder="Ex : Je n’arrive plus à accéder à mon espace client.">Mot de passe oublié</textarea></label><div id="clientForgotMessage" class="clientAuthMessage" hidden></div><div class="marketPayActions clientAuthActions"><button id="clientForgotSend" onclick="requestPublicClientPasswordReset('${companyId}')">Envoyer la demande</button><button class="btn2" onclick="document.getElementById('clientForgotPasswordModal')?.remove()">Annuler</button></div></div></div>`;
-  document.body.insertAdjacentHTML('beforeend',html);
+async function savePublicClientRegister(companyId){
+  const d=seed(); d.marketClients=d.marketClients||[];
+  const name=($('#clientRegName')?.value||'').trim(), phone=($('#clientRegPhone')?.value||'').trim(), email=($('#clientRegEmail')?.value||'').trim(), pass=($('#clientRegPass')?.value||'').trim();
+  if(!name||!phone||!pass) return alert('Nom, téléphone et mot de passe obligatoires.');
+  if(pass.length<6) return alert('Le mot de passe doit contenir au moins 6 caractères.');
+  if(d.marketClients.some(c=>c.companyId===companyId&&c.phone===phone)) return alert('Ce téléphone est déjà inscrit. Connectez-vous à votre espace client.');
+  const client={id:id('clt'),companyId,name,phone,email,createdAt:new Date().toISOString()};
+  await setObjectPassword(client,pass); d.marketClients.push(client); save(d); window.publicShopClientId=client.id;
+  document.getElementById('clientRegisterModal')?.remove(); alert('Inscription réussie. Votre espace client est créé.'); renderPublicShop((d.companies||[]).find(c=>c.id===companyId)?.shopSlug||'');
 }
-async function requestPublicClientPasswordReset(companyId){
-  const phone=($('#clientForgotPhone')?.value||'').trim(),email=($('#clientForgotEmail')?.value||'').trim(),preferredChannel=$('#clientForgotChannel')?.value||'SMS_EMAIL',reason=($('#clientForgotReason')?.value||'Mot de passe oublié').trim();
-  const msg=document.getElementById('clientForgotMessage'),btn=document.getElementById('clientForgotSend');
-  if(!phone&&!email){if(msg){msg.hidden=false;msg.className='clientAuthMessage error';msg.textContent='Saisissez votre téléphone ou votre adresse e-mail.';}return;}
-  if(btn){btn.disabled=true;btn.textContent='Envoi en cours…'}
-  try{
-    const r=await fetchWithTimeout('/api/public/client/password-reset/request',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({companyId,phone,email,preferredChannel,reason}),cache:'no-store'},16000);
-    const j=await readApiPayload(r);
-    if(msg){msg.hidden=false;msg.className='clientAuthMessage success';msg.textContent=j.message||'Votre demande a été transmise à l’administrateur de la boutique.';}
-    setTimeout(()=>document.getElementById('clientForgotPasswordModal')?.remove(),1800);
-  }catch(e){if(msg){msg.hidden=false;msg.className='clientAuthMessage error';msg.textContent=secureErrorMessage(e,'Impossible d’envoyer la demande pour le moment.');}}
-  finally{if(btn){btn.disabled=false;btn.textContent='Envoyer la demande'}}
+async function loginPublicClient(companyId){
+  const d=seed(); const phone=($('#clientLoginPhone')?.value||'').trim(), pass=($('#clientLoginPass')?.value||'').trim();
+  const client=(d.marketClients||[]).find(c=>c.companyId===companyId&&c.phone===phone);
+  if(!client||!(await verifyObjectPassword(client,pass))) return alert('Téléphone ou mot de passe incorrect.');
+  window.publicShopClientId=client.id; document.getElementById('clientLoginModal')?.remove(); openClientSpace(companyId);
 }
-function marketplaceClientStatus(o){
-  const after=String(o?.afterSaleStatus||'').toLowerCase();
-  const delivery=String(o?.deliveryStatus||o?.delivery||'').toLowerCase();
-  const validation=String(o?.validationStatus||'').toLowerCase();
-  if(after.includes('rembours')) return 'Remboursée';
-  if(after.includes('annul')||validation.includes('annul')||delivery.includes('annul')) return 'Annulée';
-  if(delivery.includes('livrée')||delivery==='livree'||validation.includes('termin')) return 'Livrée';
-  if(delivery.includes('en cours de livraison')||delivery==='en livraison') return 'En livraison';
-  if(delivery.includes('expédi')||delivery.includes('expedi')) return 'Expédiée';
-  if(delivery.includes('prête')||delivery.includes('prete')) return 'Prête';
-  if(delivery.includes('prépar')||delivery.includes('prepar')) return 'En préparation';
-  if(validation==='validée'||validation==='validee'||validation==='validé'||validation==='valide'||delivery==='confirmée'||delivery==='confirmee') return 'Confirmée';
-  return 'En attente';
-}
-function clientOrderStatusClass(status){
-  const s=String(status||'').toLowerCase();
-  if(s.includes('rembours'))return 'refunded'; if(s.includes('annul'))return 'cancelled'; if(s.includes('livrée'))return 'delivered';
-  if(s.includes('livraison'))return 'delivery'; if(s.includes('expédi'))return 'shipped'; if(s.includes('prête'))return 'ready';
-  if(s.includes('prépar'))return 'preparing'; if(s.includes('confirm'))return 'confirmed'; return 'pending';
-}
-function clientOrderStatusBadge(o){const status=marketplaceClientStatus(o);return `<span class="clientOrderStatus ${clientOrderStatusClass(status)}">${esc(status)}</span>`;}
-function clientOrderCanCancel(o){return marketplaceClientStatus(o)==='En attente';}
-function clientOrderCanConfirm(o){const s=marketplaceClientStatus(o);return !o?.clientReceptionConfirmed&&(s==='En livraison'||s==='Livrée');}
-function clientOrderCanInvoice(o){const s=marketplaceClientStatus(o);return !['En attente','Annulée'].includes(s);}
-function clientOrderActions(o,companyId){
-  const buttons=[`<button class="clientOrderBtn view" onclick="openClientOrderDetails('${esc(o.id)}')">Voir</button>`];
-  const status=marketplaceClientStatus(o);
-  if(!['Livrée','Annulée','Remboursée'].includes(status)) buttons.push(`<button class="clientOrderBtn track" onclick="openClientOrderTracking('${esc(o.id)}')">Suivre</button>`);
-  if(clientOrderCanCancel(o)) buttons.push(`<button class="clientOrderBtn cancel" onclick="clientCancelOrder('${esc(o.id)}','${esc(companyId)}')">Annuler</button>`);
-  if(clientOrderCanConfirm(o)) buttons.push(`<button class="clientOrderBtn confirm" onclick="clientConfirmReceipt('${esc(o.id)}','${esc(companyId)}')">Confirmer réception</button>`);
-  if(clientOrderCanInvoice(o)) buttons.push(`<button class="clientOrderBtn invoice" onclick="downloadClientOrderInvoice('${esc(o.id)}')">Télécharger facture</button>`);
-  return `<div class="clientOrderActions">${buttons.join('')}</div>`;
-}
-function closeClientSpaceToCatalog(){document.getElementById('clientSpaceModal')?.remove();document.getElementById('officialProducts')?.scrollIntoView({behavior:'smooth',block:'start'});}
 function openClientSpace(companyId){
   document.getElementById('clientSpaceModal')?.remove();
-  const d=seed(); const client=getPublicClient(companyId);
+  const d=seed(); const c=(d.companies||[]).find(x=>x.id===companyId); const client=getPublicClient(companyId);
   if(!client) return openClientLoginPopup(companyId);
   const clientDeletedSet=new Set([...(client.deletedOrderIds||[]),...((d.clientDeletedOrders&&d.clientDeletedOrders[client.id])||[])]);
   const orders=(d.orders||[]).filter(o=>o.companyId===companyId&&o.clientId===client.id&&!((o.clientDeletedIds||[]).includes(client.id))&&!clientDeletedSet.has(o.id)).sort((a,b)=>new Date(b.date)-new Date(a.date));
-  const rows=orders.map(o=>`<tr>
-    <td data-label="N° LOT"><button class="orderLinkBtn" onclick="openClientOrderDetails('${esc(o.id||'CMD')}')">#${esc(o.id||'CMD')}</button></td>
-    <td data-label="DATE">${new Date(o.date).toLocaleString('fr-FR',{dateStyle:'short',timeStyle:'short'})}</td>
-    <td data-label="ARTICLES"><b>${orderItemsCount(o)} article${orderItemsCount(o)>1?'s':''}</b><button class="clientInlineLink" onclick="openClientOrderDetails('${esc(o.id)}')">Voir détails</button></td>
-    <td data-label="TOTAL"><strong>${money(orderTotal(o))}</strong></td>
-    <td data-label="PAIEMENT"><span>${esc(o.paymentMethod||'Non choisi')}</span><small class="clientPaymentState">${esc(o.paymentStatus||((o.paymentMethod==='PAIEMENT À LA LIVRAISON')?'À payer à la livraison':'En attente'))}</small></td>
-    <td data-label="STATUT">${clientOrderStatusBadge(o)}</td>
-    <td data-label="ACTION">${clientOrderActions(o,companyId)}</td>
-  </tr>`).join('');
-  const tableContent=orders.length?`<div class="clientOrdersScroll"><table class="mkOrdersTable clientOrdersTable"><thead><tr><th>N° LOT</th><th>DATE</th><th>ARTICLES</th><th>TOTAL</th><th>PAIEMENT</th><th>STATUT</th><th>ACTION</th></tr></thead><tbody>${rows}</tbody></table></div>`:`<div class="clientEmptyState"><div class="clientEmptyIcon">🛍</div><h3>Aucune commande pour le moment.</h3><p>Vos prochaines commandes apparaîtront automatiquement dans cet espace.</p><button onclick="closeClientSpaceToCatalog()">Continuer mes achats</button></div>`;
-  const html=`<div class="marketPayModalBackdrop clientPremiumBackdrop" id="clientSpaceModal"><div class="marketPayModal clientSpaceBox clientSpacePremium"><button class="marketPayClose" onclick="document.getElementById('clientSpaceModal')?.remove()">×</button>
-    <div class="clientProfileHead"><div class="clientAvatar">${officialShopIcon('user')}</div><div><span class="clientSpaceKicker">ESPACE CLIENT</span><h2>Espace client</h2><strong>${esc(client.name||'Client')}</strong><div class="clientContactLine"><span>☎ ${esc(client.phone||'-')}</span><span>✉ ${esc(client.email||'-')}</span></div></div></div>
-    <div class="clientGoldLine"></div>
-    <section class="clientHistorySection"><div class="clientSectionTitle"><span>▤</span><div><h3>Historique / suivi de mes commandes</h3><p>Consultez vos commandes, leur paiement, leur statut et les actions disponibles.</p></div></div>${tableContent}</section>
-    <div class="marketPayActions clientSpaceFooter"><button onclick="document.getElementById('clientSpaceModal')?.remove()">Fermer</button></div>
-  </div></div>`;
+  const rows=orders.map(o=>`<tr><td><button class="orderLinkBtn" onclick="openMarketplaceOrderPopup('${esc(o.id||'CMD')}',false)">#${esc(o.id||'CMD')}</button></td><td>${new Date(o.date).toLocaleDateString('fr-FR')}</td><td>${orderItemsCount(o)} article(s)</td><td>${money(orderTotal(o))}</td><td>${esc(o.paymentMethod||'Non choisi')}</td><td>${esc(orderMainStatus(o))}</td><td><button class="danger smallDeleteOrder" onclick="deleteMarketplaceOrder('${esc(o.id||'CMD')}',false)">Supprimer</button></td></tr>`).join('')||'<tr><td colspan="7">Aucune commande pour le moment.</td></tr>';
+  const html=`<div class="marketPayModalBackdrop" id="clientSpaceModal"><div class="marketPayModal clientSpaceBox"><button class="marketPayClose" onclick="document.getElementById('clientSpaceModal')?.remove()">×</button><h2>Espace client</h2><p><b>${esc(client.name)}</b><br>${esc(client.phone)} ${client.email?'— '+esc(client.email):''}</p><h3>Historique / suivi de mes commandes</h3><div class="clientOrdersScroll"><table class="mkOrdersTable"><tr><th>N° LOT</th><th>Date</th><th>Articles</th><th>Total</th><th>Paiement</th><th>Statut</th><th>Action</th></tr>${rows}</table></div><div class="marketPayActions"><button onclick="document.getElementById('clientSpaceModal')?.remove()">Fermer</button><button class="btn2" onclick="logoutPublicClient('${companyId}')">Déconnexion</button></div></div></div>`;
   document.body.insertAdjacentHTML('beforeend',html);
-}
-
-function clientOrderById(orderId){
-  const d=seed(); const o=(d.orders||[]).find(x=>String(x.id)===String(orderId)); if(!o)return null;
-  const client=getPublicClient(o.companyId); if(!client||String(o.clientId)!==String(client.id))return null; return o;
-}
-function clientTrackingInfo(o){
-  const status=marketplaceClientStatus(o); const steps=['Commande passée','Confirmée','Préparation','Expédition','Livraison','Livrée'];
-  const indexMap={'En attente':0,'Confirmée':1,'En préparation':2,'Prête':2,'Expédiée':3,'En livraison':4,'Livrée':5};
-  return {status,steps,current:indexMap[status]??0};
-}
-function clientTrackingHTML(o){
-  if(['Annulée','Remboursée'].includes(marketplaceClientStatus(o))) return `<div class="clientTrackingCancelled">Commande ${esc(marketplaceClientStatus(o).toLowerCase())}.</div>`;
-  const t=clientTrackingInfo(o); return `<div class="clientTracking"><div class="clientTrackingLine"></div>${t.steps.map((s,i)=>`<div class="clientTrackingStep ${i<=t.current?'done':''} ${i===t.current?'current':''}"><span>${i<t.current?'✓':i+1}</span><b>${esc(s)}</b></div>`).join('')}</div>`;
-}
-function openClientOrderTracking(orderId){
-  document.getElementById('clientTrackingModal')?.remove(); const o=clientOrderById(orderId); if(!o)return alert('Commande introuvable ou non autorisée.');
-  const html=`<div class="marketPayModalBackdrop" id="clientTrackingModal"><div class="marketPayModal clientTrackingModal"><button class="marketPayClose" onclick="document.getElementById('clientTrackingModal')?.remove()">×</button><h2>Suivi de commande</h2><p>Commande <b>#${esc(o.id)}</b> — ${clientOrderStatusBadge(o)}</p>${clientTrackingHTML(o)}<div class="marketPayActions"><button onclick="document.getElementById('clientTrackingModal')?.remove()">Fermer</button></div></div></div>`;
-  document.body.insertAdjacentHTML('beforeend',html);
-}
-function openClientOrderDetails(orderId){
-  document.getElementById('clientOrderDetailsPremium')?.remove(); const d=seed(); const o=clientOrderById(orderId); if(!o)return alert('Commande introuvable ou non autorisée.');
-  const company=(d.companies||[]).find(c=>c.id===o.companyId)||{}; const client=getPublicClient(o.companyId); const lines=normalizeOrderItems(o);
-  const itemRows=lines.map(line=>{const it=(d.items||[]).find(x=>x.id===line.itemId&&x.companyId===o.companyId)||{};return `<div class="clientOrderItem"><div class="clientOrderThumb">${it.photo?`<img src="${esc(it.photo)}" alt="${esc(line.item||'Article')}">`:'📦'}</div><div><b>${esc(line.item||'Article')}</b><small>Quantité : ${Number(line.qty||1)} × ${money(line.unit||0)}</small></div><strong>${money(line.total||0)}</strong></div>`;}).join('');
-  const subtotal=Number(o.subtotal??lines.reduce((a,x)=>a+Number(x.total||0),0)); const discount=Number(o.discount||0); const deliveryFee=Number(o.deliveryFee||0);
-  const proof=o.paymentMethod==='PAIEMENT À LA LIVRAISON'?'Aucun identifiant requis':(o.transactionId||o.paymentRef||'-');
-  const html=`<div class="marketPayModalBackdrop" id="clientOrderDetailsPremium"><div class="marketPayModal clientOrderPremiumBox"><button class="marketPayClose" onclick="document.getElementById('clientOrderDetailsPremium')?.remove()">×</button>
-    <div class="clientOrderDetailHead"><div><span>DÉTAIL DE COMMANDE</span><h2>#${esc(o.id)}</h2></div>${clientOrderStatusBadge(o)}</div>
-    <div class="clientOrderInfoGrid"><div><small>Date</small><b>${new Date(o.date).toLocaleString('fr-FR')}</b></div><div><small>Entreprise vendeuse</small><b>${esc(company.name||'-')}</b></div><div><small>Paiement</small><b>${esc(o.paymentMethod||'-')}</b></div><div><small>ID transaction</small><b>${esc(proof)}</b></div></div>
-    <h3>Articles commandés</h3><div class="clientOrderItems">${itemRows}</div>
-    <div class="clientOrderDetailGrid"><section><h3>Récapitulatif</h3><div class="orderFinancialSummary"><div><span>Sous-total</span><b>${money(subtotal)}</b></div><div><span>Frais de livraison</span><b>${money(deliveryFee)}</b></div><div><span>Réduction</span><b>${money(discount)}</b></div><div class="total"><span>Total général</span><b>${money(orderTotal(o))}</b></div></div></section><section><h3>Livraison</h3><dl class="clientDeliveryList"><div><dt>Destinataire</dt><dd>${esc(o.deliveryRecipient||client?.name||'-')}</dd></div><div><dt>Téléphone</dt><dd>${esc(o.deliveryPhone||client?.phone||'-')}</dd></div><div><dt>Ville</dt><dd>${esc(o.deliveryCity||'-')}</dd></div><div><dt>Quartier</dt><dd>${esc(o.deliveryDistrict||'-')}</dd></div><div><dt>Adresse / indication</dt><dd>${esc(o.deliveryAddress||'-')}</dd></div><div><dt>Mode de livraison</dt><dd>${esc(o.deliveryMode||'Livraison standard')}</dd></div></dl></section></div>
-    <h3>Suivi</h3>${clientTrackingHTML(o)}
-    <div class="marketPayActions clientOrderDetailActions">${clientOrderCanCancel(o)?`<button class="danger" onclick="clientCancelOrder('${esc(o.id)}','${esc(o.companyId)}')">Annuler la commande</button>`:''}${clientOrderCanConfirm(o)?`<button onclick="clientConfirmReceipt('${esc(o.id)}','${esc(o.companyId)}')">Confirmer réception</button>`:''}${clientOrderCanInvoice(o)?`<button onclick="downloadClientOrderInvoice('${esc(o.id)}')">Télécharger facture</button>`:''}<button class="btn2" onclick="document.getElementById('clientOrderDetailsPremium')?.remove()">Fermer</button></div>
-  </div></div>`; document.body.insertAdjacentHTML('beforeend',html);
-}
-async function clientCancelOrder(orderId,companyId){
-  if(!(await g3Confirm('Voulez-vous annuler cette commande ?','Annuler la commande')))return;
-  try{await securePublicPost('/api/public/order/action',{orderId,action:'cancel'});await cloudLoadPublicData(companyId);document.getElementById('clientOrderDetailsPremium')?.remove();document.getElementById('clientTrackingModal')?.remove();openClientSpace(companyId);}catch(e){alert(secureErrorMessage(e,'Annulation impossible.'))}
-}
-async function clientConfirmReceipt(orderId,companyId){
-  if(!(await g3Confirm('Confirmez-vous avoir reçu cette commande ?','Confirmer la réception')))return;
-  try{await securePublicPost('/api/public/order/action',{orderId,action:'confirm_receipt'});await cloudLoadPublicData(companyId);document.getElementById('clientOrderDetailsPremium')?.remove();document.getElementById('clientTrackingModal')?.remove();openClientSpace(companyId);}catch(e){alert(secureErrorMessage(e,'Confirmation impossible.'))}
-}
-function downloadClientOrderInvoice(orderId){
-  const d=seed(); const o=clientOrderById(orderId); if(!o)return alert('Commande introuvable ou non autorisée.'); const company=(d.companies||[]).find(c=>c.id===o.companyId)||{}; const client=getPublicClient(o.companyId); const lines=normalizeOrderItems(o);
-  const rows=lines.map((line,i)=>`<tr><td>${i+1}</td><td>${esc(line.item||'Article')}</td><td>${Number(line.qty||1)}</td><td>${money(line.unit||0)}</td><td>${money(line.total||0)}</td></tr>`).join(''); const subtotal=Number(o.subtotal??lines.reduce((a,x)=>a+Number(x.total||0),0)); const fee=Number(o.deliveryFee||0);
-  const w=window.open('','_blank'); if(!w)return alert('Autorisez les fenêtres popup pour télécharger la facture.');
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Facture ${esc(o.id)}</title><style>${globalPrintThemeStyles('portrait')}@page{size:A4 portrait;margin:8mm}*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;color:#17332d;-webkit-print-color-adjust:exact;print-color-adjust:exact}.toolbar{display:flex;justify-content:flex-end;gap:8px;margin:8px}.toolbar button{border:0;border-radius:8px;padding:10px 14px;background:#004d40;color:#fff;font-weight:800}.page{width:194mm;min-height:279mm;margin:auto;padding:4mm}.meta{display:grid;grid-template-columns:1fr 1fr;gap:4mm;margin:6mm 0}.box{border:1px solid #d9e7e3;border-radius:10px;padding:4mm;background:#f8fbfa}.box h3{margin:0 0 2mm;color:#004d40}table{width:100%;border-collapse:collapse;font-size:3mm}th{background:#004d40;color:#fff;padding:2.3mm}td{border-bottom:1px solid #d9e7e3;padding:2.3mm}.totals{width:80mm;margin:6mm 0 0 auto}.totals div{display:flex;justify-content:space-between;padding:2mm;border-bottom:1px solid #e2e8f0}.totals .grand{font-size:4mm;font-weight:900;color:#004d40}@media print{.toolbar{display:none}.page{margin:0}}</style></head><body><div class="toolbar"><button onclick="window.print()">Imprimer / Enregistrer PDF</button><button onclick="window.close()">Fermer</button></div><main class="page">${globalPrintHeaderHTML(company,'FACTURE CLIENT — COMMANDE '+esc(o.id))}<div class="meta"><div class="box"><h3>Client</h3><b>${esc(client?.name||o.client||'-')}</b><br>${esc(client?.phone||o.clientPhone||'-')}<br>${esc(client?.email||'-')}</div><div class="box"><h3>Commande</h3>N° : <b>${esc(o.id)}</b><br>Date : ${new Date(o.date).toLocaleString('fr-FR')}<br>Paiement : ${esc(o.paymentMethod||'-')}<br>Statut : ${esc(marketplaceClientStatus(o))}</div></div><table><thead><tr><th>N°</th><th>Article</th><th>Qté</th><th>Prix unitaire</th><th>Sous-total</th></tr></thead><tbody>${rows}</tbody></table><div class="totals"><div><span>Sous-total</span><b>${money(subtotal)}</b></div><div><span>Frais de livraison</span><b>${money(fee)}</b></div><div class="grand"><span>Total général</span><b>${money(orderTotal(o))}</b></div></div>${globalPrintFooterHTML(company,'Facture commande '+esc(o.id))}</main></body></html>`);w.document.close();setTimeout(()=>w.focus(),100);
 }
 
 function normalizeOrderItems(o){
@@ -4349,7 +4199,7 @@ function renderGlobalShop(){
   const companyMap=new Map(companies.map(c=>[c.id,c]));
   const items=(d.items||[]).filter(i=>{
     const c=companyMap.get(i.companyId);
-    return c && !i.marketplaceHidden;
+    return c && !i.marketplaceHidden && !(isBoutiqueItem(i)&&i.stockType!=='unlimited'&&Number(i.stock||0)<=0);
   });
   const cats=[...new Set(items.map(i=>i.cat).filter(Boolean))].sort();
   const cards=items.map(i=>{const c=companyMap.get(i.companyId)||{}; return `<div class="globalProductCard" data-type="${isBoutiqueItem(i)?'product':'service'}" data-cat="${esc(i.cat||'')}" data-search="${esc((i.name+' '+i.cat+' '+c.name+' '+(i.marketplaceDesc||i.detail||'')).toLowerCase())}"><div class="globalCardTop"><span>${isBoutiqueItem(i)?'Produit':'Service'}</span><b>${esc(c.name||'Entreprise')}</b></div><button type="button" class="globalProductImage ${i.photo?'clickable':''}" ${i.photo?`onclick="openGlobalProductPhoto('${i.id}')" title="Agrandir la photo"`:''}>${mkProductVisual(i)}${i.photo?'<small>🔍 Voir photo</small>':''}</button><div class="globalProductBody"><h3>${esc(i.name)}</h3><p>${esc(i.cat||'Sans catégorie')}</p><em>${esc(i.marketplaceDesc||i.detail||'')}</em><div class="globalPriceRow"><strong>${money(itemMarketPrice(i))}</strong><span>${marketStockLabel(i)}</span></div><button onclick="location.hash='boutique/${esc(c.shopSlug||slugify(c.name||''))}';render()">Voir la boutique</button></div></div>`}).join('');
@@ -4461,20 +4311,13 @@ function updateOfficialShopNav(){
 }
 function scrollOfficialShopProducts(){ window.officialShopMode='all'; resetOfficialShopPage(); updateOfficialShopNav(); filterOfficialShop(); document.getElementById('officialProducts')?.scrollIntoView({behavior:'smooth',block:'start'}); }
 function toggleOfficialCategoriesMenu(){ document.getElementById('officialCategoryMenu')?.classList.toggle('open'); }
-function toggleOfficialClientMenu(companyId,force){
-  const client=getPublicClient(companyId);
-  if(!client){openClientLoginPopup(companyId);return;}
-  const menu=document.getElementById('officialClientDropdown'); if(!menu)return;
-  const open=force===undefined?!menu.classList.contains('open'):Boolean(force);
-  menu.classList.toggle('open',open);
-}
 
 function renderPublicShop(slug){
   const d=seed(); const decodedSlug=decodeURIComponent(slug||'');
   const c=(d.companies||[]).find(x=>slugify(x.name)===decodedSlug||x.shopSlug===decodedSlug);
   if(!c){app.innerHTML=`<div class="loginPage"><div class="loginBox"><div class="loginLeft"><div class="logoG">GG</div><h1>Boutique introuvable</h1><p>Le lien public demandé n’existe pas encore.</p><button onclick="location.hash='';renderLogin()">Retour connexion</button></div></div></div>`;return;}
   if(!hasPlanFeature(c,'public_shop')){app.innerHTML=`<div class="loginPage"><div class="loginBox"><div class="loginLeft"><div class="logoG">GG</div><h1>Boutique publique non active</h1><p>Cette boutique publique n’est pas disponible.</p><button onclick="location.hash='';renderLogin()">Retour connexion</button></div></div></div>`;return;}
-  const items=(d.items||[]).filter(i=>i.companyId===c.id&&!i.marketplaceHidden);
+  const items=(d.items||[]).filter(i=>i.companyId===c.id&&!i.marketplaceHidden && !(isBoutiqueItem(i)&&i.stockType!=='unlimited'&&Number(i.stock||0)<=0));
   const categories=[...new Set(items.map(i=>String(i.cat||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'));
   const popularDefs=[
     {key:'phones',label:'Téléphones & Tablettes',icon:'phone',sample:128},
@@ -4499,13 +4342,12 @@ function renderPublicShop(slug){
       <div class="officialProductBadges"><span>${isBoutiqueItem(i)?'PRODUIT':'SERVICE'}</span>${isNew?'<span class="new">NOUVEAU</span>':''}${i.marketplacePromo?`<span class="promo">${esc(i.marketplacePromo)}</span>`:''}</div>
       <button type="button" class="officialProductImage ${i.photo?'clickable':''}" ${i.photo?`onclick="openPublicProductPhoto('${c.id}','${i.id}')" title="Agrandir la photo"`:''}>${mkProductVisual(i)}${i.photo?'<span class="officialZoom">⌕ Agrandir</span>':''}</button>
       <div class="officialProductContent"><small>${esc(i.cat||'Produits & services')}</small><h3>${esc(i.name)}</h3><p>${esc(i.marketplaceDesc||i.detail||'Produit sélectionné par la boutique.')}</p><div class="officialProductMeta"><strong>${money(itemMarketPrice(i))}</strong><span>${marketStockLabel(i)}</span></div></div>
-      ${marketItemCanOrder(i)?`<button type="button" class="officialAddCart" onclick="addToPublicCart('${c.id}','${i.id}')">${officialShopIcon('cart')}<span>Ajouter au panier</span></button>`:`<button type="button" class="officialAddCart soldOut" disabled>${officialShopIcon('cart')}<span>Rupture de stock</span></button>`}
+      <button type="button" class="officialAddCart" onclick="addToPublicCart('${c.id}','${i.id}')">${officialShopIcon('cart')}<span>Ajouter au panier</span></button>
     </article>`;
   }).join('');
   const categoryOptions=popularDefs.map(x=>`<option value="popular:${x.key}">${esc(x.label)}</option>`).join('')+categories.map(cat=>`<option value="${esc(cat)}">${esc(cat)}</option>`).join('');
   const companySlogan=String(c.activity||'Produits et services de qualité');
   const bannerName=String(c.name||'Votre entreprise');
-  const shopClient=getPublicClient(c.id);
   window.officialShopMode='all'; window.officialShopPage=1;
   app.innerHTML=`<div class="publicShop officialStore">
     <header class="officialHeader">
@@ -4519,16 +4361,14 @@ function renderPublicShop(slug){
           <button type="submit" aria-label="Rechercher">${officialShopIcon('search')}</button>
         </form>
         <div class="officialAccountActions">
-          <div class="officialClientAccount">
-            <button type="button" class="officialClientAccountBtn" onclick="${shopClient?`toggleOfficialClientMenu('${c.id}')`:`openClientLoginPopup('${c.id}')`}"><span>${officialShopIcon('user')}</span><span><small>${esc(shopClient?.name||'Connexion')}</small><b>Mon compte</b></span></button>
-            ${shopClient?`<div class="officialClientDropdown" id="officialClientDropdown"><button type="button" onclick="openClientSpace('${c.id}');toggleOfficialClientMenu('${c.id}',false)">${officialShopIcon('user')}<span>Espace client</span></button><button type="button" class="logout" onclick="logoutPublicClient('${c.id}')">↪<span>Déconnexion</span></button></div>`:''}
-          </div>
+          <button type="button" onclick="openClientSpace('${c.id}')"><span>${officialShopIcon('user')}</span><span><small>Connexion</small><b>Mon compte</b></span></button>
           <button type="button" class="officialHeaderCart" onclick="openPublicCart('${c.id}')"><span>${officialShopIcon('cart')}</span><span><small>Votre</small><b>Panier</b></span><i id="publicCartBadge">${publicCartCount(c.id)}</i></button>
         </div>
       </div>
-      <nav class="officialNav officialNavSimplified">
-        <div class="officialNavSpacer" aria-hidden="true"></div>
-        <div class="officialNavRight"><button type="button" onclick="openClientRegisterPopup('${c.id}')">Créer un compte</button><button type="button" class="createShopBtn" onclick="location.hash='';renderLogin()">Créer ma Boutique</button></div>
+      <nav class="officialNav">
+        <div class="officialCategoryMenuWrap"><button type="button" class="officialAllCategories" onclick="toggleOfficialCategoriesMenu()">${officialShopIcon('menu')}<span>Toutes catégories</span><b>⌄</b></button><div class="officialCategoryDropdown" id="officialCategoryMenu">${popularDefs.map(x=>`<button type="button" onclick="selectOfficialShopCategory('${x.key}');toggleOfficialCategoriesMenu()">${officialShopIcon(x.icon)}<span>${esc(x.label)}</span></button>`).join('')}</div></div>
+        <div class="officialNavLinks"><button type="button" class="active" data-official-mode="all" onclick="setOfficialShopMode('all')">Toutes catégories</button><button type="button" data-official-mode="promotions" onclick="setOfficialShopMode('promotions')">Promotions</button><button type="button" data-official-mode="new" onclick="setOfficialShopMode('new')">Nouveautés</button></div>
+        <div class="officialNavRight"><button type="button" onclick="openClientRegisterPopup('${c.id}')">Créer un compte</button><button type="button" onclick="location.hash='';renderLogin()">Espace entreprise</button></div>
       </nav>
     </header>
 
@@ -5351,23 +5191,9 @@ async function securePublicPost(path,payload={}){
   }
   throw lastError;
 }
-function isTransientLoginError(error){
-  const status=Number(error?.status||0);
-  if(error?.name==='AbortError'||!status)return true;
-  if([408,425,500,502,503,504].includes(status))return true;
-  return status===429&&(!error?.code||error.code==='STORAGE_BUSY');
-}
-async function secureEmployeeLogin(payload){
-  // V4.8 : une seule authentification serveur. Les reprises de stockage sont gérées côté Worker
-  // sans afficher de compteur de tentatives ni de message technique à l'utilisateur.
-  const r=await fetchWithTimeout('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),cache:'no-store'},25000);
-  return await readApiPayload(r);
-}
 function secureErrorMessage(error,fallback='Opération sécurisée impossible.'){
-  if(error?.status===429&&error?.code==='RATE_LIMITED') return error.message||'Trop de tentatives. Réessayez plus tard.';
-  if(error?.code==='SETUP_REQUIRED') return 'La configuration initiale du Super Administrateur doit être terminée.';
-  if(error?.code==='INVALID_CREDENTIALS'||error?.status===401) return error?.message||'Identifiant ou mot de passe incorrect.';
-  if(isTransientLoginError(error)) return 'Connexion momentanément indisponible. Réessayez dans quelques instants.';
+  if(error?.status===429) return error.message||'Trop de tentatives. Réessayez plus tard.';
+  if(error?.code==='SETUP_REQUIRED') return 'Les secrets Cloudflare SUPER_ADMIN_EMAIL et SUPER_ADMIN_INITIAL_PASSWORD doivent être configurés avant la première connexion Super Admin.';
   return error?.message||fallback;
 }
 async function openGlobalShopLogin(){
@@ -5384,7 +5210,8 @@ async function login(){
   if(!password){setLoginMessage('Le mot de passe est obligatoire.','error');$('#loginPass')?.focus();return}
   setLoginLoading(true);
   try{
-    const j=await secureEmployeeLogin({identifier,password,role});
+    const r=await fetchWithTimeout('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identifier,password,role})},12000);
+    const j=await readApiPayload(r);
     CLOUD_SESSION=j.session||null;
     if(j.data&&typeof j.data==='object'){
       CLOUD_DATA=normalizeData(j.data);
@@ -5529,26 +5356,10 @@ async function resetUserPasswordDirect(uid){
   if(!(await g3Confirm('Réinitialiser le mot de passe de '+(u.name||u.email)+' ?','Réinitialisation mot de passe'))) return;
   try{const j=await secureEmployeePost('/api/users/reset-password',{userId:uid});await cloudLoadData();alert('Nouveau mot de passe temporaire :\n\n'+j.temporaryPassword+'\n\nToutes les anciennes sessions de cet utilisateur sont invalidées.');renderDash('param')}catch(e){alert(secureErrorMessage(e,'Réinitialisation impossible.'))}
 }
-function showClientResetDeliveryPopup(result){
-  document.getElementById('clientResetDeliveryModal')?.remove();
-  const client=result?.client||{},temp=result?.temporaryPassword||'';
-  const smsText=encodeURIComponent(`GLOBAL MARKET - Nouveau mot de passe : ${temp}. Utilisez-le pour vous connecter à votre espace client.`);
-  const mailSubject=encodeURIComponent('Nouveau mot de passe - Espace client GLOBAL MARKET');
-  const mailBody=encodeURIComponent(`Bonjour ${client.name||''},\n\nVotre nouveau mot de passe temporaire est : ${temp}\n\nVous pouvez maintenant vous connecter à votre espace client.\n\nCordialement.`);
-  const html=`<div class="marketPayModalBackdrop clientAuthBackdrop" id="clientResetDeliveryModal"><div class="marketPayModal clientAuthModal clientAuthPremium clientResetDelivery"><button class="marketPayClose" onclick="document.getElementById('clientResetDeliveryModal')?.remove()">×</button><div class="clientAuthHead"><span class="clientAuthIcon">✓</span><div><small>RÉINITIALISATION CLIENT</small><h2>Nouveau mot de passe généré</h2><p>Transmettez ce mot de passe au client par le canal de son choix.</p></div></div><div class="clientAuthDivider"></div><div class="clientTempPassword"><small>Mot de passe temporaire</small><strong>${esc(temp)}</strong><button onclick="navigator.clipboard?.writeText('${esc(temp)}');g3Success('Mot de passe copié.')">Copier</button></div><div class="clientResetContact"><p><b>Client :</b> ${esc(client.name||'-')}</p><p><b>Téléphone :</b> ${esc(client.phone||'-')}</p><p><b>E-mail :</b> ${esc(client.email||'-')}</p></div><div class="marketPayActions clientAuthActions">${client.phone?`<button onclick="location.href='sms:${encodeURIComponent(client.phone)}?body=${smsText}'">Envoyer par SMS</button>`:''}${client.email?`<button class="btn2" onclick="location.href='mailto:${encodeURIComponent(client.email)}?subject=${mailSubject}&body=${mailBody}'">Envoyer par e-mail</button>`:''}<button class="btn2" onclick="document.getElementById('clientResetDeliveryModal')?.remove()">Fermer</button></div></div></div>`;
-  document.body.insertAdjacentHTML('beforeend',html);
-}
 async function resetPasswordRequestByAdmin(rid){
   if(!requireAdmin('Réservé à l’administrateur.')) return;
   const r=(seed().passwordResetRequests||[]).find(x=>x.id===rid); if(!r) return alert('Demande introuvable.');
-  try{
-    if(r.role==='client'){
-      const j=await secureEmployeePost('/api/clients/reset-password',{clientId:r.clientId||r.userId,requestId:rid});
-      await cloudLoadData(); renderDash('param'); showClientResetDeliveryPopup(j); return;
-    }
-    const j=await secureEmployeePost('/api/users/reset-password',{userId:r.userId,requestId:rid});
-    await cloudLoadData();alert('Mot de passe temporaire :\n\n'+j.temporaryPassword+'\n\nToutes les anciennes sessions sont invalidées.');renderDash('param');
-  }catch(e){alert(secureErrorMessage(e,'Réinitialisation impossible.'))}
+  try{const j=await secureEmployeePost('/api/users/reset-password',{userId:r.userId,requestId:rid});await cloudLoadData();alert('Mot de passe temporaire :\n\n'+j.temporaryPassword+'\n\nToutes les anciennes sessions sont invalidées.');renderDash('param')}catch(e){alert(secureErrorMessage(e,'Réinitialisation impossible.'))}
 }
 async function resetPasswordRequestBySuper(rid){
   const {user}=current(); if(user?.role!=='superadmin') return alert('Réservé au Super Admin GLOBAL MARKET.');
@@ -5560,38 +5371,27 @@ async function superResetAdminPassword(uid){
   if(!(await g3Confirm('Générer un mot de passe temporaire pour cet administrateur ?','Mot de passe temporaire'))) return;
   try{const j=await secureEmployeePost('/api/users/reset-password',{userId:uid});await cloudLoadData();alert('Mot de passe temporaire :\n\n'+j.temporaryPassword+'\n\nToutes les anciennes sessions sont invalidées.');closeSuperModal();const u=(seed().users||[]).find(x=>x.id===uid);if(u)showCompanyDetails(u.companyId)}catch(e){alert(secureErrorMessage(e,'Réinitialisation impossible.'))}
 }
-async function securePublicClientAuth(path,payload){
-  const r=await fetchWithTimeout(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),cache:'no-store'},25000);
-  return await readApiPayload(r);
-}
 async function savePublicClientRegister(companyId){
   const payload={companyId,name:($('#clientRegName')?.value||'').trim(),phone:($('#clientRegPhone')?.value||'').trim(),email:($('#clientRegEmail')?.value||'').trim(),password:($('#clientRegPass')?.value||'').trim()};
-  if(!payload.name||!payload.phone||!payload.password){setClientAuthMessage('Nom, téléphone et mot de passe obligatoires.','error');return;}
-  setClientAuthMessage('Création sécurisée du compte…','info');
+  if(!payload.name||!payload.phone||!payload.password) return alert('Nom, téléphone et mot de passe obligatoires.');
   try{
-    const j=await securePublicClientAuth('/api/public/client/register',payload); PUBLIC_CLIENT_SESSION=j.session||null; window.publicShopClientId=j.client?.id||'';
-    try{await cloudLoadPublicData(companyId)}catch(loadError){console.warn('Actualisation boutique différée',loadError);CLOUD_DATA.marketClients=[j.client];}
-    document.getElementById('clientRegisterModal')?.remove(); g3Success('Inscription réussie. Votre espace client est sécurisé côté serveur.');
+    const r=await fetchWithTimeout('/api/public/client/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)},12000);
+    const j=await readApiPayload(r); PUBLIC_CLIENT_SESSION=j.session||null; window.publicShopClientId=j.client?.id||'';
+    await cloudLoadPublicData(); document.getElementById('clientRegisterModal')?.remove(); alert('Inscription réussie. Votre espace client est sécurisé côté serveur.');
     const c=(seed().companies||[]).find(x=>x.id===companyId); renderPublicShop(c?.shopSlug||'');
-  }catch(e){setClientAuthMessage(secureErrorMessage(e,'Inscription client impossible.'),'error')}
+  }catch(e){alert(secureErrorMessage(e,'Inscription client impossible.'))}
 }
 async function loginPublicClient(companyId){
   const phone=($('#clientLoginPhone')?.value||'').trim(),password=($('#clientLoginPass')?.value||'').trim();
-  if(!phone||!password){setClientAuthMessage('Saisissez votre téléphone et votre mot de passe.','error');return;}
-  const btn=document.getElementById('clientLoginSubmit'); if(btn){btn.disabled=true;btn.textContent='Connexion…'}
-  setClientAuthMessage('Vérification sécurisée de votre compte…','info');
   try{
-    const j=await securePublicClientAuth('/api/public/client/login',{companyId,phone,password}); PUBLIC_CLIENT_SESSION=j.session||null; window.publicShopClientId=j.client?.id||'';
-    if(!CLOUD_DATA||typeof CLOUD_DATA!=='object')CLOUD_DATA=defaultData();
-    CLOUD_DATA.marketClients=[j.client];
-    try{await cloudLoadPublicData(companyId)}catch(loadError){console.warn('Chargement de l’historique différé',loadError);}
-    document.getElementById('clientLoginModal')?.remove(); openClientSpace(companyId);
-  }catch(e){setClientAuthMessage(secureErrorMessage(e,'Téléphone ou mot de passe incorrect.'),'error')}
-  finally{if(btn){btn.disabled=false;btn.textContent='Ouvrir mon espace'}}
+    const r=await fetchWithTimeout('/api/public/client/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({companyId,phone,password})},12000);
+    const j=await readApiPayload(r); PUBLIC_CLIENT_SESSION=j.session||null; window.publicShopClientId=j.client?.id||'';
+    await cloudLoadPublicData(); document.getElementById('clientLoginModal')?.remove(); openClientSpace(companyId);
+  }catch(e){alert(secureErrorMessage(e,'Téléphone ou mot de passe incorrect.'))}
 }
 async function logoutPublicClient(companyId){
   try{await fetchWithTimeout('/api/public/client/session',{method:'DELETE',headers:clientSecurityHeaders()},6000)}catch(e){}
-  PUBLIC_CLIENT_SESSION=null; window.publicShopClientId=''; await cloudLoadPublicData(companyId);
+  PUBLIC_CLIENT_SESSION=null; window.publicShopClientId=''; await cloudLoadPublicData();
   const c=(seed().companies||[]).find(x=>x.id===companyId); renderPublicShop(c?.shopSlug||'');
 }
 async function finalizePublicCartPayment(companyId,method){
@@ -5604,7 +5404,7 @@ async function finalizePublicCartPayment(companyId,method){
   let paymentCaptureData=''; if(file){try{paymentCaptureData=await readPaymentCaptureAsDataUrl(file)}catch(e){return alert('Impossible de charger la capture.')}}
   try{
     await securePublicPost('/api/public/order',{companyId,cart:cart.map(x=>({itemId:x.itemId,qty:Number(x.qty||1)})),paymentMethod:method,paymentProofType:proofType,paymentRef:ref,paymentCaptureName:file?.name||'',paymentCaptureData});
-    cart.length=0; refreshPublicCartBadge(companyId); await cloudLoadPublicData(companyId); showOrderSentModal(companyId);
+    cart.length=0; refreshPublicCartBadge(companyId); await cloudLoadPublicData(); showOrderSentModal(companyId);
   }catch(e){alert(secureErrorMessage(e,'Envoi de la commande impossible.'))}
 }
 async function deleteMarketplaceOrder(orderId,isAdmin){
@@ -5618,19 +5418,4 @@ async function deleteMarketplaceOrder(orderId,isAdmin){
     const companyId=getPublicClient(PUBLIC_CLIENT_SESSION?.companyId)?.companyId||PUBLIC_CLIENT_SESSION?.companyId;
     await cloudLoadPublicData(); document.getElementById('marketOrderDetailsModal')?.remove(); document.getElementById('clientSpaceModal')?.remove(); if(companyId)openClientSpace(companyId);
   }catch(e){alert(secureErrorMessage(e,'Suppression impossible.'))}
-}
-
-
-/* GLOBAL MARKET V4.6 - BOUTIQUE CLIENT / PAIEMENT / ESPACE CLIENT */
-async function finalizePublicCartPayment(companyId,method){
-  const client=getPublicClient(companyId),cart=getPublicCart(companyId);
-  if(!client)return openClientRegisterPopup(companyId); if(!cart.length)return alert('Panier vide.');
-  const payOnDelivery=String(method||'').toUpperCase()==='PAIEMENT À LA LIVRAISON';
-  const transactionId=($('#publicTransactionId')?.value||'').trim(); const file=$('#publicPayCapture')?.files?.[0];
-  if(!payOnDelivery&&!transactionId)return alert('Veuillez inscrire l’identifiant de la transaction.');
-  let paymentCaptureData=''; if(file){try{paymentCaptureData=await readPaymentCaptureAsDataUrl(file)}catch(e){return alert(e?.message||'Impossible de charger la capture.')}}
-  try{
-    await securePublicPost('/api/public/order',{companyId,cart:cart.map(x=>({itemId:x.itemId,qty:Number(x.qty||1)})),paymentMethod:method,paymentTiming:payOnDelivery?'delivery':'now',paymentProofType:payOnDelivery?'none':(file?'capture':'transaction_id'),paymentRef:payOnDelivery?'':transactionId,transactionId:payOnDelivery?'':transactionId,paymentCaptureName:file?.name||'',paymentCaptureData});
-    cart.length=0;refreshPublicCartBadge(companyId);await cloudLoadPublicData(companyId);showOrderSentModal(companyId);
-  }catch(e){alert(secureErrorMessage(e,'Envoi de la commande impossible.'))}
 }
