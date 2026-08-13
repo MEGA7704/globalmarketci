@@ -250,8 +250,8 @@ async function writeUserCredential(env, profile, password, options = {}) {
   return record;
 }
 
-async function writeClientCredential(env, client, password) {
-  validatePassword(password, 'client');
+async function writeClientCredential(env, client, password, options = {}) {
+  if (!options.allowLegacyWeak) validatePassword(password, 'client');
   const old = await getClientAuth(env, client.id);
   const salt = randomHex(16);
   const record = {
@@ -713,7 +713,7 @@ async function migrateLegacyCredentials(env, state) {
       await env.GLOBAL_MARKET_KV.put(clientAuthKey(client.id), JSON.stringify(record));
       await env.GLOBAL_MARKET_KV.put(clientIndexKey(client.companyId, record.phone), client.id);
     } else if (!existing && typeof client.password === 'string' && client.password) {
-      await writeClientCredential(env, client, client.password);
+      await writeClientCredential(env, client, client.password, { allowLegacyWeak: true });
     }
     changed = stripCredentialFields(client) || changed;
   }
@@ -969,7 +969,7 @@ async function createClientSession(env, client, auth) {
     csrfToken: randomHex(24),
     expiresAt: Date.now() + CLIENT_SESSION_TTL * 1000
   };
-  await env.GLOBAL_MARKET_KV.put(`client-session:${sid}`, JSON.stringify(session), { expirationTtl: CLIENT_SESSION_TTL });
+  await withStorageRetry(() => env.GLOBAL_MARKET_KV.put(`client-session:${sid}`, JSON.stringify(session), { expirationTtl: CLIENT_SESSION_TTL }), 4);
   return { sid, session };
 }
 
@@ -1414,22 +1414,47 @@ function publicItem(item) {
 }
 
 async function publicLoadPayload(request, env) {
-  const state = await loadState(env);
+  const url = new URL(request.url);
+  let clientAuth = null;
+  try { clientAuth = await getClientSession(request, env, false); } catch {}
+
+  let state;
+  let scopedCompanyId = clientAuth?.client?.companyId || String(url.searchParams.get('companyId') || '');
+  const requestedSlug = String(url.searchParams.get('slug') || '').trim().toLowerCase();
+
+  if (clientAuth) {
+    state = clientAuth.state;
+  } else if (scopedCompanyId) {
+    state = await withStorageRetry(() => loadState(env, scopedCompanyId), 4);
+  } else if (requestedSlug) {
+    const base = await withStorageRetry(() => loadBaseState(env), 4);
+    const baseCompany = (base.companies || []).find(c => String(c.shopSlug || '').toLowerCase() === requestedSlug);
+    if (baseCompany) {
+      scopedCompanyId = baseCompany.id;
+      state = await withStorageRetry(() => loadState(env, scopedCompanyId), 4);
+    } else {
+      state = base;
+    }
+  } else {
+    state = await withStorageRetry(() => loadState(env), 4);
+  }
+
+  const companyFilter = scopedCompanyId ? c => c.id === scopedCompanyId : () => true;
+  const itemFilter = scopedCompanyId ? i => i.companyId === scopedCompanyId : () => true;
   const payload = {
-    companies: state.companies.map(publicCompany),
-    items: state.items.map(publicItem),
+    companies: (state.companies || []).filter(companyFilter).map(publicCompany),
+    items: (state.items || []).filter(itemFilter).map(publicItem),
     marketClients: [],
     orders: [],
     clientDeletedOrders: {},
     app: state.app || {}
   };
-  try {
-    const clientAuth = await getClientSession(request, env, false);
+  if (clientAuth) {
     payload.marketClients = [cleanClone(clientAuth.client)];
-    payload.orders = state.orders.filter(o => o.companyId === clientAuth.client.companyId && o.clientId === clientAuth.client.id).map(cleanClone);
+    payload.orders = (state.orders || []).filter(o => o.companyId === clientAuth.client.companyId && o.clientId === clientAuth.client.id).map(cleanClone);
     payload.clientDeletedOrders[clientAuth.client.id] = (state.clientDeletedOrders || {})[clientAuth.client.id] || [];
     payload.clientSession = publicClientSessionView(clientAuth.session);
-  } catch {
+  } else {
     payload.clientSession = null;
   }
   return payload;
@@ -1729,15 +1754,15 @@ async function handleResetUserPassword(request, env) {
 async function handlePublicClientRegister(request, env) {
   assertSameOrigin(request);
   const body = await readJson(request, 50_000);
-  const state = await loadState(env);
   const companyId = String(body.companyId || '');
+  const state = await withStorageRetry(() => loadState(env, companyId), 4);
   if (!state.companies.some(c => c.id === companyId)) throw new HttpError(404, 'Boutique introuvable.', 'COMPANY_NOT_FOUND');
   const name = String(body.name || '').trim();
   const phone = normalizePhone(body.phone);
   const email = normalizeIdentifier(body.email);
   const password = validatePassword(body.password, 'client');
   if (!name || !phone) throw new HttpError(400, 'Nom et téléphone obligatoires.', 'MISSING_FIELDS');
-  if (await env.GLOBAL_MARKET_KV.get(clientIndexKey(companyId, phone))) throw new HttpError(409, 'Ce téléphone est déjà inscrit.', 'PHONE_EXISTS');
+  if (await withStorageRetry(() => env.GLOBAL_MARKET_KV.get(clientIndexKey(companyId, phone)), 4)) throw new HttpError(409, 'Ce téléphone est déjà inscrit.', 'PHONE_EXISTS');
   const client = { id: `clt_${crypto.randomUUID()}`, companyId, name, phone, email, createdAt: new Date().toISOString() };
   state.marketClients.push(client);
   await writeClientCredential(env, client, password);
@@ -1755,21 +1780,86 @@ async function handlePublicClientLogin(request, env) {
   const companyId = String(body.companyId || '');
   const phone = normalizePhone(body.phone);
   const password = String(body.password || '');
+  if (!companyId || !phone || !password) throw new HttpError(400, 'Téléphone et mot de passe obligatoires.', 'MISSING_FIELDS');
   const ip = requestIp(request);
-  const rate = await assertLoginRateAllowed(env, ip, `client:${companyId}:${phone}`);
-  const state = await loadState(env);
-  const clientId = await env.GLOBAL_MARKET_KV.get(clientIndexKey(companyId, phone));
-  const client = state.marketClients.find(c => c.id === clientId && c.companyId === companyId);
-  const auth = client ? await getClientAuth(env, client.id) : null;
+  const rate = await withStorageRetry(() => assertLoginRateAllowed(env, ip, `client:${companyId}:${phone}`), 4);
+  const state = await withStorageRetry(() => loadState(env, companyId), 4);
+  let clientId = await withStorageRetry(() => env.GLOBAL_MARKET_KV.get(clientIndexKey(companyId, phone)), 4);
+  let client = (state.marketClients || []).find(c => c.id === clientId && c.companyId === companyId);
+
+  // Répare automatiquement l'index des anciens comptes clients sans charger les autres entreprises.
+  if (!client) {
+    client = (state.marketClients || []).find(c => c.companyId === companyId && normalizePhone(c.phone) === phone) || null;
+    if (client) {
+      clientId = client.id;
+      await withStorageRetry(() => env.GLOBAL_MARKET_KV.put(clientIndexKey(companyId, phone), client.id), 4);
+    }
+  }
+  const auth = client ? await withStorageRetry(() => getClientAuth(env, client.id), 4) : null;
   if (!client || !(await verifyCredential(auth, password))) {
-    await recordLoginFailure(env, rate);
+    await withStorageRetry(() => recordLoginFailure(env, rate), 4);
     throw new HttpError(401, 'Téléphone ou mot de passe incorrect.', 'INVALID_CREDENTIALS');
   }
-  await clearLoginRate(env, rate);
+  await withStorageRetry(() => clearLoginRate(env, rate), 3);
   const created = await createClientSession(env, client, auth);
   return json({ success: true, client: cleanClone(client), session: publicClientSessionView(created.session) }, {
     headers: { 'Set-Cookie': setCookie(CLIENT_SESSION_COOKIE, created.sid, CLIENT_SESSION_TTL) }
   });
+}
+
+async function handlePublicClientPasswordResetRequest(request, env) {
+  assertSameOrigin(request);
+  const body = await readJson(request, 30_000);
+  const companyId = String(body.companyId || '');
+  const phone = normalizePhone(body.phone);
+  const email = normalizeIdentifier(body.email);
+  const preferredChannel = ['SMS','EMAIL','SMS_EMAIL'].includes(String(body.preferredChannel || '').toUpperCase()) ? String(body.preferredChannel).toUpperCase() : 'SMS_EMAIL';
+  const reason = String(body.reason || 'Mot de passe oublié').trim().slice(0, 500);
+  if (!companyId || (!phone && !email)) throw new HttpError(400, 'Téléphone ou e-mail obligatoire.', 'MISSING_FIELDS');
+
+  const ip = requestIp(request);
+  const rate = await withStorageRetry(() => assertLoginRateAllowed(env, ip, `client-reset:${companyId}:${phone || email}`), 4);
+  const state = await withStorageRetry(() => loadState(env, companyId), 4);
+  let client = null;
+  if (phone) client = (state.marketClients || []).find(c => c.companyId === companyId && normalizePhone(c.phone) === phone) || null;
+  if (!client && email) client = (state.marketClients || []).find(c => c.companyId === companyId && normalizeIdentifier(c.email) === email) || null;
+
+  if (client) {
+    state.passwordResetRequests = state.passwordResetRequests || [];
+    const pending = state.passwordResetRequests.find(r => r.companyId === companyId && r.role === 'client' && (r.clientId === client.id || r.userId === client.id) && r.status === 'pending');
+    if (!pending) {
+      const reset = {
+        id: `rst_${crypto.randomUUID()}`, companyId, clientId: client.id, userId: client.id,
+        clientName: client.name || '', userName: client.name || '', phone: client.phone || phone,
+        email: client.email || email, role: 'client', preferredChannel, reason,
+        status: 'pending', createdAt: new Date().toISOString()
+      };
+      state.passwordResetRequests.push(reset);
+      await persistStateDelta(env, { arrays: { passwordResetRequests: { upserts: [reset], deletes: [] } } }, { role: 'system', companyId });
+      await audit(env, 'CLIENT_PASSWORD_RESET_REQUESTED', client.id, companyId, reset.id, ip);
+    }
+  }
+  await withStorageRetry(() => clearLoginRate(env, rate), 3).catch(() => {});
+  return json({ success: true, message: 'Votre demande a été transmise à l’administrateur de la boutique. Le nouveau mot de passe vous sera communiqué par SMS ou par e-mail.' });
+}
+
+async function handleResetClientPassword(request, env) {
+  const ctx = await getEmployeeSession(request, env, true);
+  requireRole(ctx.user, ['admin', 'superadmin']);
+  const body = await readJson(request, 30_000);
+  const requestId = String(body.requestId || '');
+  const reset = (ctx.state.passwordResetRequests || []).find(r => r.id === requestId && r.role === 'client');
+  if (!reset) throw new HttpError(404, 'Demande client introuvable.', 'RESET_REQUEST_NOT_FOUND');
+  if (ctx.user.role !== 'superadmin' && reset.companyId !== ctx.user.companyId) throw new HttpError(403, 'Cette demande appartient à une autre entreprise.', 'FORBIDDEN');
+  const clientId = String(body.clientId || reset.clientId || reset.userId || '');
+  const client = (ctx.state.marketClients || []).find(c => c.id === clientId && c.companyId === reset.companyId);
+  if (!client) throw new HttpError(404, 'Client introuvable.', 'CLIENT_NOT_FOUND');
+  const temporaryPassword = generateTempPassword();
+  await withStorageRetry(() => writeClientCredential(env, client, temporaryPassword), 4);
+  reset.status = 'done'; reset.doneAt = new Date().toISOString(); reset.doneBy = ctx.user.id;
+  await persistStateDelta(env, { arrays: { passwordResetRequests: { upserts: [reset], deletes: [] } } }, { role: 'system', companyId: client.companyId });
+  await audit(env, 'CLIENT_PASSWORD_RESET', ctx.user.id, client.companyId, client.id, requestIp(request));
+  return json({ success: true, temporaryPassword, client: { id: client.id, name: client.name || '', phone: client.phone || '', email: client.email || '', companyId: client.companyId } });
 }
 
 async function handlePublicOrder(request, env) {
@@ -1971,10 +2061,12 @@ async function handleApi(request, env, executionCtx) {
     if (url.pathname === '/api/users/update' && request.method === 'POST') return await handleUpdateUser(request, env);
     if (url.pathname === '/api/users/delete' && request.method === 'POST') return await handleDeleteUser(request, env);
     if (url.pathname === '/api/users/reset-password' && request.method === 'POST') return await handleResetUserPassword(request, env);
+    if (url.pathname === '/api/clients/reset-password' && request.method === 'POST') return await handleResetClientPassword(request, env);
 
     if (url.pathname === '/api/public/load' && request.method === 'GET') return json(await publicLoadPayload(request, env));
     if (url.pathname === '/api/public/client/register' && request.method === 'POST') return await handlePublicClientRegister(request, env);
     if (url.pathname === '/api/public/client/login' && request.method === 'POST') return await handlePublicClientLogin(request, env);
+    if (url.pathname === '/api/public/client/password-reset/request' && request.method === 'POST') return await handlePublicClientPasswordResetRequest(request, env);
     if (url.pathname === '/api/public/client/session' && request.method === 'DELETE') {
       const sid = getCookie(request, CLIENT_SESSION_COOKIE);
       if (sid) await env.GLOBAL_MARKET_KV.delete(`client-session:${sid}`);
