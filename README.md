@@ -174,3 +174,7 @@ Répertoire racine : vide
 - le nom du programme affiché reste **GLOBAL MARKET** ;
 - le nom de l’entreprise connectée apparaît comme espace entreprise dynamique ;
 - aucune modification de la connexion, de l’inscription, du Super Admin, de KV, de D1 ou du Worker de sécurité.
+
+## V4.8 — Connexion D1 prioritaire
+
+La connexion Administrateur, Caisse et Client utilise désormais D1 en priorité pour les secrets et les sessions. Les anciens secrets KV sont migrés de façon ciblée à leur première utilisation. Les messages et compteurs visibles « service cloud occupé / nouvelle tentative » ont été supprimés de l’interface.

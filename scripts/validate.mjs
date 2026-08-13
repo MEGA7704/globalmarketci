@@ -256,4 +256,27 @@ if (!wrangler.d1_databases?.some(item => item.binding === 'GLOBAL_MARKET_D1')) {
   process.exit(1);
 }
 
+const v48Checks = [
+  ['employee_auth', 'table D1 des authentifications employés'],
+  ['client_auth', 'table D1 des authentifications clients'],
+  ['employee_sessions', 'sessions employés D1'],
+  ['client_sessions', 'sessions clients D1'],
+  ['login_rate_limits', 'limitation de tentatives D1'],
+  ['persistEmployeeAuthRecord', 'double stockage auth D1/KV'],
+  ['readEmployeeSessionD1', 'lecture session D1 avec secours'],
+  ['readClientSessionD1', 'lecture session client D1 avec secours']
+];
+for (const [needle, label] of v48Checks) {
+  if (!worker.includes(needle)) {
+    console.error(`[validate] GLOBAL MARKET V4.8 incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+for (const forbidden of ['Service cloud occupé', 'Le service cloud ne répond pas encore après plusieurs tentatives', 'Le service cloud est momentanément occupé']) {
+  if (app.includes(forbidden)) {
+    console.error(`[validate] Message de connexion technique encore visible : ${forbidden}`);
+    process.exit(1);
+  }
+}
+
 console.log('[validate] Worker, sécurité, KV, D1 et configuration Cloudflare : valides');
