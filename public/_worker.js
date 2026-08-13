@@ -93,6 +93,27 @@ function errorResponse(error) {
   return json({ success: false, error: 'La sauvegarde n’a pas pu être terminée. Réessayez sans fermer la page.', code: 'STORAGE_WRITE_FAILED' }, { status: 500 });
 }
 
+function isTransientStorageFailure(error) {
+  if (!error || error instanceof HttpError) return false;
+  const message = String(error?.message || error?.cause?.message || error || '');
+  return /overload|too many|rate.?limit|quota|temporar|busy|network|connection|timeout|timed out|internal error|service unavailable|reset|D1_ERROR/i.test(message);
+}
+
+async function withStorageRetry(operation, attempts = 4) {
+  let lastError = null;
+  const delays = [120, 300, 700, 1400];
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientStorageFailure(error) || attempt === attempts - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, delays[Math.min(attempt, delays.length - 1)] + Math.floor(Math.random() * 120)));
+    }
+  }
+  throw lastError || new Error('Stockage temporairement indisponible.');
+}
+
 function needBindings(env) {
   if (!env.GLOBAL_MARKET_KV) throw new Error('Binding KV manquant : GLOBAL_MARKET_KV');
   if (!env.GLOBAL_MARKET_D1) throw new Error('Binding D1 manquant : GLOBAL_MARKET_D1');
@@ -730,7 +751,7 @@ async function saveState(env, state) {
   return { state: normalized, d1, storage: 'd1-versioned' };
 }
 
-async function loadState(env, companyId = '*') {
+async function loadBaseState(env) {
   await ensureDB(env);
   let state = await readGlobalStateV2(env);
   if (!state) {
@@ -742,9 +763,14 @@ async function loadState(env, companyId = '*') {
   }
   state = normalizeState(state);
   await ensureLegacyCredentialsMigrated(env, state);
+  return state;
+}
+
+async function loadState(env, companyId = '*') {
+  let state = await loadBaseState(env);
 
   // Les modifications courantes sont lues depuis de petits documents par entreprise.
-  // Un utilisateur normal ne charge que son entreprise, ce qui réduit fortement CPU et mémoire.
+  // Un utilisateur normal ne charge que son entreprise, ce qui réduit fortement CPU, mémoire et risques de 503.
   const snapshots = await readCompanySnapshots(env, companyId === '*' ? null : companyId);
   for (const entry of snapshots) state = applyCompanySnapshot(state, entry.companyId, entry.state);
   state = await applyStoredStatePatches(env, state, companyId);
@@ -903,7 +929,7 @@ async function createEmployeeSession(env, user, auth) {
     loginAt: Date.now(),
     expiresAt: Date.now() + ttl * 1000
   };
-  await env.GLOBAL_MARKET_KV.put(`session:${sid}`, JSON.stringify(session), { expirationTtl: ttl });
+  await withStorageRetry(() => env.GLOBAL_MARKET_KV.put(`session:${sid}`, JSON.stringify(session), { expirationTtl: ttl }), 4);
   return { sid, ttl, session };
 }
 
@@ -1378,7 +1404,7 @@ async function handleDeleteCompany(request, env) {
 
 function publicCompany(company) {
   if (!company) return null;
-  const allowed = ['id', 'name', 'activity', 'phone', 'email', 'address', 'businessType', 'shopSlug', 'shopBanner', 'shopColor', 'marketWaveBusinessLink', 'marketUsdtTrc20', 'status', 'plan', 'planCode', 'subscriptionEnd'];
+  const allowed = ['id', 'name', 'legalForm', 'rccm', 'taxAccount', 'capital', 'logo', 'currency', 'activity', 'phone', 'email', 'address', 'businessType', 'shopSlug', 'shopBanner', 'shopColor', 'marketWaveBusinessLink', 'marketUsdtTrc20', 'status', 'plan', 'planCode', 'subscriptionEnd'];
   return Object.fromEntries(allowed.map(k => [k, company[k]]));
 }
 
@@ -1429,29 +1455,51 @@ async function handleLogin(request, env) {
   const requestedRole = String(body.role || '');
   if (!identifier || !password) throw new HttpError(400, 'Identifiant et mot de passe obligatoires.', 'MISSING_CREDENTIALS');
   const ip = requestIp(request);
-  const rate = await assertLoginRateAllowed(env, ip, identifier);
-  const state = await loadState(env);
+
+  // La connexion ne charge plus toutes les données de toutes les entreprises avant
+  // l'authentification. On lit d'abord uniquement la base légère des profils, puis
+  // seulement les données de l'entreprise authentifiée.
+  const rate = await withStorageRetry(() => assertLoginRateAllowed(env, ip, identifier), 4);
+  const baseState = await withStorageRetry(() => loadBaseState(env), 4);
   const superIdentifier = configuredSuperAdminIdentifier(env);
-  if (superIdentifier && identifier === superIdentifier) await ensureSuperAdminCredential(env, state);
-  const indexedId = await env.GLOBAL_MARKET_KV.get(authIndexKey(identifier));
-  const user = state.users.find(u => u.id === indexedId) || state.users.find(u => normalizeIdentifier(u.email || u.username) === identifier);
-  const auth = user ? await getAuth(env, user.id) : null;
+  if (superIdentifier && identifier === superIdentifier) {
+    await withStorageRetry(() => ensureSuperAdminCredential(env, baseState), 4);
+  }
+
+  const indexedId = await withStorageRetry(() => env.GLOBAL_MARKET_KV.get(authIndexKey(identifier)), 4);
+  let user = baseState.users.find(u => u.id === indexedId) || baseState.users.find(u => normalizeIdentifier(u.email || u.username) === identifier);
+  const auth = user ? await withStorageRetry(() => getAuth(env, user.id), 4) : null;
   const valid = user && user.status === 'active' && await verifyCredential(auth, password);
   if (!valid) {
-    await recordLoginFailure(env, rate);
+    await withStorageRetry(() => recordLoginFailure(env, rate), 4);
     await audit(env, 'LOGIN_FAILED', user?.id || '', user?.companyId || null, 'Échec de connexion', ip);
     await new Promise(resolve => setTimeout(resolve, 250));
     throw new HttpError(401, 'Identifiant ou mot de passe incorrect.', 'INVALID_CREDENTIALS');
   }
+
   if (requestedRole === 'caisse' && user.role !== 'caisse') throw new HttpError(403, 'Profil incorrect : sélectionnez Administrateur.', 'ROLE_MISMATCH');
   if (requestedRole === 'admin' && !['admin', 'superadmin'].includes(user.role)) throw new HttpError(403, 'Profil incorrect : sélectionnez La Caisse.', 'ROLE_MISMATCH');
   if (user.role === 'caisse' && !isCashierInAllowedHours(user)) throw new HttpError(403, 'Accès caisse refusé hors de la plage horaire autorisée.', 'OUTSIDE_ALLOWED_HOURS');
+
+  // Après validation du mot de passe, charger uniquement l'entreprise concernée.
+  // Le Super Admin conserve son chargement global car son rôle l'exige.
+  const state = await withStorageRetry(() => loadState(env, user.role === 'superadmin' ? '*' : user.companyId), 4);
+  user = state.users.find(u => u.id === user.id) || user;
+  if (!user || user.status !== 'active') throw new HttpError(403, 'Compte désactivé ou indisponible.', 'ACCOUNT_DISABLED');
+
   if (user.companyId) {
     const company = state.companies.find(c => c.id === user.companyId);
     const status = companyStatus(company);
     if (['expired', 'blocked', 'suspended'].includes(status)) throw new HttpError(403, `Accès entreprise ${status}.`, 'COMPANY_ACCESS_BLOCKED');
   }
-  await clearLoginRate(env, rate);
+
+  // L'effacement des compteurs de tentative ne doit jamais bloquer une connexion valide.
+  try {
+    await withStorageRetry(() => clearLoginRate(env, rate), 3);
+  } catch (error) {
+    console.warn('Compteurs de connexion non effacés immédiatement', error?.message || error);
+  }
+
   const created = await createEmployeeSession(env, user, auth);
   await audit(env, 'LOGIN_SUCCESS', user.id, user.companyId, 'Connexion réussie', ip);
   return json({
@@ -1740,23 +1788,35 @@ async function handlePublicOrder(request, env) {
     const unit = Number(item.sell || 0);
     orderItems.push({ itemId: item.id, item: item.name, category: item.cat || '', type: isProduct ? 'Produit' : 'Service', qty, unit, total: unit * qty });
   }
+  const subtotal = orderItems.reduce((sum, line) => sum + line.total, 0);
+  const deliveryFeeRate = subtotal <= 0 ? 0 : subtotal <= 4999 ? 0.10 : subtotal <= 24999 ? 0.05 : subtotal <= 99999 ? 0.02 : 0.015;
+  const deliveryFee = Math.round(subtotal * deliveryFeeRate);
+  const total = subtotal + deliveryFee;
+  const method = String(body.paymentMethod || 'PAIEMENT À LA LIVRAISON').slice(0, 50);
+  const payOnDelivery = method.toUpperCase() === 'PAIEMENT À LA LIVRAISON';
+  const paymentRef = String(body.transactionId || body.paymentRef || '').trim().slice(0, 200);
+  if (!payOnDelivery && !paymentRef) throw new HttpError(400, 'Identifiant de transaction obligatoire pour un paiement immédiat.', 'PAYMENT_REFERENCE_REQUIRED');
   for (const line of orderItems) {
     const item = ctx.state.items.find(i => i.id === line.itemId);
     if (line.type === 'Produit' && item.stockType !== 'unlimited') item.stock = Number(item.stock || 0) - line.qty;
   }
-  const total = orderItems.reduce((sum, line) => sum + line.total, 0);
-  const method = String(body.paymentMethod || 'WAVE').slice(0, 50);
   const order = {
     id: `cmd_${crypto.randomUUID()}`, companyId: ctx.client.companyId, clientId: ctx.client.id,
-    client: ctx.client.name, clientPhone: ctx.client.phone, date: new Date().toISOString(), items: orderItems,
-    item: orderItems.map(x => x.item).join(', '), qty: orderItems.reduce((a, x) => a + x.qty, 0), total,
-    paymentMethod: method, paymentCurrency: method === 'WAVE' ? 'FCFA' : 'USD',
-    paymentAmount: method === 'WAVE' ? total : Number((total / 600).toFixed(2)),
-    paymentProofType: String(body.paymentProofType || 'ref'), paymentRef: String(body.paymentRef || '').slice(0, 200),
+    client: ctx.client.name, clientPhone: ctx.client.phone, clientEmail: ctx.client.email || '', date: new Date().toISOString(), items: orderItems,
+    item: orderItems.map(x => x.item).join(', '), qty: orderItems.reduce((a, x) => a + x.qty, 0), subtotal, deliveryFeeRate, deliveryFee, total,
+    paymentMethod: method, paymentTiming: payOnDelivery ? 'delivery' : 'now', paymentStatus: payOnDelivery ? 'À payer à la livraison' : 'Paiement déclaré par le client',
+    paymentCurrency: method === 'USDT TRC20' ? 'USD' : 'FCFA',
+    paymentAmount: method === 'USDT TRC20' ? Number((total / 600).toFixed(2)) : total,
+    transactionId: payOnDelivery ? '' : paymentRef,
+    paymentProofType: payOnDelivery ? 'none' : String(body.paymentProofType || 'transaction_id'), paymentRef: payOnDelivery ? '' : paymentRef,
     paymentCaptureName: String(body.paymentCaptureName || '').slice(0, 200),
     paymentCaptureData: String(body.paymentCaptureData || '').slice(0, 6_000_000),
-    validationStatus: 'En attente de validation', deliveryStatus: 'En cours de livraison', afterSaleStatus: '',
-    delivery: 'En attente de validation', source: 'lot panier boutique client'
+    deliveryRecipient: String(body.deliveryRecipient || ctx.client.name || '').slice(0, 200),
+    deliveryPhone: String(body.deliveryPhone || ctx.client.phone || '').slice(0, 100),
+    deliveryCity: String(body.deliveryCity || '').slice(0, 120), deliveryDistrict: String(body.deliveryDistrict || '').slice(0, 120),
+    deliveryAddress: String(body.deliveryAddress || '').slice(0, 500), deliveryMode: String(body.deliveryMode || 'Livraison standard').slice(0, 120),
+    validationStatus: 'En attente de validation', deliveryStatus: 'En attente de validation', afterSaleStatus: '',
+    delivery: 'En attente de validation', source: 'lot panier boutique client avec frais de livraison'
   };
   ctx.state.orders.push(order);
   const changedItems = orderItems.map(line => ctx.state.items.find(item => item.id === line.itemId)).filter(Boolean);
@@ -1789,6 +1849,47 @@ async function handlePublicOrderDelete(request, env) {
     }
   }, { role: 'system', companyId: ctx.client.companyId });
   return json({ success: true });
+}
+
+
+async function handlePublicOrderAction(request, env) {
+  const ctx = await getClientSession(request, env, true);
+  const body = await readJson(request, 20_000);
+  const order = ctx.state.orders.find(o => String(o.id) === String(body.orderId) && o.clientId === ctx.client.id && o.companyId === ctx.client.companyId);
+  if (!order) throw new HttpError(404, 'Commande introuvable.', 'ORDER_NOT_FOUND');
+  const action = String(body.action || '');
+  const validationStatus = String(order.validationStatus || '').toLowerCase();
+  const deliveryStatus = String(order.deliveryStatus || order.delivery || '').toLowerCase();
+  const afterSaleStatus = String(order.afterSaleStatus || '').toLowerCase();
+  const changedItems = [];
+  if (action === 'cancel') {
+    const alreadyTaken = ['validée', 'validee', 'validé', 'valide', 'terminer'].includes(validationStatus) || deliveryStatus.includes('en cours de livraison') || deliveryStatus.includes('livrée') || deliveryStatus.includes('expédi') || deliveryStatus.includes('expedi');
+    if (alreadyTaken) {
+      throw new HttpError(409, 'Cette commande a déjà été prise en charge et ne peut plus être annulée depuis l’espace client.', 'ORDER_NOT_CANCELLABLE');
+    }
+    if (!order.stockRestored) {
+      for (const line of Array.isArray(order.items) ? order.items : []) {
+        const item = ctx.state.items.find(i => i.id === line.itemId && i.companyId === ctx.client.companyId);
+        if (item && line.type === 'Produit' && item.stockType !== 'unlimited') { item.stock = Number(item.stock || 0) + Number(line.qty || 0); changedItems.push(item); }
+      }
+      order.stockRestored = true;
+    }
+    order.validationStatus = 'Annuler'; order.deliveryStatus = 'Aucune action'; order.afterSaleStatus = 'Annulée'; order.delivery = 'Annulée'; order.cancelledByClientAt = new Date().toISOString();
+  } else if (action === 'confirm_receipt') {
+    if (validationStatus.includes('annul') || deliveryStatus.includes('annul') || afterSaleStatus.includes('rembours')) throw new HttpError(409, 'Une commande annulée ou remboursée ne peut pas être confirmée reçue.', 'ORDER_STATUS_CONFLICT');
+    const deliverable = deliveryStatus.includes('en cours de livraison') || deliveryStatus.includes('livrée') || validationStatus.includes('termin');
+    if (!deliverable) {
+      throw new HttpError(409, 'La commande n’est pas encore en phase de livraison.', 'ORDER_NOT_DELIVERABLE');
+    }
+    order.clientReceptionConfirmed = true; order.clientReceptionConfirmedAt = new Date().toISOString(); order.validationStatus = 'Terminer'; order.deliveryStatus = 'Livrée'; order.delivery = 'Livrée';
+  } else {
+    throw new HttpError(400, 'Action de commande invalide.', 'INVALID_ORDER_ACTION');
+  }
+  await persistStateDelta(env, { arrays: {
+    items: { upserts: changedItems, deletes: [] },
+    orders: { upserts: [order], deletes: [] }
+  } }, { role: 'system', companyId: ctx.client.companyId });
+  return json({ success: true, order: cleanClone(order) });
 }
 
 async function handleApi(request, env, executionCtx) {
@@ -1881,6 +1982,7 @@ async function handleApi(request, env, executionCtx) {
     }
     if (url.pathname === '/api/public/order' && request.method === 'POST') return await handlePublicOrder(request, env);
     if (url.pathname === '/api/public/order/delete' && request.method === 'POST') return await handlePublicOrderDelete(request, env);
+    if (url.pathname === '/api/public/order/action' && request.method === 'POST') return await handlePublicOrderAction(request, env);
 
     throw new HttpError(404, `API introuvable : ${url.pathname}`, 'NOT_FOUND');
   } catch (error) {

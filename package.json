@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "4.4.0",
+  "version": "4.6.0",
   "private": true,
-  "description": "GLOBAL MARKET - popup premium multi-lignes par catégorie vers panier, pagination rapports 30 lignes, caisse épurée et anti-503.",
+  "description": "GLOBAL MARKET - espace client marketplace premium, suivi des commandes, paiement à la livraison sans identifiant et rapport clients avancé.",
   "type": "module",
   "engines": {
     "node": ">=20"

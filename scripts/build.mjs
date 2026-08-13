@@ -44,7 +44,7 @@ fs.writeFileSync(
   path.join(publicDir, 'version.json'),
   `${JSON.stringify({
     app: 'GLOBAL MARKET',
-    version: '4.4.0',
+    version: '4.6.0',
     build: buildId,
     generatedAt: now.toISOString(),
     outputDirectory: 'public'

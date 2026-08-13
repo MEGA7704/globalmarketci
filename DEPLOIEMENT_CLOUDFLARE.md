@@ -10,7 +10,7 @@ Répertoire racine      : vide
 Infrastructure         : Aucun
 ```
 
-## Étapes  
+## Étapes
 
 1. Envoyer tous les fichiers du projet à la racine de la branche `main`.
 2. Vérifier que GitHub crée un nouveau commit.
