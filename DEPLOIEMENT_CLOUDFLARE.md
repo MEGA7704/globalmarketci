@@ -9,7 +9,7 @@ Répertoire de sortie   : public
 Répertoire racine      : vide
 Infrastructure         : Aucun
 ```
-
+  
 ## Étapes
 
 1. Envoyer tous les fichiers du projet à la racine de la branche `main`.
