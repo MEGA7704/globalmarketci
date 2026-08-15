@@ -1725,14 +1725,29 @@ async function handlePublicClientLogin(request, env) {
 }
 
 async function handlePublicOrder(request, env) {
-  const ctx = await getClientSession(request, env, true);
+  assertSameOrigin(request);
   const body = await readJson(request, 8_000_000);
-  if (String(body.companyId || '') !== ctx.client.companyId) throw new HttpError(403, 'Boutique non autorisée.', 'FORBIDDEN');
+  const companyId = String(body.companyId || '').trim();
+  if (!companyId) throw new HttpError(400, 'Boutique invalide.', 'COMPANY_REQUIRED');
+  const state = await loadState(env, companyId);
+  const company = state.companies.find(c => c.id === companyId);
+  if (!company) throw new HttpError(404, 'Boutique introuvable.', 'COMPANY_NOT_FOUND');
+
+  let authenticatedClient = null;
+  try {
+    const ctx = await getClientSession(request, env, false);
+    if (ctx.client?.companyId === companyId) authenticatedClient = ctx.client;
+  } catch {}
+
+  const clientName = String(body.clientName || authenticatedClient?.name || '').trim().slice(0, 180);
+  const clientPhone = normalizePhone(body.clientPhone || authenticatedClient?.phone || '').slice(0, 80);
+  if (!clientName || !clientPhone) throw new HttpError(400, 'Nom et contact du client obligatoires.', 'CUSTOMER_FIELDS_REQUIRED');
+
   const cart = Array.isArray(body.cart) ? body.cart : [];
   if (!cart.length || cart.length > 100) throw new HttpError(400, 'Panier vide ou invalide.', 'INVALID_CART');
   const orderItems = [];
   for (const line of cart) {
-    const item = ctx.state.items.find(i => i.id === line.itemId && i.companyId === ctx.client.companyId && !i.marketplaceHidden);
+    const item = state.items.find(i => i.id === line.itemId && i.companyId === companyId && !i.marketplaceHidden);
     if (!item) throw new HttpError(400, 'Un article du panier est introuvable.', 'ITEM_NOT_FOUND');
     const qty = Math.max(1, Math.min(10000, Number(line.qty || 1)));
     const isProduct = !['service', 'services', 'prestation'].includes(String(item.type || '').toLowerCase());
@@ -1741,29 +1756,44 @@ async function handlePublicOrder(request, env) {
     orderItems.push({ itemId: item.id, item: item.name, category: item.cat || '', type: isProduct ? 'Produit' : 'Service', qty, unit, total: unit * qty });
   }
   for (const line of orderItems) {
-    const item = ctx.state.items.find(i => i.id === line.itemId);
+    const item = state.items.find(i => i.id === line.itemId);
     if (line.type === 'Produit' && item.stockType !== 'unlimited') item.stock = Number(item.stock || 0) - line.qty;
   }
-  const total = orderItems.reduce((sum, line) => sum + line.total, 0);
-  const method = String(body.paymentMethod || 'WAVE').slice(0, 50);
+
+  const subtotal = orderItems.reduce((sum, line) => sum + line.total, 0);
+  const deliveryFeeRate = subtotal <= 0 ? 0 : subtotal <= 4999 ? 0.10 : subtotal <= 24999 ? 0.05 : subtotal <= 99999 ? 0.02 : 0.015;
+  const deliveryFee = Math.round(subtotal * deliveryFeeRate);
+  const total = subtotal + deliveryFee;
+  const method = String(body.paymentMethod || 'PAIEMENT À LA LIVRAISON').slice(0, 50);
+  const payOnDelivery = method === 'PAIEMENT À LA LIVRAISON';
+  const paymentRef = String(body.paymentRef || '').trim().slice(0, 200);
+  if (!payOnDelivery && !paymentRef) throw new HttpError(400, 'Identifiant de transaction obligatoire pour un paiement immédiat.', 'PAYMENT_REFERENCE_REQUIRED');
+
   const order = {
-    id: `cmd_${crypto.randomUUID()}`, companyId: ctx.client.companyId, clientId: ctx.client.id,
-    client: ctx.client.name, clientPhone: ctx.client.phone, date: new Date().toISOString(), items: orderItems,
-    item: orderItems.map(x => x.item).join(', '), qty: orderItems.reduce((a, x) => a + x.qty, 0), total,
-    paymentMethod: method, paymentCurrency: method === 'WAVE' ? 'FCFA' : 'USD',
-    paymentAmount: method === 'WAVE' ? total : Number((total / 600).toFixed(2)),
-    paymentProofType: String(body.paymentProofType || 'ref'), paymentRef: String(body.paymentRef || '').slice(0, 200),
+    id: `cmd_${crypto.randomUUID()}`, companyId,
+    clientId: authenticatedClient?.id || `guest_${crypto.randomUUID()}`,
+    client: clientName, clientPhone, date: new Date().toISOString(), items: orderItems,
+    item: orderItems.map(x => x.item).join(', '), qty: orderItems.reduce((a, x) => a + x.qty, 0),
+    subtotal, deliveryFeeRate, deliveryFee, total,
+    paymentMethod: method, paymentTiming: payOnDelivery ? 'delivery' : 'now',
+    paymentStatus: payOnDelivery ? 'À payer à la livraison' : 'Paiement déclaré par le client',
+    paymentCurrency: method === 'USDT TRC20' ? 'USD' : 'FCFA',
+    paymentAmount: method === 'USDT TRC20' ? Number((total / 600).toFixed(2)) : total,
+    transactionId: payOnDelivery ? '' : paymentRef,
+    paymentProofType: payOnDelivery ? 'none' : String(body.paymentProofType || 'transaction_id').slice(0, 50),
+    paymentRef: payOnDelivery ? '' : paymentRef,
     paymentCaptureName: String(body.paymentCaptureName || '').slice(0, 200),
     paymentCaptureData: String(body.paymentCaptureData || '').slice(0, 6_000_000),
-    validationStatus: 'En attente de validation', deliveryStatus: 'En cours de livraison', afterSaleStatus: '',
-    delivery: 'En attente de validation', source: 'lot panier boutique client'
+    validationStatus: 'En attente de validation', deliveryStatus: 'En attente de validation', afterSaleStatus: '',
+    delivery: 'En attente de validation',
+    source: authenticatedClient ? 'lot panier boutique client connecté avec frais de livraison' : 'lot panier boutique client invité avec frais de livraison'
   };
-  ctx.state.orders.push(order);
-  const changedItems = orderItems.map(line => ctx.state.items.find(item => item.id === line.itemId)).filter(Boolean);
+  state.orders.push(order);
+  const changedItems = orderItems.map(line => state.items.find(item => item.id === line.itemId)).filter(Boolean);
   await persistStateDelta(env, { arrays: {
     items: { upserts: changedItems, deletes: [] },
     orders: { upserts: [order], deletes: [] }
-  } }, { role: 'system', companyId: ctx.client.companyId });
+  } }, { role: 'system', companyId });
   return json({ success: true, order: cleanClone(order) }, { status: 201 });
 }
 
