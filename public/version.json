@@ -1,7 +1,7 @@
 {
   "app": "GLOBAL MARKET",
-  "version": "4.6.0",
-  "build": "2026.08.18-dashboard-v4.6",
-  "generatedAt": "2026-08-18T16:30:00.000Z",
+  "version": "4.7.0",
+  "build": "2026.08.18-59e8c4df6fb3",
+  "generatedAt": "2026-08-18T16:38:21.565Z",
   "outputDirectory": "public"
 }
