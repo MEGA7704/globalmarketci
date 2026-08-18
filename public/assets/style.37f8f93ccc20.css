@@ -4720,3 +4720,129 @@ body.registerModalOpen{overflow:hidden!important}
 .publicCustomerHelp{margin:10px 0 0;color:#668078;font-size:11px;font-weight:700}
 @media(max-width:640px){.publicCustomerFields{grid-template-columns:1fr}.officialNavSimplified{min-height:44px}.officialNavSimplified .officialNavRight{display:flex!important;width:100%;justify-content:flex-end}}
 .officialNavSimplified .officialNavRight{display:flex!important}
+
+
+/* === GLOBAL MARKET Dashboard ERP premium V4.6 === */
+.g2app{background:#F8FAFC!important}
+.g2topbar{position:sticky!important;top:0!important;z-index:1000!important}
+.g2main.dashboardMain{width:min(1480px,96vw)!important;margin:20px auto 72px!important}
+.g2main.dashboardMain>.companyLine{display:none!important}
+#home .erpDash{display:grid;gap:18px}
+#home .erpDash *{box-sizing:border-box}
+#home .erpDashHeader{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+#home .erpDashHeading h1{margin:0;color:#17212B;font-size:36px;line-height:1.05;font-weight:800;letter-spacing:-.03em}
+#home .erpDashHeading p{margin:6px 0 0;color:#667085;font-size:14px;font-weight:500}
+#home .erpDashFilters{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#home .erpDashControl{height:48px;display:inline-flex;align-items:center;gap:10px;background:#fff;border:1px solid #E5E7EB;border-radius:14px;padding:0 15px;color:#667085;box-shadow:0 4px 14px rgba(23,33,43,.04);font:600 14px/1 Inter,Poppins,Manrope,Arial,sans-serif}
+#home .erpDashControl input{border:0!important;outline:0!important;box-shadow:none!important;padding:0!important;background:transparent!important;min-width:190px;color:#17212B!important}
+#home .erpDashSearch{min-width:250px}
+#home .erpDashPeriod{color:#17212B}
+#home .erpControlIcon{font-size:16px;color:#98A2B3}
+#home .erpControlArrow{color:#98A2B3;font-size:14px}
+#home .erpKpiGrid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:16px}
+#home .erpCard{background:#fff;border:1px solid #E5E7EB;border-radius:18px;box-shadow:0 8px 24px rgba(23,33,43,.05);padding:18px}
+#home .erpKpiCard{display:flex;flex-direction:column;gap:14px;min-height:176px}
+#home .erpKpiTop{display:flex;align-items:flex-start;gap:14px}
+#home .erpKpiTop>div{min-width:0}
+#home .erpKpiTop h3{margin:2px 0 8px;color:#667085;font-size:14px;font-weight:600}
+#home .erpKpiTop strong{display:block;color:#17212B;font-size:18px;line-height:1.2;font-weight:800}
+#home .erpIconBubble{width:54px;height:54px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;flex:0 0 auto}
+#home .erpIconBubble.green{background:rgba(22,160,93,.14);color:#16A05D}
+#home .erpIconBubble.blue{background:rgba(38,132,232,.14);color:#2684E8}
+#home .erpIconBubble.violet{background:rgba(138,77,232,.14);color:#8A4DE8}
+#home .erpIconBubble.orange{background:rgba(243,146,0,.15);color:#F39200}
+#home .erpIconBubble.gold{background:rgba(242,182,50,.18);color:#C28B02}
+#home .erpIconBubble.turquoise{background:rgba(21,156,156,.14);color:#159C9C}
+#home .erpKpiMeta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:#667085;font-size:13px;font-weight:600}
+#home .erpUp{color:#16A05D;font-weight:800}
+#home .erpUp b{font-size:14px}
+#home .erpSparkWrap{margin-top:auto;height:40px}
+#home .erpSparkSvg{width:100%;height:40px}
+#home .erpAnalyticsGrid{display:grid;grid-template-columns:1.18fr 1fr 1.12fr;gap:18px;align-items:stretch}
+#home .erpCardHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+#home .erpCardHead h2{margin:0;color:#17212B;font-size:17px;font-weight:800;letter-spacing:-.01em}
+#home .erpHeadPill{height:34px;border-radius:10px;border:1px solid #E5E7EB;background:#fff;color:#667085;padding:0 12px;font-size:12px;font-weight:700}
+#home .erpSalesStats{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:16px}
+#home .erpSalesStats span{display:block;color:#667085;font-size:12px;font-weight:600}
+#home .erpSalesStats strong{display:block;color:#17212B;font-size:18px;font-weight:800;margin-top:4px}
+#home .erpSalesDelta{text-align:right}
+#home .erpSalesDelta b{display:block;color:#16A05D;font-size:16px;font-weight:800}
+#home .erpSalesDelta small{color:#667085;font-size:12px;font-weight:600}
+#home .erpLineChartBlock{display:grid;grid-template-columns:42px 1fr;gap:8px;align-items:stretch}
+#home .erpYAxis{display:flex;flex-direction:column;justify-content:space-between;padding:6px 0 24px;color:#98A2B3;font-size:12px;font-weight:700}
+#home .erpLineArea{display:grid;grid-template-rows:1fr auto;gap:6px;min-width:0}
+#home .erpLineSvg{width:100%;height:250px}
+#home .erpLineSvg .erpGrid line{stroke:#EEF2F6;stroke-width:1}
+#home .erpXAxis{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;color:#98A2B3;font-size:12px;font-weight:700}
+#home .erpXAxis span{text-align:center}
+#home .erpDonutLayout{display:grid;grid-template-columns:minmax(220px,270px) 1fr;gap:18px;align-items:center}
+#home .erpDonutWrap{position:relative;width:min(250px,100%);aspect-ratio:1/1;margin:auto}
+#home .erpDonutSvg{width:100%;height:100%}
+#home .erpDonutCenter{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+#home .erpDonutCenter span{color:#667085;font-size:13px;font-weight:700}
+#home .erpDonutCenter strong{color:#17212B;font-size:27px;font-weight:800;line-height:1.1}
+#home .erpDonutCenter small{color:#667085;font-size:13px;font-weight:700}
+#home .erpLegendList{display:grid;gap:12px}
+#home .erpLegendItem{display:grid;grid-template-columns:12px 1fr auto;gap:10px;align-items:center}
+#home .erpLegendDot{width:9px;height:9px;border-radius:50%}
+#home .erpLegendText b{display:block;color:#17212B;font-size:14px;font-weight:700}
+#home .erpLegendText small{display:block;color:#667085;font-size:12px;margin-top:4px}
+#home .erpLegendValue{color:#17212B;font-size:13px;font-weight:800}
+#home .erpBarsTopScale{display:flex;justify-content:space-between;color:#98A2B3;font-size:12px;font-weight:700;margin:4px 0 8px}
+#home .erpBarsWrap{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px;align-items:end;height:284px;padding-top:14px}
+#home .erpBarItem{display:grid;grid-template-rows:1fr auto;gap:8px;height:100%}
+#home .erpBarTrack{height:100%;background:linear-gradient(180deg,rgba(22,160,93,.08),rgba(22,160,93,.03));border-radius:12px;position:relative;overflow:hidden}
+#home .erpBarFill{position:absolute;left:0;right:0;bottom:0;border-radius:12px 12px 4px 4px;box-shadow:0 10px 18px rgba(22,160,93,.16)}
+#home .erpBarItem small{text-align:center;color:#98A2B3;font-size:11px;font-weight:700}
+#home .erpBottomGrid{display:grid;grid-template-columns:1.04fr 1fr 1.08fr;gap:18px;align-items:start}
+#home .erpQuickGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+#home .erpQuickAction{position:relative;text-align:left;display:flex;flex-direction:column;gap:8px;min-height:126px;border-radius:16px;border:1px solid #E5E7EB;background:#fff;padding:16px;box-shadow:0 4px 14px rgba(23,33,43,.03);color:#17212B}
+#home .erpQuickAction:hover{transform:translateY(-1px);box-shadow:0 10px 20px rgba(23,33,43,.07)}
+#home .erpQuickIcon{width:40px;height:40px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;font-size:19px}
+#home .erpQuickIcon.green{background:rgba(22,160,93,.12);color:#16A05D}
+#home .erpQuickIcon.orange{background:rgba(243,146,0,.12);color:#F39200}
+#home .erpQuickIcon.turquoise{background:rgba(21,156,156,.12);color:#159C9C}
+#home .erpQuickIcon.violet{background:rgba(138,77,232,.12);color:#8A4DE8}
+#home .erpQuickIcon.gold{background:rgba(242,182,50,.16);color:#C28B02}
+#home .erpQuickIcon.blue{background:rgba(38,132,232,.12);color:#2684E8}
+#home .erpQuickAction b{font-size:15px;font-weight:800}
+#home .erpQuickAction small{color:#667085;font-size:12px;font-weight:600;max-width:160px}
+#home .erpQuickAction em{position:absolute;right:14px;bottom:12px;color:#98A2B3;font-size:20px;font-style:normal}
+#home .erpLinkBtn{border:0;background:transparent;color:#2684E8;font-size:13px;font-weight:700;padding:0;box-shadow:none}
+#home .erpActivityList{display:grid;gap:12px}
+#home .erpActivityRow{display:grid;grid-template-columns:40px 1fr auto auto;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid #F1F5F9}
+#home .erpActivityRow:last-child{border-bottom:0;padding-bottom:0}
+#home .erpActivityIcon,#home .erpAnnualIcon{width:34px;height:34px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:16px;font-weight:800}
+#home .erpActivityIcon.green,#home .erpAnnualIcon.green{background:rgba(22,160,93,.12);color:#16A05D}
+#home .erpActivityIcon.violet,#home .erpAnnualIcon.violet{background:rgba(138,77,232,.12);color:#8A4DE8}
+#home .erpActivityIcon.orange{background:rgba(243,146,0,.12);color:#F39200}
+#home .erpActivityIcon.gold,#home .erpAnnualIcon.gold{background:rgba(242,182,50,.16);color:#C28B02}
+#home .erpActivityIcon.blue,#home .erpAnnualIcon.blue{background:rgba(38,132,232,.12);color:#2684E8}
+#home .erpAnnualIcon.turquoise{background:rgba(21,156,156,.12);color:#159C9C}
+#home .erpActivityMain b{display:block;color:#17212B;font-size:14px;font-weight:800}
+#home .erpActivityMain small{display:block;margin-top:4px;color:#667085;font-size:12px;font-weight:600}
+#home .erpActivityBadge{padding:6px 10px;border-radius:999px;font-size:11px;font-weight:800}
+#home .erpActivityBadge.green{background:rgba(22,160,93,.11);color:#16A05D}
+#home .erpActivityBadge.violet{background:rgba(138,77,232,.11);color:#8A4DE8}
+#home .erpActivityBadge.orange{background:rgba(243,146,0,.11);color:#F39200}
+#home .erpActivityBadge.gold{background:rgba(242,182,50,.16);color:#B98100}
+#home .erpActivityBadge.blue{background:rgba(38,132,232,.11);color:#2684E8}
+#home .erpActivityRow time{color:#98A2B3;font-size:12px;font-weight:700}
+#home .erpAnnualList{display:grid;gap:16px}
+#home .erpAnnualRow{display:grid;gap:10px}
+#home .erpAnnualTop{display:grid;grid-template-columns:minmax(160px,1fr) auto auto;gap:14px;align-items:center}
+#home .erpAnnualLabel{display:flex;align-items:center;gap:10px;color:#17212B;font-size:14px;font-weight:800}
+#home .erpAnnualValue{color:#17212B;font-size:18px;font-weight:800;text-align:right}
+#home .erpAnnualChange{text-align:right}
+#home .erpAnnualChange strong{display:block;color:#16A05D;font-size:14px;font-weight:800}
+#home .erpAnnualChange small{color:#98A2B3;font-size:12px;font-weight:700}
+#home .erpProgress{height:8px;border-radius:999px;background:#EEF2F6;overflow:hidden}
+#home .erpProgress span{display:block;height:100%;border-radius:999px}
+#home .erpProgress span.green{background:#16A05D}
+#home .erpProgress span.gold{background:#F2B632}
+#home .erpProgress span.blue{background:#2684E8}
+#home .erpProgress span.violet{background:#8A4DE8}
+#home .erpProgress span.turquoise{background:#159C9C}
+@media (max-width:1400px){#home .erpKpiGrid{grid-template-columns:repeat(3,minmax(0,1fr))}#home .erpAnalyticsGrid{grid-template-columns:1fr}#home .erpBottomGrid{grid-template-columns:1fr}#home .erpQuickGrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:980px){.g2main.dashboardMain{width:96vw!important}#home .erpDashHeader{align-items:flex-start}#home .erpDashFilters{width:100%}#home .erpDashControl{width:100%;justify-content:flex-start}#home .erpDashSearch{min-width:0}#home .erpDashControl input{min-width:0;width:100%}#home .erpKpiGrid{grid-template-columns:repeat(2,minmax(0,1fr))}#home .erpDonutLayout{grid-template-columns:1fr}#home .erpQuickGrid{grid-template-columns:repeat(2,minmax(0,1fr))}#home .erpAnnualTop{grid-template-columns:1fr;justify-items:start}#home .erpAnnualValue,#home .erpAnnualChange{text-align:left}}
+@media (max-width:720px){#home .erpDashHeading h1{font-size:28px}#home .erpKpiGrid{grid-template-columns:1fr}#home .erpQuickGrid{grid-template-columns:1fr}#home .erpLineChartBlock{grid-template-columns:1fr}#home .erpYAxis{display:none}#home .erpLineSvg{height:200px}#home .erpBarsWrap{gap:8px;height:230px}#home .erpActivityRow{grid-template-columns:40px 1fr;align-items:flex-start}#home .erpActivityBadge,#home .erpActivityRow time{grid-column:2/3}#home .erpActivityBadge{width:max-content}}

@@ -1553,6 +1553,120 @@ function filterSalePosCards(){
   }
 }
 
+
+function gmDashSparkline(points=[],color='#16A05D'){
+  const vals=(points||[]).map(v=>Number(v||0));
+  const w=132,h=36,p=2,max=Math.max(...vals,1),min=Math.min(...vals,0),range=Math.max(max-min,1);
+  const coords=vals.map((v,i)=>{const x=p+(i*(w-p*2))/Math.max(vals.length-1,1); const y=h-p-((v-min)/range)*(h-p*2); return [x,y]});
+  const line=coords.map(c=>c[0].toFixed(1)+','+c[1].toFixed(1)).join(' ');
+  return `<svg class="erpSparkSvg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke="${color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" points="${line}"></polyline>${coords.map(c=>`<circle cx="${c[0].toFixed(1)}" cy="${c[1].toFixed(1)}" r="2.1" fill="${color}"></circle>`).join('')}</svg>`;
+}
+function gmDashLineArea(points=[],color='#16A05D',maxY=3000000){
+  const vals=(points||[]).map(v=>Number(v||0));
+  const w=520,h=220,pL=18,pR=12,pT=12,pB=18,max=maxY||Math.max(...vals,1),min=0,range=Math.max(max-min,1);
+  const coords=vals.map((v,i)=>{const x=pL+(i*(w-pL-pR))/Math.max(vals.length-1,1); const y=pT+((max-v)/range)*(h-pT-pB); return [x,y]});
+  const line=coords.map(c=>c[0].toFixed(1)+','+c[1].toFixed(1)).join(' ');
+  const area=`${pL},${h-pB} `+line+` ${w-pR},${h-pB}`;
+  return `<svg class="erpLineSvg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="erpAreaGradient" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity="0.22"></stop><stop offset="100%" stop-color="${color}" stop-opacity="0.03"></stop></linearGradient></defs><g class="erpGrid"><line x1="${pL}" y1="${pT}" x2="${w-pR}" y2="${pT}"/><line x1="${pL}" y1="${pT+(h-pT-pB)/3}" x2="${w-pR}" y2="${pT+(h-pT-pB)/3}"/><line x1="${pL}" y1="${pT+2*(h-pT-pB)/3}" x2="${w-pR}" y2="${pT+2*(h-pT-pB)/3}"/><line x1="${pL}" y1="${h-pB}" x2="${w-pR}" y2="${h-pB}"/></g><polygon points="${area}" fill="url(#erpAreaGradient)"></polygon><polyline fill="none" stroke="${color}" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" points="${line}"></polyline>${coords.map(c=>`<circle cx="${c[0].toFixed(1)}" cy="${c[1].toFixed(1)}" r="4.4" fill="#fff" stroke="${color}" stroke-width="2.6"></circle>`).join('')}</svg>`;
+}
+function gmDashDonut(slices=[],colors=[]){
+  const total=(slices||[]).reduce((a,b)=>a+Number(b||0),0)||1, r=68, c=2*Math.PI*r; let acc=0;
+  const segs=slices.map((v,i)=>{const pct=Number(v||0)/total; const len=pct*c; const dash=`${len} ${c-len}`; const off=-acc*c; acc+=pct; return `<circle cx="100" cy="100" r="${r}" fill="none" stroke="${colors[i]||'#ddd'}" stroke-width="28" stroke-dasharray="${dash}" stroke-dashoffset="${off}" transform="rotate(-90 100 100)" stroke-linecap="butt"></circle>`}).join('');
+  return `<svg class="erpDonutSvg" viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="100" r="${r}" fill="none" stroke="#EEF2F6" stroke-width="28"></circle>${segs}</svg>`;
+}
+function gmDashBars(values=[],labels=[],color='#16A05D',maxY=450){
+  const max=Math.max(maxY||0,...(values||[]).map(v=>Number(v||0)),1);
+  return `<div class="erpBarsWrap">${(values||[]).map((v,i)=>{const n=Number(v||0),h=Math.max(10,(n/max)*100); return `<div class="erpBarItem"><div class="erpBarTrack"><span class="erpBarFill" style="height:${h.toFixed(2)}%;background:${color}"></span></div><small>${esc(labels[i]||'')}</small></div>`}).join('')}</div>`;
+}
+function gmDashboardHomeHTML(ctx={}){
+  const dashboardDate='18 mai 2026';
+  const kpis=[
+    {tone:'green',icon:'↗',label:'Chiffre d\'affaires',value:'8 450 000 FCFA',change:'+22,6%',compare:'vs hier',color:'#16A05D',series:[12,12,16,19,17,20,22,19,24,29]},
+    {tone:'blue',icon:'🛒',label:'Commandes',value:'156',change:'+14,1%',compare:'vs hier',color:'#2684E8',series:[9,12,10,13,13,16,12,15,13,15]},
+    {tone:'violet',icon:'👥',label:'Clients actifs',value:'128',change:'+12,5%',compare:'vs hier',color:'#8A4DE8',series:[8,11,9,12,11,14,12,13,11,12]},
+    {tone:'orange',icon:'📦',label:'Produits en stock',value:'1 358',change:'+7,3%',compare:'vs hier',color:'#F39200',series:[10,13,12,15,14,16,13,15,14,12]},
+    {tone:'gold',icon:'₣',label:'Bénéfice',value:'2 142 108 FCFA',change:'+18,9%',compare:'vs hier',color:'#F2B632',series:[8,10,9,13,11,14,14,17,15,20]},
+    {tone:'turquoise',icon:'➚',label:'Croissance',value:'+18,4%',change:'',compare:'vs période précédente',color:'#159C9C',series:[6,7,6,10,7,11,10,14,13,18]}
+  ];
+  const perfLabels=['12 mai','13 mai','14 mai','15 mai','16 mai','17 mai','18 mai'];
+  const perfValues=[700000,800000,1400000,1900000,2500000,1850000,2350000];
+  const donutLabels=[
+    {name:'Électronique',pct:'32%',amount:'2 704 000 FCFA',color:'#16A05D'},
+    {name:'Maison & Bureau',pct:'24%',amount:'2 028 000 FCFA',color:'#59A8F3'},
+    {name:'Mode & Accessoires',pct:'18%',amount:'1 521 000 FCFA',color:'#8A4DE8'},
+    {name:'Beauté & Santé',pct:'14%',amount:'1 183 000 FCFA',color:'#F2B632'},
+    {name:'Autres',pct:'12%',amount:'1 014 000 FCFA',color:'#D2D6DB'}
+  ];
+  const monthlyLabels=['Janv','Févr','Mars','Avr','Mai','Juin','Juil','Août','Sept','Oct','Nov','Déc'];
+  const monthlyValues=[220,305,250,295,405,215,210,335,270,305,415,190];
+  const quickActions=[
+    {icon:'🛒',tone:'green',title:'Nouvelle commande',sub:'Créer une commande',action:"show('vente')"},
+    {icon:'📦',tone:'orange',title:'Ajouter un produit',sub:'Enregistrer un produit',action:"show('stocks')"},
+    {icon:'📈',tone:'turquoise',title:'Rapport de ventes',sub:'Voir les ventes détaillées',action:"show('rapports')"},
+    {icon:'👥',tone:'violet',title:'Gérer les clients',sub:'Voir tous les clients',action:"show('contrats')"},
+    {icon:'🚚',tone:'gold',title:'Mouvement de stock',sub:'Entrées / Sorties',action:"show('stocks')"},
+    {icon:'⚙',tone:'blue',title:'Paramètres',sub:'Configuration générale',action:"show('param')"}
+  ];
+  const activities=[
+    {icon:'🛒',tone:'green',title:'Commande #CMD-2026-0489',sub:'Montant : 126 000 FCFA',badge:'Complétée',time:'10:24'},
+    {icon:'👤',tone:'violet',title:'Nouveau client inscrit',sub:'Client : Société ABC',badge:'Nouveau',time:'09:41'},
+    {icon:'📦',tone:'orange',title:'Stock mis à jour',sub:'Produit : iPhone 15 Pro',badge:'Stock',time:'09:15'},
+    {icon:'₣',tone:'gold',title:'Paiement reçu',sub:'Montant : 850 000 FCFA',badge:'Paiement',time:'08:52'},
+    {icon:'📄',tone:'blue',title:'Rapport généré',sub:'Rapport des ventes – Mai 2026',badge:'Rapport',time:'08:30'}
+  ];
+  const annual=[
+    {icon:'₣',tone:'green',label:'Chiffre d\'affaires',value:'102 000 136 FCFA',change:'+24,6% ↗',compare:'vs 2025',progress:88},
+    {icon:'◎',tone:'gold',label:'Bénéfice net',value:'21 242 108 FCFA',change:'+18,9% ↗',compare:'vs 2025',progress:54},
+    {icon:'▣',tone:'blue',label:'Commandes',value:'10 842',change:'+16,7% ↗',compare:'vs 2025',progress:43},
+    {icon:'👥',tone:'violet',label:'Clients actifs',value:'1 582',change:'+13,2% ↗',compare:'vs 2025',progress:58},
+    {icon:'◈',tone:'turquoise',label:'Produits en stock',value:'1 358',change:'+7,3% ↗',compare:'vs 2025',progress:49}
+  ];
+  return `<section id="home" class="section ${ctx.sec==='home'?'active':''}">
+    <div class="erpDash">
+      <header class="erpDashHeader">
+        <div class="erpDashHeading"><h1>TABLEAU DE BORD</h1><p>Vue d’ensemble de votre activité et de vos indicateurs clés.</p></div>
+        <div class="erpDashFilters">
+          <label class="erpDashControl erpDashSearch"><span class="erpControlIcon">⌕</span><input type="search" placeholder="Rechercher..."></label>
+          <button type="button" class="erpDashControl"><span class="erpControlIcon">📅</span><span>${dashboardDate}</span></button>
+          <button type="button" class="erpDashControl erpDashPeriod"><span>Période : Aujourd’hui</span><span class="erpControlArrow">▾</span></button>
+        </div>
+      </header>
+      <section class="erpKpiGrid">${kpis.map(card=>`<article class="erpCard erpKpiCard"><div class="erpKpiTop"><span class="erpIconBubble ${card.tone}">${card.icon}</span><div><h3>${card.label}</h3><strong>${card.value}</strong></div></div><div class="erpKpiMeta">${card.change?`<span class="erpUp">${card.change} <b>↗</b></span>`:''}<span>${card.compare}</span></div><div class="erpSparkWrap">${gmDashSparkline(card.series,card.color)}</div></article>`).join('')}</section>
+      <section class="erpAnalyticsGrid">
+        <article class="erpCard erpSalesCard">
+          <div class="erpCardHead"><div><h2>Performance des ventes</h2></div><button type="button" class="erpHeadPill">7 derniers jours <span>▾</span></button></div>
+          <div class="erpSalesStats"><div><span>Total des ventes</span><strong>8 450 000 FCFA</strong></div><div class="erpSalesDelta"><b>+22,6% ↗</b><small>vs période précédente</small></div></div>
+          <div class="erpLineChartBlock"><div class="erpYAxis"><span>3M</span><span>2M</span><span>1M</span><span>0</span></div><div class="erpLineArea">${gmDashLineArea(perfValues,'#16A05D',3000000)}<div class="erpXAxis">${perfLabels.map(l=>`<span>${l}</span>`).join('')}</div></div></div>
+        </article>
+        <article class="erpCard erpDonutCard">
+          <div class="erpCardHead"><h2>Répartition des ventes par catégorie</h2></div>
+          <div class="erpDonutLayout"><div class="erpDonutWrap">${gmDashDonut([32,24,18,14,12],donutLabels.map(x=>x.color))}<div class="erpDonutCenter"><span>Total</span><strong>8 450 000</strong><small>FCFA</small></div></div><div class="erpLegendList">${donutLabels.map(item=>`<div class="erpLegendItem"><span class="erpLegendDot" style="background:${item.color}"></span><div class="erpLegendText"><b>${item.name}</b><small>${item.amount}</small></div><div class="erpLegendValue">${item.pct}</div></div>`).join('')}</div></div>
+        </article>
+        <article class="erpCard erpBarsCard">
+          <div class="erpCardHead"><div><h2>Commandes mensuelles</h2></div><button type="button" class="erpHeadPill">2026 <span>▾</span></button></div>
+          <div class="erpSalesStats"><div><strong>1 842</strong><span>Total commandes</span></div><div class="erpSalesDelta"><b>+16,7% ↗</b><small>vs 2025</small></div></div>
+          <div class="erpBarsTopScale"><span>450</span><span>300</span><span>150</span><span>0</span></div>
+          ${gmDashBars(monthlyValues,monthlyLabels,'#16A05D',450)}
+        </article>
+      </section>
+      <section class="erpBottomGrid">
+        <article class="erpCard">
+          <div class="erpCardHead"><h2>Actions rapides</h2></div>
+          <div class="erpQuickGrid">${quickActions.map(item=>`<button type="button" class="erpQuickAction" onclick="${item.action}"><span class="erpQuickIcon ${item.tone}">${item.icon}</span><b>${item.title}</b><small>${item.sub}</small><em>›</em></button>`).join('')}</div>
+        </article>
+        <article class="erpCard">
+          <div class="erpCardHead"><h2>Dernières activités</h2><button type="button" class="erpLinkBtn">Voir tout</button></div>
+          <div class="erpActivityList">${activities.map(item=>`<div class="erpActivityRow"><span class="erpActivityIcon ${item.tone}">${item.icon}</span><div class="erpActivityMain"><b>${item.title}</b><small>${item.sub}</small></div><span class="erpActivityBadge ${item.tone}">${item.badge}</span><time>${item.time}</time></div>`).join('')}</div>
+        </article>
+        <article class="erpCard">
+          <div class="erpCardHead"><h2>Résumé annuel 2026</h2><button type="button" class="erpLinkBtn" onclick="show('mois')">Voir le rapport complet</button></div>
+          <div class="erpAnnualList">${annual.map(row=>`<div class="erpAnnualRow"><div class="erpAnnualTop"><div class="erpAnnualLabel"><span class="erpAnnualIcon ${row.tone}">${row.icon}</span><b>${row.label}</b></div><div class="erpAnnualValue">${row.value}</div><div class="erpAnnualChange"><strong>${row.change}</strong><small>${row.compare}</small></div></div><div class="erpProgress"><span class="${row.tone}" style="width:${row.progress}%"></span></div></div>`).join('')}</div>
+        </article>
+      </section>
+    </div>
+  </section>`;
+}
+
 function renderDash(sec='home'){
   if(sec==='panier') sec='vente';
   const {d,user,company}=current(), cid=company.id;
@@ -1572,82 +1686,8 @@ function renderDash(sec='home'){
   const sevenDayPoints=msDashboardLastSevenDays(sales);
   const admin=user.role==='admin';
   if(!admin && ['stocks','mois','param'].includes(sec)) sec='home';
-  shell(`<section id="home" class="section ${sec==='home'?'active':''}">
-    <div class="msDashboard">
-      <header class="msDashboardHeader">
-        <div class="msDashboardBrand">
-          <div class="msDashboardLogo" aria-hidden="true">GM</div>
-          <div><h1>GLOBAL MARKET</h1><p>Votre plateforme de gestion complète</p><small class="msDashboardCompanyName">Espace entreprise : ${esc(company.name||'Entreprise')}</small></div>
-        </div>
-        <div class="msDashboardHeaderRight">
-          <div class="msPlanCard"><span>${esc(planDef(company).label)}</span><b>Fin : ${new Date((company.subscriptionEnd||today())+'T12:00:00').toLocaleDateString('fr-FR')}</b></div>
-          <div class="msHeaderIcons">
-            <button type="button" aria-label="Notifications" onclick="g3Alert('Aucune nouvelle notification pour le moment.','Notifications','info')">🔔</button>
-            <button type="button" aria-label="Aide" onclick="g3Alert('Consultez les différentes sections ou contactez le support GLOBAL MARKET.','Centre d’aide','info')">?</button>
-          </div>
-          <div class="msProfileCard"><span class="msProfileAvatar">${esc(String(user.name||'A').trim().charAt(0).toUpperCase()||'A')}</span><div><strong>${esc(user.name||'Admin')}</strong><small>${admin?'Super administrateur':'Utilisateur caisse'}</small></div></div>
-          ${admin?'<button type="button" class="msCustomizeBtn" onclick="showAccountPage()">Personnaliser</button>':''}
-        </div>
-      </header>
-
-      <section class="msDashboardPanel msQuickAccessPanel">
-        <div class="msSectionTitle"><span></span><div><h2>ACCÈS RAPIDE</h2><p>Accédez immédiatement aux principales fonctions de gestion.</p></div></div>
-        <div class="msQuickGrid">
-          ${msDashboardQuickCard({tone:'green',icon:'🛒',title:'Nouvelle commande',description:'Créer et enregistrer une nouvelle commande rapidement',metric:`${todaySales.length} Aujourd’hui`,action:"show('vente')"})}
-          ${msDashboardQuickCard({tone:'gold',icon:'▤',title:'Rapport général',description:'Consulter les rapports généraux et analyses d’activité',metric:'12 Rapports',action:"show('rapports')"})}
-          ${msDashboardQuickCard({tone:'lime',icon:'👥',title:'Clients contrat',description:'Gérer les clients sous contrat et suivre leurs informations',metric:`${clients.length} Clients actifs`,action:"show('contrats')"})}
-          ${msDashboardQuickCard({tone:'forest',icon:'🛍',title:'Marketplace',description:'Gérer la boutique, les commandes et les produits clients',metric:`${marketOrders.length} Commandes`,action:"show('marketplace')",disabled:!admin})}
-          ${msDashboardQuickCard({tone:'purple',icon:'⚙',title:'Paramètres',description:'Configurer les paramètres système et les préférences de l’application',metric:'15 Configurations',action:"show('param')",disabled:!admin})}
-          ${msDashboardQuickCard({tone:'green',icon:'📦',title:company.businessType==='service'?'Stock services':'Stock boutique',description:'Gérer les produits, les stocks et les mouvements de la boutique',metric:`${productItems.length} Produits`,action:"show('stocks')",disabled:!admin})}
-          ${msDashboardQuickCard({tone:'gold',icon:'📅',title:'Gestion 12 mois',description:'Suivre et analyser la gestion sur une période de 12 mois',metric:'En cours — Période active',action:"show('mois')",disabled:!admin})}
-          ${msDashboardQuickCard({tone:'blue',icon:'👤',title:'Utilisateurs',description:'Gérer les utilisateurs, les rôles et les droits d’accès',metric:`${users.length} Utilisateurs`,action:'showAccountUsersPage()',disabled:!admin})}
-        </div>
-      </section>
-
-      <section class="msDashboardLowerGrid">
-        <article class="msDashboardPanel msSummaryBlock">
-          <div class="msBlockHead"><h2>RÉSUMÉ DU JOUR</h2><button type="button" onclick="show('rapports')">Voir détails</button></div>
-          <div class="msMiniGrid">
-            ${msDashboardMiniStat('🛒',todaySales.length,'Commandes','green')}
-            ${msDashboardMiniStat('₣',money(caDay),'Total ventes','gold')}
-            ${msDashboardMiniStat('📦',todayQty,'Articles vendus','purple')}
-            ${msDashboardMiniStat('👥',newClientsToday,'Nouveaux clients','blue')}
-          </div>
-          <div class="msRecentActivity"><h3>Activités récentes</h3>
-            <div><span class="msDot green"></span>${todaySales.length?`${todaySales.length} commande(s) enregistrée(s) aujourd’hui`:'Aucune commande enregistrée aujourd’hui'}</div>
-            <div><span class="msDot gold"></span>${caDay?`${money(caDay)} de ventes enregistrées aujourd’hui`:'Aucune vente enregistrée aujourd’hui'}</div>
-            <div><span class="msDot purple"></span>${todayQty?`${todayQty} article(s) vendu(s) aujourd’hui`:'Aucun article vendu aujourd’hui'}</div>
-            <div><span class="msDot blue"></span>${newClientsToday?`${newClientsToday} nouveau(x) client(s) aujourd’hui`:'Aucun nouveau client aujourd’hui'}</div>
-          </div>
-        </article>
-
-        <article class="msDashboardPanel msPerformanceBlock">
-          <div class="msBlockHead"><h2>PERFORMANCE</h2><select aria-label="Période de performance"><option>Aujourd’hui</option><option>7 derniers jours</option><option>Ce mois</option></select></div>
-          <div class="msMiniGrid">
-            ${msDashboardMiniStat('₣',money(caDay),'CA du jour','green')}
-            ${msDashboardMiniStat('🛒',todaySales.length,'Commandes','gold')}
-            ${msDashboardMiniStat('👥',newClientsToday,'Nouveaux clients','blue')}
-            ${msDashboardMiniStat('📦',todayQty,'Articles vendus','purple')}
-          </div>
-          <div class="msChartWrap"><h3>ÉVOLUTION DES VENTES (7 DERNIERS JOURS)</h3>${msDashboardSalesChart(sevenDayPoints)}</div>
-          <button type="button" class="msPrimaryAction" onclick="show('rapports')">VOIR PERFORMANCE DÉTAILLÉE <span>→</span></button>
-        </article>
-
-        <article class="msDashboardPanel msYearBlock">
-          <div class="msBlockHead"><h2>RÉSUMÉ ANNÉE ${manageYear}</h2><button type="button" onclick="show('mois')">Voir rapport complet</button></div>
-          <div class="msYearList">
-            <div><span class="msYearIcon green">₣</span><p>Total ventes année<small>Chiffre global enregistré</small></p><strong>${money(ca)}</strong></div>
-            <div><span class="msYearIcon blue">▤</span><p>CA total<small>Année de gestion active</small></p><strong>${money(ca)}</strong></div>
-            <div><span class="msYearIcon purple">↗</span><p>Bénéfice total<small>Résultat estimé</small></p><strong>${money(profit)}</strong></div>
-            <div><span class="msYearIcon gold">👥</span><p>Clients contrat<small>Clients suivis</small></p><strong>${clients.length}</strong></div>
-            <div><span class="msYearIcon green">📦</span><p>Produits en stock<small>Références disponibles</small></p><strong>${productItems.length}</strong></div>
-          </div>
-          <button type="button" class="msPrimaryAction" onclick="show('mois')">VOIR RAPPORT ANNUEL DÉTAILLÉ <span>→</span></button>
-        </article>
-      </section>
-      <div class="msDashboardFooterDate">Mise à jour : ${new Date().toLocaleDateString('fr-FR')} — Exercice actif : ${monthsList[activeMonth]} ${manageYear}</div>
-    </div>
-  </section>
+  const dashboardHome=gmDashboardHomeHTML({sec,company,user,admin,clients,items,productItems,sales,marketOrders});
+  shell(`${dashboardHome}
   <section id="vente" class="section ${sec==='vente'?'active':''}"><div class="g2panel salePosPanel"><h2><span></span> Vente / Caisse enregistreuse</h2>${saleCashRegisterSection(items,clients,cartSales)}</div></section>
   <section id="stocks" class="section printable ${sec==='stocks'?'active':''}">${stockSection(admin?items:[],admin,admin?sales:[])}</section>
   <section id="rapports" class="section printable ${sec==='rapports'?'active':''}"><div class="g2panel"><div class="reportActions"><button onclick="renderDash('rapports')">Actualiser le rapport</button><button onclick="openServiceReportPdfPage()">Imprimer / PDF</button>${admin?'<button onclick="showBilan()">Rapport bilan détaillé</button><button onclick="showBilanJourPage()">BILAN JOUR</button>':''}</div><div class="reportBox"><h1>RAPPORT GÉNÉRAL DÉTAILLÉ DES SERVICES VENDUS</h1><h3>${esc(company.name)} — GLOBAL MARKET — Exercice actif : ${monthsList[activeMonth]} ${manageYear}</h3>${serviceReport(items,sales,admin)}<div id="serviceReportTotalLine" class="totalLine">TOTAL EXERCICE ${monthsList[activeMonth]} ${manageYear} : ${money(exerciseCa)}${admin?' | Bénéfice : '+money(exerciseProfit):''}</div></div></div></section>

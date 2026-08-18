@@ -1,1 +1,1 @@
-window.GLOBAL_MARKET_BUILD="2026.08.15-37f8f93ccc20";
+window.GLOBAL_MARKET_BUILD="2026.08.18-dashboard-v4.6";
