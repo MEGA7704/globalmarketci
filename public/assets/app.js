@@ -5228,7 +5228,10 @@ async function securePublicPost(path,payload={}){
 function secureErrorMessage(error,fallback='Opération sécurisée impossible.'){
   if(error?.status===429) return error.message||'Trop de tentatives. Réessayez plus tard.';
   if(error?.code==='SETUP_REQUIRED') return 'Les secrets Cloudflare SUPER_ADMIN_EMAIL et SUPER_ADMIN_INITIAL_PASSWORD doivent être configurés avant la première connexion Super Admin.';
-  return error?.message||fallback;
+  if(error?.name==='AbortError') return 'La connexion a pris trop de temps ou a été interrompue. Vérifiez votre connexion internet puis réessayez.';
+  const msg=String(error?.message||'').trim();
+  if(/operation was aborted/i.test(msg)||/failed to fetch/i.test(msg)||/network/i.test(msg)) return 'Connexion au serveur impossible pour le moment. Vérifiez votre réseau puis réessayez.';
+  return msg||fallback;
 }
 async function openGlobalShopLogin(){
   location.hash=GLOBAL_MARKET_LOGIN_LINKS.boutiqueHash;

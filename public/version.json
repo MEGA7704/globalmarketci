@@ -1,7 +1,7 @@
 {
   "app": "GLOBAL MARKET",
-  "version": "4.7.0",
-  "build": "2026.08.18-59e8c4df6fb3",
-  "generatedAt": "2026-08-18T16:38:21.565Z",
+  "version": "4.7.1",
+  "build": "2026.08.18-v4.7.1-fullwidth-loginfix",
+  "generatedAt": "2026-08-18T16:45:00.000Z",
   "outputDirectory": "public"
 }
