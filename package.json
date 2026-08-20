@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "4.8.0",
+  "version": "5.0.0",
   "private": true,
-  "description": "GLOBAL MARKET - accueil marketplace premium produits & services, popups boutique/client, catalogue filtrable et pagination.",
+  "description": "GLOBAL MARKET - menus distincts par rôle, compte client global, panier unique multi-boutiques et répartition automatique des commandes par administrateur.",
   "type": "module",
   "engines": {
     "node": ">=20"

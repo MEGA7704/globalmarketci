@@ -16,6 +16,7 @@ const KV_STATE_MAX_BYTES = 20_000_000;
 const MAX_STATE_BYTES = 60_000_000;
 const PATCH_RECORD_MAX_BYTES = 1_250_000;
 const PATCH_GLOBAL_SCOPE = '__global__';
+const GLOBAL_CLIENT_SCOPE = '__global_clients__';
 const LEGACY_CREDENTIAL_MIGRATION_KEY = 'security:credentials:migrated:v4';
 let dbReadyPromise = null;
 let legacyMigrationChecked = false;
@@ -199,6 +200,7 @@ function authKey(userId) { return `auth:user:${userId}`; }
 function authIndexKey(identifier) { return `auth:index:${normalizeIdentifier(identifier)}`; }
 function clientAuthKey(clientId) { return `auth:client:${clientId}`; }
 function clientIndexKey(companyId, phone) { return `auth:client-index:${companyId}:${normalizePhone(phone)}`; }
+function globalClientIndexKey(phone) { return clientIndexKey(GLOBAL_CLIENT_SCOPE, phone); }
 
 async function getAuth(env, userId) {
   return env.GLOBAL_MARKET_KV.get(authKey(userId), 'json');
@@ -951,16 +953,24 @@ async function getClientSession(request, env, requireCsrf = false) {
   const sid = getCookie(request, CLIENT_SESSION_COOKIE);
   if (!sid) throw new HttpError(401, 'Connexion client requise.', 'CLIENT_UNAUTHENTICATED');
   const session = await env.GLOBAL_MARKET_KV.get(`client-session:${sid}`, 'json');
-  if (!session || Number(session.expiresAt || 0) <= Date.now()) throw new HttpError(401, 'Session client expirée.', 'CLIENT_SESSION_EXPIRED');
+  if (!session || Number(session.expiresAt || 0) <= Date.now()) {
+    if (sid) await env.GLOBAL_MARKET_KV.delete(`client-session:${sid}`);
+    throw new HttpError(401, 'Session client expirée.', 'CLIENT_SESSION_EXPIRED');
+  }
   if (requireCsrf) {
     assertSameOrigin(request);
     const csrf = request.headers.get('X-CSRF-Token') || '';
     if (!csrf || !constantTimeEqual(csrf, session.csrfToken)) throw new HttpError(403, 'Jeton de sécurité client invalide.', 'CSRF_REJECTED');
   }
-  const state = await loadState(env, session.companyId);
-  const client = state.marketClients.find(c => c.id === session.clientId && c.companyId === session.companyId);
+  // Le compte client GLOBAL MARKET n'appartient plus à une boutique particulière.
+  // On charge donc l'état global afin de retrouver le même client et ses commandes multi-boutiques.
+  const state = await loadState(env, '*');
+  const client = state.marketClients.find(c => c.id === session.clientId);
   const auth = client ? await getClientAuth(env, client.id) : null;
-  if (!client || !auth || Number(auth.version) !== Number(session.authVersion)) throw new HttpError(401, 'Session client invalidée.', 'CLIENT_SESSION_INVALIDATED');
+  if (!client || !auth || Number(auth.version) !== Number(session.authVersion)) {
+    await env.GLOBAL_MARKET_KV.delete(`client-session:${sid}`);
+    throw new HttpError(401, 'Session client invalidée.', 'CLIENT_SESSION_INVALIDATED');
+  }
   return { sid, session, state, client, auth };
 }
 
@@ -1388,7 +1398,7 @@ function publicItem(item) {
 }
 
 async function publicLoadPayload(request, env) {
-  const state = await loadState(env);
+  const state = await loadState(env, '*');
   const payload = {
     companies: state.companies.map(publicCompany),
     items: state.items.map(publicItem),
@@ -1400,7 +1410,7 @@ async function publicLoadPayload(request, env) {
   try {
     const clientAuth = await getClientSession(request, env, false);
     payload.marketClients = [cleanClone(clientAuth.client)];
-    payload.orders = state.orders.filter(o => o.companyId === clientAuth.client.companyId && o.clientId === clientAuth.client.id).map(cleanClone);
+    payload.orders = state.orders.filter(o => o.clientId === clientAuth.client.id).map(cleanClone);
     payload.clientDeletedOrders[clientAuth.client.id] = (state.clientDeletedOrders || {})[clientAuth.client.id] || [];
     payload.clientSession = publicClientSessionView(clientAuth.session);
   } catch {
@@ -1681,19 +1691,26 @@ async function handleResetUserPassword(request, env) {
 async function handlePublicClientRegister(request, env) {
   assertSameOrigin(request);
   const body = await readJson(request, 50_000);
-  const state = await loadState(env);
-  const companyId = String(body.companyId || '');
-  if (!state.companies.some(c => c.id === companyId)) throw new HttpError(404, 'Boutique introuvable.', 'COMPANY_NOT_FOUND');
+  const state = await loadState(env, '*');
   const name = String(body.name || '').trim();
   const phone = normalizePhone(body.phone);
   const email = normalizeIdentifier(body.email);
   const password = validatePassword(body.password, 'client');
   if (!name || !phone) throw new HttpError(400, 'Nom et téléphone obligatoires.', 'MISSING_FIELDS');
-  if (await env.GLOBAL_MARKET_KV.get(clientIndexKey(companyId, phone))) throw new HttpError(409, 'Ce téléphone est déjà inscrit.', 'PHONE_EXISTS');
-  const client = { id: `clt_${crypto.randomUUID()}`, companyId, name, phone, email, createdAt: new Date().toISOString() };
+  if (await env.GLOBAL_MARKET_KV.get(globalClientIndexKey(phone))) throw new HttpError(409, 'Ce téléphone possède déjà un compte client GLOBAL MARKET.', 'PHONE_EXISTS');
+  if ((state.marketClients || []).some(c => normalizePhone(c?.phone) === phone)) {
+    throw new HttpError(409, 'Ce téléphone est déjà inscrit. Utilisez la connexion pour récupérer votre compte client GLOBAL MARKET.', 'PHONE_EXISTS');
+  }
+  const client = {
+    id: `clt_${crypto.randomUUID()}`,
+    companyId: GLOBAL_CLIENT_SCOPE,
+    scope: 'global',
+    name, phone, email,
+    createdAt: new Date().toISOString()
+  };
   state.marketClients.push(client);
   await writeClientCredential(env, client, password);
-  await persistStateDelta(env, { arrays: { marketClients: { upserts: [client], deletes: [] } } }, { role: 'system', companyId });
+  await persistStateDelta(env, { arrays: { marketClients: { upserts: [client], deletes: [] } } }, { role: 'system', companyId: GLOBAL_CLIENT_SCOPE });
   const created = await createClientSession(env, client, await getClientAuth(env, client.id));
   return json({ success: true, client: cleanClone(client), session: publicClientSessionView(created.session) }, {
     status: 201,
@@ -1704,15 +1721,36 @@ async function handlePublicClientRegister(request, env) {
 async function handlePublicClientLogin(request, env) {
   assertSameOrigin(request);
   const body = await readJson(request, 30_000);
-  const companyId = String(body.companyId || '');
   const phone = normalizePhone(body.phone);
   const password = String(body.password || '');
   const ip = requestIp(request);
-  const rate = await assertLoginRateAllowed(env, ip, `client:${companyId}:${phone}`);
-  const state = await loadState(env);
-  const clientId = await env.GLOBAL_MARKET_KV.get(clientIndexKey(companyId, phone));
-  const client = state.marketClients.find(c => c.id === clientId && c.companyId === companyId);
-  const auth = client ? await getClientAuth(env, client.id) : null;
+  const rate = await assertLoginRateAllowed(env, ip, `client:global:${phone}`);
+  const state = await loadState(env, '*');
+  let clientId = await env.GLOBAL_MARKET_KV.get(globalClientIndexKey(phone));
+  let client = state.marketClients.find(c => c.id === clientId);
+  let auth = client ? await getClientAuth(env, client.id) : null;
+
+  // Compatibilité : un ancien compte client créé dans une boutique peut être converti
+  // automatiquement en compte GLOBAL MARKET lors de sa première connexion réussie.
+  if (!client) {
+    const legacyCandidates = (state.marketClients || []).filter(c => normalizePhone(c?.phone) === phone);
+    for (const candidate of legacyCandidates) {
+      const candidateAuth = await getClientAuth(env, candidate.id);
+      if (candidateAuth && await verifyCredential(candidateAuth, password)) {
+        const oldCompanyId = candidate.companyId;
+        candidate.companyId = GLOBAL_CLIENT_SCOPE;
+        candidate.scope = 'global';
+        client = candidate;
+        auth = candidateAuth;
+        if (oldCompanyId && oldCompanyId !== GLOBAL_CLIENT_SCOPE) await env.GLOBAL_MARKET_KV.delete(clientIndexKey(oldCompanyId, phone));
+        await env.GLOBAL_MARKET_KV.put(globalClientIndexKey(phone), candidate.id);
+        candidateAuth.companyId = GLOBAL_CLIENT_SCOPE;
+        await env.GLOBAL_MARKET_KV.put(clientAuthKey(candidate.id), JSON.stringify(candidateAuth));
+        await persistStateDelta(env, { arrays: { marketClients: { upserts: [candidate], deletes: [] } } }, { role: 'system', companyId: GLOBAL_CLIENT_SCOPE });
+        break;
+      }
+    }
+  }
   if (!client || !(await verifyCredential(auth, password))) {
     await recordLoginFailure(env, rate);
     throw new HttpError(401, 'Téléphone ou mot de passe incorrect.', 'INVALID_CREDENTIALS');
@@ -1726,98 +1764,100 @@ async function handlePublicClientLogin(request, env) {
 
 async function handlePublicOrder(request, env) {
   assertSameOrigin(request);
+  const ctx = await getClientSession(request, env, true);
   const body = await readJson(request, 8_000_000);
-  const companyId = String(body.companyId || '').trim();
-  if (!companyId) throw new HttpError(400, 'Boutique invalide.', 'COMPANY_REQUIRED');
-  const state = await loadState(env, companyId);
-  const company = state.companies.find(c => c.id === companyId);
-  if (!company) throw new HttpError(404, 'Boutique introuvable.', 'COMPANY_NOT_FOUND');
-
-  let authenticatedClient = null;
-  try {
-    const ctx = await getClientSession(request, env, false);
-    if (ctx.client?.companyId === companyId) authenticatedClient = ctx.client;
-  } catch {}
-
-  const clientName = String(body.clientName || authenticatedClient?.name || '').trim().slice(0, 180);
-  const clientPhone = normalizePhone(body.clientPhone || authenticatedClient?.phone || '').slice(0, 80);
-  if (!clientName || !clientPhone) throw new HttpError(400, 'Nom et contact du client obligatoires.', 'CUSTOMER_FIELDS_REQUIRED');
-
+  const state = ctx.state;
+  const client = ctx.client;
   const cart = Array.isArray(body.cart) ? body.cart : [];
   if (!cart.length || cart.length > 100) throw new HttpError(400, 'Panier vide ou invalide.', 'INVALID_CART');
-  const orderItems = [];
+
+  const grouped = new Map();
   for (const line of cart) {
-    const item = state.items.find(i => i.id === line.itemId && i.companyId === companyId && !i.marketplaceHidden);
+    const item = state.items.find(i => i.id === line.itemId && !i.marketplaceHidden);
     if (!item) throw new HttpError(400, 'Un article du panier est introuvable.', 'ITEM_NOT_FOUND');
+    const company = state.companies.find(c => c.id === item.companyId);
+    if (!company) throw new HttpError(400, 'La boutique d’un article est introuvable.', 'COMPANY_NOT_FOUND');
     const qty = Math.max(1, Math.min(10000, Number(line.qty || 1)));
     const isProduct = !['service', 'services', 'prestation'].includes(String(item.type || '').toLowerCase());
     if (isProduct && item.stockType !== 'unlimited' && Number(item.stock || 0) < qty) throw new HttpError(409, `Stock insuffisant pour : ${item.name}`, 'INSUFFICIENT_STOCK');
     const unit = Number(item.sell || 0);
-    orderItems.push({ itemId: item.id, item: item.name, category: item.cat || '', type: isProduct ? 'Produit' : 'Service', qty, unit, total: unit * qty });
-  }
-  for (const line of orderItems) {
-    const item = state.items.find(i => i.id === line.itemId);
-    if (line.type === 'Produit' && item.stockType !== 'unlimited') item.stock = Number(item.stock || 0) - line.qty;
+    const orderLine = { itemId: item.id, item: item.name, category: item.cat || '', type: isProduct ? 'Produit' : 'Service', qty, unit, total: unit * qty };
+    if (!grouped.has(item.companyId)) grouped.set(item.companyId, { company, lines: [], changedItems: [] });
+    grouped.get(item.companyId).lines.push(orderLine);
   }
 
-  const subtotal = orderItems.reduce((sum, line) => sum + line.total, 0);
-  const deliveryFeeRate = subtotal <= 0 ? 0 : subtotal <= 4999 ? 0.10 : subtotal <= 24999 ? 0.05 : subtotal <= 99999 ? 0.02 : 0.015;
-  const deliveryFee = Math.round(subtotal * deliveryFeeRate);
-  const total = subtotal + deliveryFee;
   const method = String(body.paymentMethod || 'PAIEMENT À LA LIVRAISON').slice(0, 50);
+  if (grouped.size > 1 && method !== 'PAIEMENT À LA LIVRAISON') {
+    throw new HttpError(400, 'Pour une commande contenant plusieurs boutiques, utilisez le paiement à la livraison.', 'MULTI_SHOP_PAYMENT_RESTRICTED');
+  }
   const payOnDelivery = method === 'PAIEMENT À LA LIVRAISON';
   const paymentRef = String(body.paymentRef || '').trim().slice(0, 200);
   if (!payOnDelivery && !paymentRef) throw new HttpError(400, 'Identifiant de transaction obligatoire pour un paiement immédiat.', 'PAYMENT_REFERENCE_REQUIRED');
 
-  const order = {
-    id: `cmd_${crypto.randomUUID()}`, companyId,
-    clientId: authenticatedClient?.id || `guest_${crypto.randomUUID()}`,
-    client: clientName, clientPhone, date: new Date().toISOString(), items: orderItems,
-    item: orderItems.map(x => x.item).join(', '), qty: orderItems.reduce((a, x) => a + x.qty, 0),
-    subtotal, deliveryFeeRate, deliveryFee, total,
-    paymentMethod: method, paymentTiming: payOnDelivery ? 'delivery' : 'now',
-    paymentStatus: payOnDelivery ? 'À payer à la livraison' : 'Paiement déclaré par le client',
-    paymentCurrency: method === 'USDT TRC20' ? 'USD' : 'FCFA',
-    paymentAmount: method === 'USDT TRC20' ? Number((total / 600).toFixed(2)) : total,
-    transactionId: payOnDelivery ? '' : paymentRef,
-    paymentProofType: payOnDelivery ? 'none' : String(body.paymentProofType || 'transaction_id').slice(0, 50),
-    paymentRef: payOnDelivery ? '' : paymentRef,
-    paymentCaptureName: String(body.paymentCaptureName || '').slice(0, 200),
-    paymentCaptureData: String(body.paymentCaptureData || '').slice(0, 6_000_000),
-    validationStatus: 'En attente de validation', deliveryStatus: 'En attente de validation', afterSaleStatus: '',
-    delivery: 'En attente de validation',
-    source: authenticatedClient ? 'lot panier boutique client connecté avec frais de livraison' : 'lot panier boutique client invité avec frais de livraison'
-  };
-  state.orders.push(order);
-  const changedItems = orderItems.map(line => state.items.find(item => item.id === line.itemId)).filter(Boolean);
-  await persistStateDelta(env, { arrays: {
-    items: { upserts: changedItems, deletes: [] },
-    orders: { upserts: [order], deletes: [] }
-  } }, { role: 'system', companyId });
-  return json({ success: true, order: cleanClone(order) }, { status: 201 });
+  const checkoutId = `achat_${crypto.randomUUID()}`;
+  const now = new Date().toISOString();
+  const createdOrders = [];
+  let grandTotal = 0;
+  for (const [companyId, group] of grouped) {
+    const orderItems = group.lines;
+    for (const line of orderItems) {
+      const item = state.items.find(i => i.id === line.itemId && i.companyId === companyId);
+      if (line.type === 'Produit' && item?.stockType !== 'unlimited') item.stock = Number(item.stock || 0) - line.qty;
+      if (item) group.changedItems.push(item);
+    }
+    const subtotal = orderItems.reduce((sum, line) => sum + line.total, 0);
+    const deliveryFeeRate = subtotal <= 0 ? 0 : subtotal <= 4999 ? 0.10 : subtotal <= 24999 ? 0.05 : subtotal <= 99999 ? 0.02 : 0.015;
+    const deliveryFee = Math.round(subtotal * deliveryFeeRate);
+    const total = subtotal + deliveryFee;
+    grandTotal += total;
+    const order = {
+      id: `cmd_${crypto.randomUUID()}`,
+      checkoutId,
+      companyId,
+      shopName: group.company?.name || 'Boutique',
+      clientId: client.id,
+      client: client.name,
+      clientPhone: client.phone,
+      clientEmail: client.email || '',
+      date: now,
+      items: orderItems,
+      item: orderItems.map(x => x.item).join(', '),
+      qty: orderItems.reduce((a, x) => a + x.qty, 0),
+      subtotal, deliveryFeeRate, deliveryFee, total,
+      paymentMethod: method,
+      paymentTiming: payOnDelivery ? 'delivery' : 'now',
+      paymentStatus: payOnDelivery ? 'À payer à la livraison' : 'Paiement déclaré par le client',
+      paymentCurrency: method === 'USDT TRC20' ? 'USD' : 'FCFA',
+      paymentAmount: method === 'USDT TRC20' ? Number((total / 600).toFixed(2)) : total,
+      transactionId: payOnDelivery ? '' : paymentRef,
+      paymentProofType: payOnDelivery ? 'none' : String(body.paymentProofType || 'transaction_id').slice(0, 50),
+      paymentRef: payOnDelivery ? '' : paymentRef,
+      paymentCaptureName: String(body.paymentCaptureName || '').slice(0, 200),
+      paymentCaptureData: String(body.paymentCaptureData || '').slice(0, 6_000_000),
+      validationStatus: 'En attente de validation',
+      deliveryStatus: 'En attente de validation',
+      afterSaleStatus: '',
+      delivery: 'En attente de validation',
+      source: 'commande GLOBAL MARKET multi-boutiques client connecté'
+    };
+    state.orders.push(order);
+    createdOrders.push(order);
+    await persistStateDelta(env, { arrays: {
+      items: { upserts: group.changedItems, deletes: [] },
+      orders: { upserts: [order], deletes: [] }
+    } }, { role: 'system', companyId });
+  }
+  return json({ success: true, checkoutId, orders: createdOrders.map(cleanClone), grandTotal }, { status: 201 });
 }
 
 async function handlePublicOrderDelete(request, env) {
   const ctx = await getClientSession(request, env, true);
   const body = await readJson(request, 20_000);
-  const order = ctx.state.orders.find(o => o.id === body.orderId && o.clientId === ctx.client.id && o.companyId === ctx.client.companyId);
+  const order = ctx.state.orders.find(o => o.id === body.orderId && o.clientId === ctx.client.id);
   if (!order) throw new HttpError(404, 'Commande introuvable.', 'ORDER_NOT_FOUND');
   order.clientDeletedIds = order.clientDeletedIds || [];
   if (!order.clientDeletedIds.includes(ctx.client.id)) order.clientDeletedIds.push(ctx.client.id);
-  ctx.client.deletedOrderIds = ctx.client.deletedOrderIds || [];
-  if (!ctx.client.deletedOrderIds.includes(order.id)) ctx.client.deletedOrderIds.push(order.id);
-  ctx.state.clientDeletedOrders = ctx.state.clientDeletedOrders || {};
-  ctx.state.clientDeletedOrders[ctx.client.id] = ctx.state.clientDeletedOrders[ctx.client.id] || [];
-  if (!ctx.state.clientDeletedOrders[ctx.client.id].includes(order.id)) ctx.state.clientDeletedOrders[ctx.client.id].push(order.id);
-  await persistStateDelta(env, {
-    arrays: {
-      orders: { upserts: [order], deletes: [] },
-      marketClients: { upserts: [ctx.client], deletes: [] }
-    },
-    objects: {
-      clientDeletedOrders: { upserts: [{ recordId: ctx.client.id, companyId: ctx.client.companyId, value: ctx.state.clientDeletedOrders[ctx.client.id] }], deletes: [] }
-    }
-  }, { role: 'system', companyId: ctx.client.companyId });
+  await persistStateDelta(env, { arrays: { orders: { upserts: [order], deletes: [] } } }, { role: 'system', companyId: order.companyId });
   return json({ success: true });
 }
 
