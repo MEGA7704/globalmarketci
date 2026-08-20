@@ -1,1 +1,1 @@
-window.GLOBAL_MARKET_BUILD="2026.08.20-v4.8.1-global-market-home-premium";
+window.GLOBAL_MARKET_BUILD="2026.08.20-32cb8d678cc0";
