@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "private": true,
-  "description": "GLOBAL MARKET - menus distincts par rôle, compte client global, panier unique multi-boutiques et répartition automatique des commandes par administrateur.",
+  "description": "GLOBAL MARKET - suppression des pages d'exemple et de l'ancienne connexion, catalogue réel cliquable avec détail produit, panier client unique multi-boutiques et liens légaux.",
   "type": "module",
   "engines": {
     "node": ">=20"
