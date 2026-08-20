@@ -3150,7 +3150,7 @@ async function addItem(){
   save(d); document.querySelector('.stockModalBackdrop')?.remove(); alert(eid?'Produit/service modifié avec succès.':'Produit/service enregistré avec succès.'); window.g3StockTab='products'; renderDash('stocks');
 }
 function editItem(iid){openStockItemPopup(iid)}
-async function deleteItem(iid){if(!requireAdmin('La caisse ne peut pas supprimer les stocks.')) return;const {d,company}=current(); const it=(d.items||[]).find(i=>i.id===iid&&i.companyId===company.id); if(!it) return alert('Élément introuvable.'); if(!(await g3Confirm('Supprimer cet élément du stock ? L’historique des ventes déjà effectuées restera conservé dans les rapports.','Suppression stock sécurisée'))) return; d.items=d.items.filter(i=>!(i.id===iid&&i.companyId===company.id)); save(d); alert('Élément supprimé du stock. Historique des ventes conservé.'); renderDash('stocks')}
+async function deleteItemLegacy(iid){if(!requireAdmin('La caisse ne peut pas supprimer les stocks.')) return;const {d,company}=current(); const it=(d.items||[]).find(i=>i.id===iid&&i.companyId===company.id); if(!it) return alert('Élément introuvable.'); if(!(await g3Confirm('Supprimer cet élément du stock ? L’historique des ventes déjà effectuées restera conservé dans les rapports.','Suppression stock sécurisée'))) return; d.items=d.items.filter(i=>!(i.id===iid&&i.companyId===company.id)); save(d); alert('Élément supprimé du stock. Historique des ventes conservé.'); renderDash('stocks')}
 
 function legacy1_clearItemForm(){
   ['pEdit','pName','pDetail','pBuy','pSell','pServicePrice','pStock','pAlert','pCharge','pPhotoData'].forEach(k=>{const el=$('#'+k); if(el) el.value=(k==='pAlert'?5:k==='pStock'?0:k==='pCharge'?30:'')});
@@ -4230,27 +4230,96 @@ async function fakeCustomerOrder(iid){const {d,company}=current(); const it=(d.i
 async function updateOrderStatus(oid){const {d,company}=current(); const o=(d.orders||[]).find(x=>x.id===oid&&x.companyId===company.id); if(!o) return; const st=await g3Prompt('Statut livraison :',o.delivery||'Commande reçue','Statut livraison'); if(st){o.delivery=st; save(d); showMarketplacePage();}}
 
 
+
+function getGlobalMarketplaceClientStore(){ const d=seed(); d.globalMarketplaceClients=Array.isArray(d.globalMarketplaceClients)?d.globalMarketplaceClients:[]; return d; }
+function getGlobalMarketplaceClientSession(){ try{return JSON.parse(localStorage.getItem('GLOBAL_MARKET_PUBLIC_CLIENT_SESSION')||'null')}catch(_){return null} }
+function setGlobalMarketplaceClientSession(payload){ if(payload) localStorage.setItem('GLOBAL_MARKET_PUBLIC_CLIENT_SESSION',JSON.stringify(payload)); else localStorage.removeItem('GLOBAL_MARKET_PUBLIC_CLIENT_SESSION'); }
+function openGlobalMarketSellerPopup(){
+  const html=`<div class="marketPayModalBackdrop" id="globalSellerAccessModal"><div class="marketPayModal clientAuthModal globalAccessModal"><button class="marketPayClose" onclick="document.getElementById('globalSellerAccessModal')?.remove()">×</button><h2>Espace entreprise GLOBAL MARKET</h2><p>Créez votre boutique pour publier vos produits et services, ou connectez-vous à votre espace professionnel.</p><div class="marketPayActions"><button onclick="document.getElementById('globalSellerAccessModal')?.remove();openCompanyRegistrationFromShop()">Créer ma boutique</button><button class="btn2" onclick="document.getElementById('globalSellerAccessModal')?.remove();location.hash='';renderLogin()">Se connecter</button></div></div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+function openGlobalMarketClientPopup(mode='register'){
+  document.getElementById('globalClientAccessModal')?.remove();
+  const session=getGlobalMarketplaceClientSession();
+  const registerActive=mode!=='login';
+  const html=`<div class="marketPayModalBackdrop" id="globalClientAccessModal"><div class="marketPayModal clientAuthModal globalAccessModal"><button class="marketPayClose" onclick="document.getElementById('globalClientAccessModal')?.remove()">×</button><h2>Compte client GLOBAL MARKET</h2><p>Créez un compte client ou connectez-vous pour retrouver plus facilement vos informations sur la marketplace.</p><div class="globalClientTabs"><button type="button" class="${registerActive?'active':''}" onclick="switchGlobalMarketClientTab('register')">Créer un compte</button><button type="button" class="${!registerActive?'active':''}" onclick="switchGlobalMarketClientTab('login')">Se connecter</button></div><div id="globalMarketClientTabRegister" class="globalClientTab ${registerActive?'active':''}"><label>Nom complet<input id="gmClientName" placeholder="Nom et prénom"></label><label>Téléphone<input id="gmClientPhone" placeholder="Ex : 0700000000"></label><label>Email<input id="gmClientEmail" placeholder="Email"></label><label>Mot de passe<input id="gmClientPass" type="password" placeholder="Créer un mot de passe"></label><div class="marketPayActions"><button onclick="saveGlobalMarketplaceClientAccount()">Créer mon compte client</button></div></div><div id="globalMarketClientTabLogin" class="globalClientTab ${!registerActive?'active':''}"><label>Identifiant (téléphone ou email)<input id="gmClientLoginId" placeholder="Téléphone ou email" value="${esc(session?.identifier||'')}"></label><label>Mot de passe<input id="gmClientLoginPass" type="password" placeholder="Mot de passe"></label><div class="marketPayActions"><button onclick="loginGlobalMarketplaceClientAccount()">Se connecter</button></div></div></div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+function switchGlobalMarketClientTab(mode){
+  document.querySelectorAll('#globalClientAccessModal .globalClientTabs button').forEach((btn,i)=>btn.classList.toggle('active',(mode==='register'&&i===0)||(mode==='login'&&i===1)));
+  document.getElementById('globalMarketClientTabRegister')?.classList.toggle('active',mode==='register');
+  document.getElementById('globalMarketClientTabLogin')?.classList.toggle('active',mode==='login');
+}
+function saveGlobalMarketplaceClientAccount(){
+  const name=String(document.getElementById('gmClientName')?.value||'').trim();
+  const phone=String(document.getElementById('gmClientPhone')?.value||'').trim();
+  const email=String(document.getElementById('gmClientEmail')?.value||'').trim().toLowerCase();
+  const password=String(document.getElementById('gmClientPass')?.value||'');
+  if(!name||!phone||!password) return g3Alert('Nom, téléphone et mot de passe sont obligatoires.','Compte client','warn');
+  const d=getGlobalMarketplaceClientStore();
+  if((d.globalMarketplaceClients||[]).some(x=>String(x.phone||'')===phone || (email && String(x.email||'').toLowerCase()===email))) return g3Alert('Ce téléphone ou cet e-mail existe déjà.','Compte client','warn');
+  d.globalMarketplaceClients.push({id:id('gcl'),name,phone,email,password,createdAt:new Date().toISOString()});
+  save(d); setGlobalMarketplaceClientSession({identifier:email||phone,name}); document.getElementById('globalClientAccessModal')?.remove(); g3Success('Compte client créé avec succès.','Compte client GLOBAL MARKET');
+}
+function loginGlobalMarketplaceClientAccount(){
+  const identifier=String(document.getElementById('gmClientLoginId')?.value||'').trim().toLowerCase();
+  const password=String(document.getElementById('gmClientLoginPass')?.value||'');
+  if(!identifier||!password) return g3Alert('Veuillez renseigner votre identifiant et votre mot de passe.','Connexion client','warn');
+  const d=getGlobalMarketplaceClientStore();
+  const client=(d.globalMarketplaceClients||[]).find(x=>(String(x.phone||'').toLowerCase()===identifier||String(x.email||'').toLowerCase()===identifier)&&String(x.password||'')===password);
+  if(!client) return g3Alert('Identifiant ou mot de passe incorrect.','Connexion client','warn');
+  setGlobalMarketplaceClientSession({identifier,name:client.name||identifier}); document.getElementById('globalClientAccessModal')?.remove(); g3Success('Connexion client réussie.','Compte client GLOBAL MARKET');
+}
+function getAllPublicCartCount(){
+  const d=seed();
+  return (d.companies||[]).reduce((sum,c)=>sum+publicCartCount(c.id),0);
+}
+function refreshGlobalShopCartBadge(){ document.querySelectorAll('#globalShopCartBadge,#globalShopCartBadgeFloating').forEach(el=>el.textContent=getAllPublicCartCount()); }
+function addGlobalItemToCart(companyId,itemId){ addToPublicCart(companyId,itemId); refreshGlobalShopCartBadge(); g3Success('Article ajouté au panier.','Panier GLOBAL MARKET'); }
+function openGlobalMarketplaceCartSummary(){
+  const d=seed();
+  const companies=(d.companies||[]);
+  const groups=companies.map(c=>({company:c,cart:getPublicCart(c.id)})).filter(x=>x.cart.length);
+  const html=`<div class="marketPayModalBackdrop" id="globalCartSummaryModal"><div class="marketPayModal globalCartSummaryBox"><button class="marketPayClose" onclick="document.getElementById('globalCartSummaryModal')?.remove()">×</button><h2>Panier marketplace</h2><p>Retrouvez vos articles par boutique et ouvrez le panier correspondant pour finaliser votre commande.</p>${groups.length?`<div class="globalCartSummaryList">${groups.map(group=>{const total=group.cart.reduce((a,x)=>a+Number(x.qty||0),0);return `<div class="globalCartSummaryItem"><div><b>${esc(group.company.name||'Boutique')}</b><small>${total} article${total>1?'s':''} dans cette boutique</small></div><button onclick="document.getElementById('globalCartSummaryModal')?.remove();openPublicCart('${group.company.id}')">Ouvrir le panier</button></div>`}).join('')}</div>`:'<div class="officialEmpty compact"><span>🛒</span><h3>Votre panier est vide</h3><p>Ajoutez des produits ou services depuis le catalogue.</p></div>'}</div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+function submitGlobalShopSearch(event){ if(event) event.preventDefault(); filterGlobalShop(); }
+function resetGlobalShopPage(){ window.globalShopPage=1; }
+function changeGlobalShopPage(delta){ window.globalShopPage=Math.max(1,Number(window.globalShopPage||1)+(delta||0)); filterGlobalShop(); document.getElementById('globalMarketplaceCatalog')?.scrollIntoView({behavior:'smooth',block:'start'}); }
 function renderGlobalShop(){
   const d=seed();
   const companies=(d.companies||[]).filter(c=>hasPlanFeature(c,'public_shop'));
   const companyMap=new Map(companies.map(c=>[c.id,c]));
-  const items=(d.items||[]).filter(i=>{
-    const c=companyMap.get(i.companyId);
-    return c && !i.marketplaceHidden && !(isBoutiqueItem(i)&&i.stockType!=='unlimited'&&Number(i.stock||0)<=0);
-  });
-  const cats=[...new Set(items.map(i=>i.cat).filter(Boolean))].sort();
-  const cards=items.map(i=>{const c=companyMap.get(i.companyId)||{}; return `<div class="globalProductCard" data-type="${isBoutiqueItem(i)?'product':'service'}" data-cat="${esc(i.cat||'')}" data-search="${esc((i.name+' '+i.cat+' '+c.name+' '+(i.marketplaceDesc||i.detail||'')).toLowerCase())}"><div class="globalCardTop"><span>${isBoutiqueItem(i)?'Produit':'Service'}</span><b>${esc(c.name||'Entreprise')}</b></div><button type="button" class="globalProductImage ${i.photo?'clickable':''}" ${i.photo?`onclick="openGlobalProductPhoto('${i.id}')" title="Agrandir la photo"`:''}>${mkProductVisual(i)}${i.photo?'<small>🔍 Voir photo</small>':''}</button><div class="globalProductBody"><h3>${esc(i.name)}</h3><p>${esc(i.cat||'Sans catégorie')}</p><em>${esc(i.marketplaceDesc||i.detail||'')}</em><div class="globalPriceRow"><strong>${money(itemMarketPrice(i))}</strong><span>${marketStockLabel(i)}</span></div><button onclick="location.hash='boutique/${esc(c.shopSlug||slugify(c.name||''))}';render()">Voir la boutique</button></div></div>`}).join('');
-  app.innerHTML=`<div class="globalShopPage"><header class="globalShopHeader"><button onclick="location.hash='';renderLogin()">← Connexion</button><div><h1>Boutique GLOBAL MARKET</h1><p>Tous les produits et services publiés par les entreprises enregistrées.</p></div></header><section class="globalShopHero"><div><small>GLOBAL MARKET MARKETPLACE</small><h2>La boutique générale de toutes les entreprises</h2><p>Comparez les produits, services, prix et boutiques disponibles en un seul endroit.</p></div><div class="globalHeroStats"><span><b>${companies.length}</b> entreprises</span><span><b>${items.length}</b> articles</span></div></section><section class="globalShopFilters"><input id="globalShopSearch" placeholder="Rechercher produit, service ou entreprise..." oninput="filterGlobalShop()"><select id="globalShopType" onchange="filterGlobalShop()"><option value="">Tous types</option><option value="product">Produits</option><option value="service">Services</option></select><select id="globalShopCat" onchange="filterGlobalShop()"><option value="">Toutes catégories</option>${cats.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></section><main class="globalProductsGrid">${cards||'<p class="notice">Aucun produit ou service publié dans la boutique générale.</p>'}</main><footer>© 2026 GLOBAL MARKET - MEGA SERVICES SARL U. Tous droits réservés.</footer></div>`;
+  const items=(d.items||[]).filter(i=>{ const c=companyMap.get(i.companyId); return c && !i.marketplaceHidden && !(isBoutiqueItem(i)&&i.stockType!=='unlimited'&&Number(i.stock||0)<=0); });
+  const cats=[...new Set(items.map(i=>String(i.cat||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'));
+  const heroItems=items.slice(0,6);
+  const heroLaptopCards=(heroItems.slice(0,4).map(i=>`<div class="globalScreenMini"><div class="globalScreenThumb">${i.photo?`<img src="${esc(i.photo)}" alt="${esc(i.name)}">`:mkProductVisual(i)}</div><span>${esc(i.name||'Produit')}</span></div>`).join('')) || '<div class="globalScreenMini empty"><span>Catégories</span></div><div class="globalScreenMini empty"><span>Produits</span></div><div class="globalScreenMini empty"><span>Services</span></div><div class="globalScreenMini empty"><span>Nouveautés</span></div>';
+  const phoneItem=heroItems[0]||null;
+  const categoryOptions=cats.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  const cards=items.map((i,index)=>{ const c=companyMap.get(i.companyId)||{}; const desc=String(i.marketplaceDesc||i.detail||'Offre publiée sur GLOBAL MARKET.').trim(); const shortDesc=desc.length>110?desc.slice(0,107)+'...':desc; return `<article class="gmHomeCard globalProductCard" data-index="${index}" data-type="${isBoutiqueItem(i)?'product':'service'}" data-cat="${esc(i.cat||'')}" data-company="${esc(c.name||'Entreprise')}" data-price="${Number(itemMarketPrice(i)||0)}" data-search="${esc((i.name+' '+i.cat+' '+c.name+' '+desc).toLowerCase())}"><div class="gmHomeBadgeRow"><span class="gmNewBadge">NOUVEAU</span><small>${esc(c.name||i.cat||'Boutique')}</small></div><button type="button" class="globalProductImage ${i.photo?'clickable':''}" ${i.photo?`onclick="openGlobalProductPhoto('${i.id}')" title="Agrandir la photo"`:''}>${mkProductVisual(i)}</button><div class="gmHomeCardBody"><span class="gmCardCategory">${esc(i.cat||'Produits & services')}</span><h3>${esc(i.name||'Produit / service')}</h3><p>${esc(shortDesc)}</p><strong>${money(itemMarketPrice(i))}</strong><div class="gmHomeCardActions"><button type="button" class="gmOutlineBtn" onclick="location.hash='boutique/${esc(c.shopSlug||slugify(c.name||''))}';render()">Voir la boutique</button><button type="button" class="gmFilledBtn" onclick="addGlobalItemToCart('${c.id}','${i.id}')">Ajouter au panier</button></div></div></article>`; }).join('');
+  window.globalShopPage=1;
+  app.innerHTML=`<div class="globalShopPage gmMarketplaceHome"><header class="gmTopHeader"><div class="gmTopBrand"><span class="gmTopLogo">${officialShopIcon('bag')}</span><div><h1>GLOBAL MARKET</h1><p>Produits & services en toute confiance</p></div></div><form class="gmTopSearch" onsubmit="submitGlobalShopSearch(event)"><input id="globalShopSearchTop" type="search" placeholder="Rechercher un produit, un service ou une entreprise..." oninput="document.getElementById('globalShopSearch').value=this.value;resetGlobalShopPage();filterGlobalShop()"><button type="submit" aria-label="Rechercher">${officialShopIcon('search')}</button></form><div class="gmTopActions"><button type="button" class="gmGhostBtn" onclick="openGlobalMarketSellerPopup()"><span>${officialShopIcon('bag')}</span><b>Créer ma boutique</b><small>/ se connecter</small></button><button type="button" class="gmGhostBtn gold" onclick="openGlobalMarketClientPopup('register')"><span>${officialShopIcon('user')}</span><b>Créer un compte client</b><small>/ se connecter</small></button><button type="button" class="gmCartBtn" onclick="openGlobalMarketplaceCartSummary()"><span>${officialShopIcon('cart')}</span><i id="globalShopCartBadge">${getAllPublicCartCount()}</i></button></div></header><main class="gmMarketplaceMain"><section class="gmHero"><div class="gmHeroText"><small>Votre marketplace moderne</small><h2>pour acheter, vendre et<br>développer vos <span>produits et services</span></h2><p>GLOBAL MARKET connecte clients, commerçants, prestataires de services et entreprises sur une plateforme fiable, sécurisée et performante.</p><p class="gmHeroSub">Tout ce dont votre entreprise a besoin, au même endroit.</p><div class="gmHeroAdvantages"><div><span>${officialShopIcon('shield')}</span><b>Paiement 100% sécurisé</b></div><div><span>${officialShopIcon('truck')}</span><b>Livraison rapide partout</b></div><div><span>${officialShopIcon('spark')}</span><b>Satisfaction & qualité de service</b></div></div><button type="button" class="gmPrimaryHeroBtn" onclick="openGlobalMarketSellerPopup()">Proposer vos produits et services</button></div><div class="gmHeroVisual"><div class="gmLaptop"><div class="gmDeviceTop"><b>GLOBAL MARKET</b><span>Catégories · Produits · Services · Boutiques · Nouveautés</span></div><div class="gmLaptopGrid">${heroLaptopCards}</div></div><div class="gmPhone">${phoneItem?(phoneItem.photo?`<img src="${esc(phoneItem.photo)}" alt="${esc(phoneItem.name)}">`:mkProductVisual(phoneItem)):'<span>GLOBAL MARKET</span>'}</div><div class="gmBag"><span>${officialShopIcon('bag')}</span><b>GLOBAL<br>MARKET</b><small>Produits & services</small></div><div class="gmBox"></div><div class="gmPlant"><i></i><i></i><i></i></div></div></section><section class="gmCatalogToolbar" id="globalMarketplaceCatalog"><div class="gmFilterSelect"><select id="globalShopCat" onchange="resetGlobalShopPage();filterGlobalShop()"><option value="">Toutes les catégories</option>${categoryOptions}</select></div><div class="gmFilterSelect"><select id="globalShopType" onchange="resetGlobalShopPage();filterGlobalShop()"><option value="">Tous les types</option><option value="product">Produits</option><option value="service">Services</option></select></div><form class="gmCatalogSearch" onsubmit="submitGlobalShopSearch(event)"><input id="globalShopSearch" type="search" placeholder="Rechercher un produit, un service ou une entreprise..." oninput="document.getElementById('globalShopSearchTop').value=this.value;resetGlobalShopPage();filterGlobalShop()"><button type="submit">${officialShopIcon('search')}</button></form><div class="gmFilterSelect gmSortSelect"><select id="globalShopSort" onchange="resetGlobalShopPage();filterGlobalShop()"><option value="recent">Les plus récents</option><option value="priceAsc">Prix croissant</option><option value="priceDesc">Prix décroissant</option></select></div></section><section class="gmCatalogMeta"><div><h3>Catalogue GLOBAL MARKET</h3><p>Marketplace professionnelle de produits et services.</p></div><b id="globalShopVisibleCount">${items.length} résultat${items.length>1?'s':''}</b></section><section class="globalProductsGrid gmCatalogGrid">${cards||'<div class="officialEmpty"><span>🛍️</span><h3>Catalogue en préparation</h3><p>Aucun produit ou service n’est encore publié.</p></div>'}</section><div class="officialShopPagination" id="globalShopPagination" hidden><button type="button" id="globalShopPrevious" onclick="changeGlobalShopPage(-1)">← Précédent</button><span id="globalShopPageLabel">Page 1 sur 1</span><button type="button" id="globalShopNext" class="next" onclick="changeGlobalShopPage(1)">Suivant →</button></div></main><footer class="officialFooter gmMarketplaceFooter"><div><b>GLOBAL MARKET</b><span>Produits & services en toute confiance</span></div><p>© 2026 GLOBAL MARKET — Marketplace professionnelle propulsée par MEGA SERVICES SARL U.</p></footer></div>`;
+  requestAnimationFrame(()=>{ filterGlobalShop(); refreshGlobalShopCartBadge(); });
 }
 function filterGlobalShop(){
-  const q=(document.getElementById('globalShopSearch')?.value||'').toLowerCase();
+  const q=(document.getElementById('globalShopSearch')?.value||'').toLowerCase().trim();
   const t=document.getElementById('globalShopType')?.value||'';
   const cat=document.getElementById('globalShopCat')?.value||'';
-  document.querySelectorAll('.globalProductCard').forEach(card=>{
-    const okQ=card.dataset.search.includes(q), okT=!t||card.dataset.type===t, okC=!cat||card.dataset.cat===cat;
-    card.style.display=(okQ&&okT&&okC)?'':'none';
-  });
+  const sort=document.getElementById('globalShopSort')?.value||'recent';
+  const cards=[...document.querySelectorAll('.globalProductCard')];
+  const filtered=cards.filter(card=>{ const okQ=(card.dataset.search||'').includes(q); const okT=!t||card.dataset.type===t; const okC=!cat||card.dataset.cat===cat; return okQ&&okT&&okC; });
+  filtered.sort((a,b)=>{ if(sort==='priceAsc') return Number(a.dataset.price||0)-Number(b.dataset.price||0); if(sort==='priceDesc') return Number(b.dataset.price||0)-Number(a.dataset.price||0); return Number(a.dataset.index||0)-Number(b.dataset.index||0); });
+  const grid=document.querySelector('.gmCatalogGrid'); if(grid) filtered.forEach(card=>grid.appendChild(card));
+  cards.forEach(card=>card.style.display='none');
+  const perPage=12; const totalPages=Math.max(1,Math.ceil(filtered.length/perPage)); if(Number(window.globalShopPage||1)>totalPages) window.globalShopPage=totalPages;
+  const page=Math.max(1,Number(window.globalShopPage||1));
+  filtered.forEach((card,idx)=>{ card.style.display=(idx>=(page-1)*perPage && idx<page*perPage)?'':'none'; });
+  const countLabel=document.getElementById('globalShopVisibleCount'); if(countLabel) countLabel.textContent=`${filtered.length} résultat${filtered.length>1?'s':''}`;
+  const pager=document.getElementById('globalShopPagination'); const prev=document.getElementById('globalShopPrevious'); const next=document.getElementById('globalShopNext'); const pageLabel=document.getElementById('globalShopPageLabel');
+  if(pager){ pager.hidden=filtered.length<=perPage; }
+  if(prev) prev.disabled=page<=1; if(next) next.disabled=page>=totalPages; if(pageLabel) pageLabel.textContent=`Page ${page} sur ${totalPages}`;
 }
+
 function openGlobalProductPhoto(itemId){
   const d=seed(); const it=(d.items||[]).find(x=>x.id===itemId); if(!it||!it.photo) return;
   const c=(d.companies||[]).find(x=>x.id===it.companyId)||{};
