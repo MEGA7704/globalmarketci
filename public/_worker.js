@@ -1494,6 +1494,9 @@ function calculateMarketDelivery(company, subtotal, requestedCity, requestedMeth
     };
   }
 
+  if (Number(subtotal || 0) < 10000) {
+    throw new HttpError(400, `Toute commande hors de la ville de la boutique doit être égale ou supérieure à 10 000 FCFA pour ${company?.name || 'cette boutique'}.`, 'OUTSIDE_CITY_MINIMUM_ORDER');
+  }
   const availableMethods = config.methods.filter(row => !isPickupShippingMethod(row));
   let method = availableMethods.find(row => String(row.id) === String(requestedMethodRef || ''));
   if (!method) method = availableMethods.find(row => marketDeliveryToken(row.name) === marketDeliveryToken(requestedMethodRef));
@@ -1927,13 +1930,12 @@ async function handlePublicOrder(request, env) {
   const now = new Date().toISOString();
   const createdOrders = [];
   let grandTotal = 0;
+
+  // Valider tous les lots avant de modifier le stock ou d'enregistrer une commande.
+  // Cela évite une commande multi-boutiques partielle si un lot hors ville est < 10 000 FCFA.
+  const preparedGroups = [];
   for (const [companyId, group] of grouped) {
     const orderItems = group.lines;
-    for (const line of orderItems) {
-      const item = state.items.find(i => i.id === line.itemId && i.companyId === companyId);
-      if (line.type === 'Produit' && item?.stockType !== 'unlimited') item.stock = Number(item.stock || 0) - line.qty;
-      if (item) group.changedItems.push(item);
-    }
     const subtotal = orderItems.reduce((sum, line) => sum + line.total, 0);
     let deliveryFeeRate = marketDeliveryRateForSubtotal(subtotal);
     let deliveryFee = Math.round(subtotal * deliveryFeeRate);
@@ -1956,6 +1958,16 @@ async function handlePublicOrder(request, env) {
       shippingMethodFee = delivery.methodFee;
       deliveryNeighborhoodForOrder = delivery.neighborhoodName || '';
       if (!delivery.pickup && !deliveryAddressForOrder) throw new HttpError(400, 'Le détail sur l’adresse de livraison est obligatoire.', 'DELIVERY_ADDRESS_REQUIRED');
+    }
+    preparedGroups.push({ companyId, group, orderItems, subtotal, deliveryFeeRate, deliveryFee, deliveryCityForOrder, deliveryAddressForOrder, deliveryNeighborhoodForOrder, shippingMethod, shippingMethodId, shippingCityFee, shippingMethodFee });
+  }
+
+  for (const prepared of preparedGroups) {
+    const { companyId, group, orderItems, subtotal, deliveryFeeRate, deliveryFee, deliveryCityForOrder, deliveryAddressForOrder, deliveryNeighborhoodForOrder, shippingMethod, shippingMethodId, shippingCityFee, shippingMethodFee } = prepared;
+    for (const line of orderItems) {
+      const item = state.items.find(i => i.id === line.itemId && i.companyId === companyId);
+      if (line.type === 'Produit' && item?.stockType !== 'unlimited') item.stock = Number(item.stock || 0) - line.qty;
+      if (item) group.changedItems.push(item);
     }
     const total = subtotal + deliveryFee;
     grandTotal += total;
