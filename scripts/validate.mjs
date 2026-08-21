@@ -255,7 +255,7 @@ const v52Checks = [
 ];
 for (const [needle, label] of v52Checks) {
   if (!app.includes(needle) && !reportStyle.includes(needle)) {
-    console.error(`[validate] GLOBAL MARKET V5.2 incomplet : ${label}.`);
+    console.error(`[validate] GLOBAL MARKET V5.3 incomplet : ${label}.`);
     process.exit(1);
   }
 }
@@ -271,9 +271,35 @@ const workerV52Checks = [
 ];
 for (const [needle, label] of workerV52Checks) {
   if (!worker.includes(needle)) {
-    console.error(`[validate] Worker V5.2 incomplet : ${label}.`);
+    console.error(`[validate] Worker V5.3 incomplet : ${label}.`);
     process.exit(1);
   }
+}
+
+const v53Checks = [
+  ['gmCartShippingSection', 'moyen d’expédition déplacé sous l’adresse de livraison'],
+  ['gmShippingMethodLocked', 'retrait à la boutique verrouillé dans la configuration'],
+  ["{id:'retrait-boutique',name:'RETRAIT A LA BOUTIQUE',fee:0}", 'retrait boutique forcé à 0 FCFA'],
+  ['Ville desservie • aucun frais lié à la ville', 'villes sans frais fixes'],
+  ['Autres villes : frais du moyen uniquement.', 'calcul des autres villes limité au moyen d’expédition']
+];
+for (const [needle, label] of v53Checks) {
+  if (!app.includes(needle) && !reportStyle.includes(needle)) {
+    console.error(`[validate] GLOBAL MARKET V5.3 incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+if (app.includes('class="gmDeliveryCityFee"') || app.includes('Frais fixes de la ville') || app.includes('Frais ville (FCFA)')) {
+  console.error('[validate] Un champ de frais fixes par ville subsiste dans la configuration.');
+  process.exit(1);
+}
+if (worker.includes('Number(city.fee') || worker.includes("{ name: 'DIABO', fee:")) {
+  console.error('[validate] Le Worker utilise encore des frais fixes par ville.');
+  process.exit(1);
+}
+if (!worker.includes("const pickup = { id: 'retrait-boutique', name: 'RETRAIT A LA BOUTIQUE', fee: 0 }")) {
+  console.error('[validate] Le retrait boutique n’est pas verrouillé côté serveur.');
+  process.exit(1);
 }
 
 if (wrangler.pages_build_output_dir !== 'public') {

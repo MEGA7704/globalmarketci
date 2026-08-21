@@ -1388,9 +1388,8 @@ async function handleDeleteCompany(request, env) {
 
 
 const DEFAULT_MARKET_DELIVERY_CITIES = [
-  { name: 'DIABO', fee: 200 }, { name: 'BOUAKE', fee: 1000 }, { name: 'YAMOUSSOUKRO', fee: 2000 },
-  { name: 'ABIDJAN', fee: 2500 }, { name: 'ABENGOUROU', fee: 3000 }, { name: 'MAN', fee: 3000 },
-  { name: 'MANKONO', fee: 3000 }, { name: 'KOROGHO', fee: 3000 }, { name: 'KATIOLA', fee: 2000 }
+  { name: 'DIABO' }, { name: 'BOUAKE' }, { name: 'YAMOUSSOUKRO' }, { name: 'ABIDJAN' },
+  { name: 'ABENGOUROU' }, { name: 'MAN' }, { name: 'MANKONO' }, { name: 'KOROGHO' }, { name: 'KATIOLA' }
 ];
 const DEFAULT_MARKET_SHIPPING_METHODS = [
   { id: 'retrait-boutique', name: 'RETRAIT A LA BOUTIQUE', fee: 0 },
@@ -1415,17 +1414,24 @@ function normalizeMarketDeliveryConfig(company) {
   const raw = company?.marketDeliveryConfig && typeof company.marketDeliveryConfig === 'object' ? company.marketDeliveryConfig : {};
   const homeCity = marketDeliveryToken(raw.homeCity || inferCompanyHomeCity(company));
   let cities = (Array.isArray(raw.cities) ? raw.cities : DEFAULT_MARKET_DELIVERY_CITIES).slice(0, 10)
-    .map(row => ({ name: marketDeliveryToken(row?.name), fee: Math.max(0, Math.round(Number(row?.fee || 0))) }))
+    .map(row => ({ name: marketDeliveryToken(row?.name) }))
     .filter(row => row.name);
   const citySeen = new Set();
   cities = cities.filter(row => { const key = marketDeliveryToken(row.name); if (citySeen.has(key)) return false; citySeen.add(key); return true; });
-  if (homeCity && !citySeen.has(homeCity)) cities = [{ name: homeCity, fee: 0 }, ...cities].slice(0, 10);
-  let methods = (Array.isArray(raw.methods) && raw.methods.length ? raw.methods : DEFAULT_MARKET_SHIPPING_METHODS).slice(0, 10)
+  if (homeCity && !citySeen.has(homeCity)) cities = [{ name: homeCity }, ...cities].slice(0, 10);
+  const rawMethods = (Array.isArray(raw.methods) && raw.methods.length ? raw.methods : DEFAULT_MARKET_SHIPPING_METHODS)
     .map(row => ({ id: String(row?.id || marketShippingMethodId(row?.name)).trim(), name: marketDeliveryToken(row?.name), fee: Math.max(0, Math.round(Number(row?.fee || 0))) }))
     .filter(row => row.name);
-  const methodSeen = new Set();
-  methods = methods.filter(row => { const key = String(row.id || marketShippingMethodId(row.name)); if (methodSeen.has(key)) return false; methodSeen.add(key); row.id = key; return true; });
-  if (!methods.length) methods = DEFAULT_MARKET_SHIPPING_METHODS.map(row => ({ ...row }));
+  const pickup = { id: 'retrait-boutique', name: 'RETRAIT A LA BOUTIQUE', fee: 0 };
+  const methods = [pickup];
+  const methodSeen = new Set([pickup.id]);
+  for (const row of rawMethods) {
+    if (isPickupShippingMethod(row) || String(row.id) === 'retrait-boutique') continue;
+    const id = String(row.id || marketShippingMethodId(row.name));
+    if (methodSeen.has(id)) continue;
+    methodSeen.add(id); methods.push({ id, name: row.name, fee: row.fee });
+    if (methods.length >= 10) break;
+  }
   return { homeCity, cities, methods };
 }
 function marketDeliveryRateForSubtotal(subtotal) {
@@ -1449,8 +1455,8 @@ function calculateMarketDelivery(company, subtotal, requestedCity, requestedMeth
   const pickup = isPickupShippingMethod(method);
   if (pickup && !local) throw new HttpError(400, 'Le retrait à la boutique est disponible uniquement dans la ville de la boutique.', 'PICKUP_CITY_MISMATCH');
   const rate = local && !pickup ? marketDeliveryRateForSubtotal(subtotal) : 0;
-  const cityFee = pickup ? 0 : local ? Math.round(Number(subtotal || 0) * rate) : Math.max(0, Math.round(Number(city.fee || 0)));
-  const methodFee = Math.max(0, Math.round(Number(method.fee || 0)));
+  const cityFee = pickup ? 0 : local ? Math.round(Number(subtotal || 0) * rate) : 0;
+  const methodFee = pickup ? 0 : Math.max(0, Math.round(Number(method.fee || 0)));
   return {
     city: city.name, homeCity: config.homeCity, methodId: method.id, methodName: method.name,
     cityFee, methodFee, deliveryFeeRate: rate, deliveryFee: cityFee + methodFee, local, pickup
