@@ -1494,9 +1494,6 @@ function calculateMarketDelivery(company, subtotal, requestedCity, requestedMeth
     };
   }
 
-  if (Number(subtotal || 0) < 10000) {
-    throw new HttpError(400, `Toute commande hors de la ville de la boutique doit être égale ou supérieure à 10 000 FCFA pour ${company?.name || 'cette boutique'}.`, 'OUTSIDE_CITY_MINIMUM_ORDER');
-  }
   const availableMethods = config.methods.filter(row => !isPickupShippingMethod(row));
   let method = availableMethods.find(row => String(row.id) === String(requestedMethodRef || ''));
   if (!method) method = availableMethods.find(row => marketDeliveryToken(row.name) === marketDeliveryToken(requestedMethodRef));
@@ -1932,8 +1929,10 @@ async function handlePublicOrder(request, env) {
   let grandTotal = 0;
 
   // Valider tous les lots avant de modifier le stock ou d'enregistrer une commande.
-  // Cela évite une commande multi-boutiques partielle si un lot hors ville est < 10 000 FCFA.
+  // Le minimum hors ville est appliqué au TOTAL GÉNÉRAL du checkout, jamais séparément par boutique.
   const preparedGroups = [];
+  let hasOutsideDelivery = false;
+  let preparedGrandTotal = 0;
   for (const [companyId, group] of grouped) {
     const orderItems = group.lines;
     const subtotal = orderItems.reduce((sum, line) => sum + line.total, 0);
@@ -1957,9 +1956,15 @@ async function handlePublicOrder(request, env) {
       shippingCityFee = delivery.cityFee;
       shippingMethodFee = delivery.methodFee;
       deliveryNeighborhoodForOrder = delivery.neighborhoodName || '';
+      if (!delivery.local) hasOutsideDelivery = true;
       if (!delivery.pickup && !deliveryAddressForOrder) throw new HttpError(400, 'Le détail sur l’adresse de livraison est obligatoire.', 'DELIVERY_ADDRESS_REQUIRED');
     }
+    preparedGrandTotal += subtotal + deliveryFee;
     preparedGroups.push({ companyId, group, orderItems, subtotal, deliveryFeeRate, deliveryFee, deliveryCityForOrder, deliveryAddressForOrder, deliveryNeighborhoodForOrder, shippingMethod, shippingMethodId, shippingCityFee, shippingMethodFee });
+  }
+
+  if (configuredDeliveryRequested && hasOutsideDelivery && preparedGrandTotal < 10000) {
+    throw new HttpError(400, `Toute commande hors de la ville de la boutique doit avoir un total général d’au moins 10 000 FCFA. Total actuel : ${Math.round(preparedGrandTotal).toLocaleString('fr-FR')} FCFA.`, 'OUTSIDE_CITY_MINIMUM_ORDER');
   }
 
   for (const prepared of preparedGroups) {

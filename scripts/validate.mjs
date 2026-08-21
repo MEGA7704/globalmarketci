@@ -332,6 +332,27 @@ if (!worker.includes("const pickup = { id: 'retrait-boutique', name: 'RETRAIT A 
   process.exit(1);
 }
 
+
+const v551Checks = [
+  ['Minimum hors ville : 10 000 FCFA par commande.', 'minimum hors ville appliqué au total de la commande'],
+  ['outsideOrderMinimumMet', 'validation navigateur du total général hors ville'],
+  ['hasOutside&&Number(pricing.total||0)<10000', 'contrôle final navigateur du total général hors ville']
+];
+for (const [needle, label] of v551Checks) {
+  if (!app.includes(needle)) {
+    console.error(`[validate] GLOBAL MARKET V5.5.1 incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+if (app.includes('10 000 FCFA par boutique') || app.includes('Paiement appliqué : <b>Paiement à la livraison</b>.')) {
+  console.error('[validate] Une ancienne règle/mention du panier V5.5 subsiste.');
+  process.exit(1);
+}
+if (!worker.includes('preparedGrandTotal < 10000') || !worker.includes('hasOutsideDelivery')) {
+  console.error('[validate] Le Worker ne contrôle pas le minimum hors ville sur le total général de la commande.');
+  process.exit(1);
+}
+
 if (wrangler.pages_build_output_dir !== 'public') {
   console.error('[validate] pages_build_output_dir doit être exactement "public".');
   process.exit(1);
