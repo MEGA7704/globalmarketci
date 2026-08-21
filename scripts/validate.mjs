@@ -280,7 +280,7 @@ const v53Checks = [
   ['gmCartShippingSection', 'moyen d’expédition déplacé sous l’adresse de livraison'],
   ['gmShippingMethodLocked', 'retrait à la boutique verrouillé dans la configuration'],
   ["{id:'retrait-boutique',name:'RETRAIT A LA BOUTIQUE',fee:0}", 'retrait boutique forcé à 0 FCFA'],
-  ['Ville desservie • aucun frais lié à la ville', 'villes sans frais fixes'],
+  ['Ville hors boutique • frais du moyen d’expédition uniquement', 'villes sans frais fixes'],
   ['Autres villes : frais du moyen uniquement.', 'calcul des autres villes limité au moyen d’expédition']
 ];
 for (const [needle, label] of v53Checks) {
@@ -296,6 +296,36 @@ if (app.includes('class="gmDeliveryCityFee"') || app.includes('Frais fixes de la
 if (worker.includes('Number(city.fee') || worker.includes("{ name: 'DIABO', fee:")) {
   console.error('[validate] Le Worker utilise encore des frais fixes par ville.');
   process.exit(1);
+}
+
+const v54Checks = [
+  ['GM_DEFAULT_LOCAL_NEIGHBORHOODS', '10 choix de quartiers locaux préremplis'],
+  ['gmCartNeighborhoodSection', 'liste déroulante quartier de livraison'],
+  ['deliveryNeighborhood', 'quartier transmis avec la commande'],
+  ['Hors ville de la boutique : seuls les frais du moyen choisi sont appliqués.', 'aucun pourcentage hors ville'],
+  ['gmDeliveryCartSummary', 'résumé du panier déplacé dans adresse de livraison']
+];
+for (const [needle, label] of v54Checks) {
+  if (!app.includes(needle) && !reportStyle.includes(needle)) {
+    console.error(`[validate] GLOBAL MARKET V5.4 incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+if (app.includes('gmUnifiedShippingAuto')) {
+  console.error('[validate] La carte « Frais d’expédition automatiques » doit être supprimée du popup panier.');
+  process.exit(1);
+}
+const workerV54Checks = [
+  ['DEFAULT_MARKET_LOCAL_NEIGHBORHOODS', 'quartiers locaux côté serveur'],
+  ['DELIVERY_NEIGHBORHOOD_REQUIRED', 'validation serveur du quartier local'],
+  ['deliveryNeighborhoodForOrder', 'quartier enregistré sur la commande'],
+  ['availableMethods = config.methods.filter', 'moyens hors ville sans retrait boutique']
+];
+for (const [needle, label] of workerV54Checks) {
+  if (!worker.includes(needle)) {
+    console.error(`[validate] Worker V5.4 incomplet : ${label}.`);
+    process.exit(1);
+  }
 }
 if (!worker.includes("const pickup = { id: 'retrait-boutique', name: 'RETRAIT A LA BOUTIQUE', fee: 0 }")) {
   console.error('[validate] Le retrait boutique n’est pas verrouillé côté serveur.');

@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "5.3.0",
+  "version": "5.4.0",
   "private": true,
-  "description": "GLOBAL MARKET - moyens d’expédition intégrés à l’adresse de livraison, villes sans frais fixes, retrait boutique verrouillé et panier client simplifié.",
+  "description": "GLOBAL MARKET - quartiers locaux préremplis, retrait boutique à 0 FCFA, expédition hors ville sans pourcentage et résumé panier intégré à l’adresse.",
   "type": "module",
   "engines": {
     "node": ">=20"
