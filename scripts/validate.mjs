@@ -243,6 +243,39 @@ if (/localStorage\s*\.\s*setItem\s*\(/.test(app)) {
   console.error('[validate] Une écriture localStorage subsiste dans app.js.');
   process.exit(1);
 }
+
+const v52Checks = [
+  ['openMarketplaceDeliveryConfig', 'configuration livraison Marketplace'],
+  ['Maximum 10 villes de livraison.', 'limite de 10 villes'],
+  ['gmCartAvailableCities', 'villes compatibles du panier multi-boutiques'],
+  ['gmSetCartShippingMethod', 'choix du moyen d’expédition par boutique'],
+  ['deliveryAddressDetail', 'détail sur l’adresse de livraison'],
+  ['gmPasswordEye', 'icône afficher / masquer les mots de passe'],
+  ['guardedBusinessLogin', 'protection double clic connexion entreprise']
+];
+for (const [needle, label] of v52Checks) {
+  if (!app.includes(needle) && !reportStyle.includes(needle)) {
+    console.error(`[validate] GLOBAL MARKET V5.2 incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+if (app.includes('Après validation, GLOBAL MARKET répartit automatiquement la commande entre les ${pricing.shopCount} boutique(s).')) {
+  console.error('[validate] Le texte supprimé du panier multi-boutiques est encore présent.');
+  process.exit(1);
+}
+const workerV52Checks = [
+  ['marketDeliveryConfig', 'configuration de livraison exposée au catalogue public'],
+  ['calculateMarketDelivery', 'calcul serveur des frais d’expédition'],
+  ['shippingByCompany', 'validation du moyen d’expédition par boutique'],
+  ['DELIVERY_ADDRESS_REQUIRED', 'validation serveur du détail d’adresse']
+];
+for (const [needle, label] of workerV52Checks) {
+  if (!worker.includes(needle)) {
+    console.error(`[validate] Worker V5.2 incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+
 if (wrangler.pages_build_output_dir !== 'public') {
   console.error('[validate] pages_build_output_dir doit être exactement "public".');
   process.exit(1);

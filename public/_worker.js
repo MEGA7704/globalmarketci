@@ -1386,9 +1386,80 @@ async function handleDeleteCompany(request, env) {
   });
 }
 
+
+const DEFAULT_MARKET_DELIVERY_CITIES = [
+  { name: 'DIABO', fee: 200 }, { name: 'BOUAKE', fee: 1000 }, { name: 'YAMOUSSOUKRO', fee: 2000 },
+  { name: 'ABIDJAN', fee: 2500 }, { name: 'ABENGOUROU', fee: 3000 }, { name: 'MAN', fee: 3000 },
+  { name: 'MANKONO', fee: 3000 }, { name: 'KOROGHO', fee: 3000 }, { name: 'KATIOLA', fee: 2000 }
+];
+const DEFAULT_MARKET_SHIPPING_METHODS = [
+  { id: 'retrait-boutique', name: 'RETRAIT A LA BOUTIQUE', fee: 0 },
+  { id: 'jumia-ci', name: 'JUMIA CI', fee: 0 }, { id: 'utb-transport', name: 'UTB TRANSPORT', fee: 0 },
+  { id: 'avs-transport', name: 'AVS TRANSPORT', fee: 0 }, { id: 'autres', name: 'AUTRES', fee: 0 }
+];
+function marketDeliveryToken(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ').toUpperCase();
+}
+function marketShippingMethodId(value) {
+  return marketDeliveryToken(value).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'mode-expedition';
+}
+function inferCompanyHomeCity(company) {
+  const source = marketDeliveryToken(company?.marketDeliveryConfig?.homeCity || company?.city || company?.address || '');
+  const known = DEFAULT_MARKET_DELIVERY_CITIES.find(row => source.includes(marketDeliveryToken(row.name)));
+  if (known) return known.name;
+  const raw = String(company?.city || company?.address || '').split(',')[0].trim();
+  if (raw && raw.length <= 50 && !/\d/.test(raw)) return marketDeliveryToken(raw);
+  return 'DIABO';
+}
+function normalizeMarketDeliveryConfig(company) {
+  const raw = company?.marketDeliveryConfig && typeof company.marketDeliveryConfig === 'object' ? company.marketDeliveryConfig : {};
+  const homeCity = marketDeliveryToken(raw.homeCity || inferCompanyHomeCity(company));
+  let cities = (Array.isArray(raw.cities) ? raw.cities : DEFAULT_MARKET_DELIVERY_CITIES).slice(0, 10)
+    .map(row => ({ name: marketDeliveryToken(row?.name), fee: Math.max(0, Math.round(Number(row?.fee || 0))) }))
+    .filter(row => row.name);
+  const citySeen = new Set();
+  cities = cities.filter(row => { const key = marketDeliveryToken(row.name); if (citySeen.has(key)) return false; citySeen.add(key); return true; });
+  if (homeCity && !citySeen.has(homeCity)) cities = [{ name: homeCity, fee: 0 }, ...cities].slice(0, 10);
+  let methods = (Array.isArray(raw.methods) && raw.methods.length ? raw.methods : DEFAULT_MARKET_SHIPPING_METHODS).slice(0, 10)
+    .map(row => ({ id: String(row?.id || marketShippingMethodId(row?.name)).trim(), name: marketDeliveryToken(row?.name), fee: Math.max(0, Math.round(Number(row?.fee || 0))) }))
+    .filter(row => row.name);
+  const methodSeen = new Set();
+  methods = methods.filter(row => { const key = String(row.id || marketShippingMethodId(row.name)); if (methodSeen.has(key)) return false; methodSeen.add(key); row.id = key; return true; });
+  if (!methods.length) methods = DEFAULT_MARKET_SHIPPING_METHODS.map(row => ({ ...row }));
+  return { homeCity, cities, methods };
+}
+function marketDeliveryRateForSubtotal(subtotal) {
+  subtotal = Number(subtotal || 0);
+  return subtotal <= 0 ? 0 : subtotal <= 4999 ? 0.10 : subtotal <= 24999 ? 0.05 : subtotal <= 99999 ? 0.02 : 0.015;
+}
+function isPickupShippingMethod(method) {
+  const token = marketDeliveryToken(method?.name);
+  return token.includes('RETRAIT') && token.includes('BOUTIQUE');
+}
+function calculateMarketDelivery(company, subtotal, requestedCity, requestedMethodRef) {
+  const config = normalizeMarketDeliveryConfig(company);
+  const cityToken = marketDeliveryToken(requestedCity);
+  const city = config.cities.find(row => marketDeliveryToken(row.name) === cityToken);
+  if (!city) throw new HttpError(400, `La boutique ${company?.name || ''} ne livre pas actuellement à ${requestedCity}.`, 'DELIVERY_CITY_UNAVAILABLE');
+  let method = config.methods.find(row => String(row.id) === String(requestedMethodRef || ''));
+  if (!method) method = config.methods.find(row => marketDeliveryToken(row.name) === marketDeliveryToken(requestedMethodRef));
+  if (!method) method = config.methods[0];
+  if (!method) throw new HttpError(400, `Aucun moyen d’expédition n’est configuré pour ${company?.name || 'cette boutique'}.`, 'SHIPPING_METHOD_UNAVAILABLE');
+  const local = cityToken === marketDeliveryToken(config.homeCity);
+  const pickup = isPickupShippingMethod(method);
+  if (pickup && !local) throw new HttpError(400, 'Le retrait à la boutique est disponible uniquement dans la ville de la boutique.', 'PICKUP_CITY_MISMATCH');
+  const rate = local && !pickup ? marketDeliveryRateForSubtotal(subtotal) : 0;
+  const cityFee = pickup ? 0 : local ? Math.round(Number(subtotal || 0) * rate) : Math.max(0, Math.round(Number(city.fee || 0)));
+  const methodFee = Math.max(0, Math.round(Number(method.fee || 0)));
+  return {
+    city: city.name, homeCity: config.homeCity, methodId: method.id, methodName: method.name,
+    cityFee, methodFee, deliveryFeeRate: rate, deliveryFee: cityFee + methodFee, local, pickup
+  };
+}
+
 function publicCompany(company) {
   if (!company) return null;
-  const allowed = ['id', 'name', 'activity', 'phone', 'email', 'address', 'businessType', 'shopSlug', 'shopBanner', 'shopColor', 'marketWaveBusinessLink', 'marketUsdtTrc20', 'status', 'plan', 'planCode', 'subscriptionEnd'];
+  const allowed = ['id', 'name', 'activity', 'phone', 'email', 'address', 'businessType', 'shopSlug', 'shopBanner', 'shopColor', 'marketWaveBusinessLink', 'marketUsdtTrc20', 'marketDeliveryConfig', 'status', 'plan', 'planCode', 'subscriptionEnd'];
   return Object.fromEntries(allowed.map(k => [k, company[k]]));
 }
 
@@ -1794,6 +1865,11 @@ async function handlePublicOrder(request, env) {
   const paymentRef = String(body.paymentRef || '').trim().slice(0, 200);
   if (!payOnDelivery && !paymentRef) throw new HttpError(400, 'Identifiant de transaction obligatoire pour un paiement immédiat.', 'PAYMENT_REFERENCE_REQUIRED');
 
+  const deliveryCity = String(body.deliveryCity || '').trim().slice(0, 80);
+  const deliveryAddressDetail = String(body.deliveryAddressDetail || '').trim().slice(0, 500);
+  const shippingByCompany = new Map((Array.isArray(body.shippingByCompany) ? body.shippingByCompany : []).slice(0, 100).map(row => [String(row?.companyId || ''), String(row?.methodId || row?.method || '')]));
+  const configuredDeliveryRequested = Boolean(deliveryCity);
+
   const checkoutId = `achat_${crypto.randomUUID()}`;
   const now = new Date().toISOString();
   const createdOrders = [];
@@ -1806,8 +1882,26 @@ async function handlePublicOrder(request, env) {
       if (item) group.changedItems.push(item);
     }
     const subtotal = orderItems.reduce((sum, line) => sum + line.total, 0);
-    const deliveryFeeRate = subtotal <= 0 ? 0 : subtotal <= 4999 ? 0.10 : subtotal <= 24999 ? 0.05 : subtotal <= 99999 ? 0.02 : 0.015;
-    const deliveryFee = Math.round(subtotal * deliveryFeeRate);
+    let deliveryFeeRate = marketDeliveryRateForSubtotal(subtotal);
+    let deliveryFee = Math.round(subtotal * deliveryFeeRate);
+    let deliveryCityForOrder = '';
+    let deliveryAddressForOrder = '';
+    let shippingMethod = '';
+    let shippingMethodId = '';
+    let shippingCityFee = deliveryFee;
+    let shippingMethodFee = 0;
+    if (configuredDeliveryRequested) {
+      const delivery = calculateMarketDelivery(group.company, subtotal, deliveryCity, shippingByCompany.get(String(companyId)) || '');
+      deliveryFeeRate = delivery.deliveryFeeRate;
+      deliveryFee = delivery.deliveryFee;
+      deliveryCityForOrder = delivery.city;
+      deliveryAddressForOrder = deliveryAddressDetail;
+      shippingMethod = delivery.methodName;
+      shippingMethodId = delivery.methodId;
+      shippingCityFee = delivery.cityFee;
+      shippingMethodFee = delivery.methodFee;
+      if (!delivery.pickup && !deliveryAddressForOrder) throw new HttpError(400, 'Le détail sur l’adresse de livraison est obligatoire.', 'DELIVERY_ADDRESS_REQUIRED');
+    }
     const total = subtotal + deliveryFee;
     grandTotal += total;
     const order = {
@@ -1824,6 +1918,9 @@ async function handlePublicOrder(request, env) {
       item: orderItems.map(x => x.item).join(', '),
       qty: orderItems.reduce((a, x) => a + x.qty, 0),
       subtotal, deliveryFeeRate, deliveryFee, total,
+      deliveryCity: deliveryCityForOrder,
+      deliveryAddressDetail: deliveryAddressForOrder,
+      shippingMethod, shippingMethodId, shippingCityFee, shippingMethodFee,
       paymentMethod: method,
       paymentTiming: payOnDelivery ? 'delivery' : 'now',
       paymentStatus: payOnDelivery ? 'À payer à la livraison' : 'Paiement déclaré par le client',
