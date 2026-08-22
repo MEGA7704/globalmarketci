@@ -6,18 +6,19 @@ V6 ne reconstruit plus toute la marketplace pour chaque client. Les données son
 
 Les anciennes tables JSON restent présentes uniquement comme source de migration et de retour arrière. Après `schema_version=6.0`, les sauvegardes courantes passent par les tables relationnelles.
 
-## Ordre de déploiement obligatoire
+## Ordre de déploiement recommandé — V6.0.1
 
 1. Sauvegarder D1 avant migration : `npx wrangler d1 export global_market_d1 --remote --output backup-before-v6.sql`.
 2. Installer/mettre à jour : `npm install`.
 3. Créer le bucket R2 une seule fois : `npm run media:create` (si le bucket existe déjà, continuer).
-4. Déployer le Worker temps réel : `npm run realtime:deploy`.
-5. Appliquer le schéma relationnel : `npm run db:v6`.
-6. Dans Cloudflare, ajouter les secrets du projet Pages `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_INITIAL_PASSWORD` et surtout `V6_MIGRATION_KEY` (clé aléatoire longue). Ne pas placer les secrets dans `wrangler.json`.
-7. Déployer Pages : `npm run deploy`.
-8. Exécuter la migration UNE FOIS : `npm run migrate:v6 -- https://VOTRE-SITE.pages.dev VOTRE_CLE_MIGRATION`.
-9. Vérifier `https://VOTRE-SITE.pages.dev/api/health` : `relationalV6: true`, `realtimeBound: true`, `mediaBound: true`.
-10. Activer **D1 Read Replication** dans Cloudflare. Le code V6 utilise la Sessions API (`withSession`) et propage `X-D1-Bookmark`, donc les lectures peuvent utiliser les réplicas tout en gardant la cohérence de session.
+4. Appliquer le schéma relationnel : `npm run db:v6`.
+5. Dans Cloudflare, ajouter les secrets du projet Pages `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_INITIAL_PASSWORD` et surtout `V6_MIGRATION_KEY` (clé aléatoire longue). Ne pas placer les secrets dans `wrangler.json`.
+6. Déployer Pages avec le `wrangler.json` principal. Ce premier déploiement ne dépend plus du Worker temps réel.
+7. Exécuter la migration UNE FOIS : `npm run migrate:v6 -- https://VOTRE-SITE.pages.dev VOTRE_CLE_MIGRATION`.
+8. Déployer le Worker temps réel : `npm run realtime:deploy`.
+9. Dans Pages, ajouter la liaison Durable Object `REALTIME_HUB` vers `RealtimeHub` du Worker `global-market-realtime`, puis redéployer.
+10. Vérifier `https://VOTRE-SITE.pages.dev/api/health` : `relationalV6: true`, `realtimeBound: true`, `mediaBound: true`.
+11. Activer **D1 Read Replication** dans Cloudflare. Le code V6 utilise la Sessions API (`withSession`) et propage `X-D1-Bookmark`, donc les lectures peuvent utiliser les réplicas tout en gardant la cohérence de session.
 
 ## Pourquoi cette version tient mieux la charge
 

@@ -2824,6 +2824,7 @@ async function handleApi(request, env, executionCtx) {
     if (url.pathname === '/api/v6/migration-status' && request.method === 'GET') return json({ready:v6Ready,version:await v6MetaGet(env,V6_MIGRATION_META_KEY),status:await v6MetaGet(env,'migration_status')||'not-started'});
     if (url.pathname === '/api/v6/migrate' && request.method === 'POST') { v6AuthorizeMigration(request,env); return json({success:true,...await v6MigrateLegacy(env)}); }
     if (url.pathname.startsWith('/api/v6/media/') && request.method === 'GET') return await handleV6Media(request,env,decodeURIComponent(url.pathname.slice('/api/v6/media/'.length)));
+    if (url.pathname === '/api/v6/realtime-status' && request.method === 'GET') return json({available:Boolean(env.REALTIME_HUB),mode:env.REALTIME_HUB?'websocket':'polling-fallback'});
     if (v6Ready && url.pathname === '/api/v6/realtime' && request.method === 'GET') return await handleV6Realtime(request,env);
     if (url.pathname === '/api/v6/catalog' && request.method === 'GET') return v6Ready ? await handleV6Catalog(request,env,executionCtx) : await handleV6LegacyCatalogBridge(request,env);
     if (url.pathname === '/api/v6/bootstrap' && request.method === 'GET') return v6Ready ? await handleV6Bootstrap(request,env,executionCtx) : await handleV6LegacyBootstrapBridge(request,env);

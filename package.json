@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "6.0.0",
+  "version": "6.0.1",
   "private": true,
-  "description": "GLOBAL MARKET V6.0 - architecture D1 relationnelle, API ciblée paginée, R2 médias et notifications WebSocket via Durable Objects.",
+  "description": "GLOBAL MARKET V6.0.1 - D1 relationnel et déploiement Pages sécurisé; WebSocket Durable Object externe activable après création du Worker temps réel.",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -17,7 +17,8 @@
     "realtime:deploy": "wrangler deploy --config realtime-worker/wrangler.json",
     "media:create": "wrangler r2 bucket create global-market-media",
     "migrate:v6": "node scripts/migrate-v6.mjs",
-    "loadtest:v6": "node scripts/load-test-v6.mjs"
+    "loadtest:v6": "node scripts/load-test-v6.mjs",
+    "pages:deploy": "npm run build && wrangler pages deploy public --project-name=globalmarketci"
   },
   "devDependencies": {
     "wrangler": "^4.27.0"

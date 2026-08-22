@@ -27,5 +27,14 @@
       "binding": "GLOBAL_MARKET_MEDIA",
       "bucket_name": "global-market-media"
     }
-  ]
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "REALTIME_HUB",
+        "class_name": "RealtimeHub",
+        "script_name": "global-market-realtime"
+      }
+    ]
+  }
 }
