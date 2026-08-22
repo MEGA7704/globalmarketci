@@ -1,0 +1,22 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "global-market-realtime",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-22",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "REALTIME_HUB",
+        "class_name": "RealtimeHub"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "RealtimeHub"
+      ]
+    }
+  ]
+}

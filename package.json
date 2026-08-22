@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "5.6.3",
+  "version": "6.0.0",
   "private": true,
-  "description": "GLOBAL MARKET - fluidité cloud renforcée : lecture stale-while-revalidate, cache KV de secours, file d’écriture D1 résiliente et reprise automatique sans interruption.",
+  "description": "GLOBAL MARKET V6.0 - architecture D1 relationnelle, API ciblée paginée, R2 médias et notifications WebSocket via Durable Objects.",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -12,7 +12,12 @@
     "build": "npm run validate && node scripts/build.mjs",
     "check": "npm run build",
     "dev": "npm run build && wrangler pages dev public",
-    "deploy": "npm run build && wrangler pages deploy public --project-name=globalmarketci"
+    "deploy": "npm run build && wrangler pages deploy public --project-name=globalmarketci",
+    "db:v6": "wrangler d1 execute global_market_d1 --remote --file=cloudflare/schema-v6.sql",
+    "realtime:deploy": "wrangler deploy --config realtime-worker/wrangler.json",
+    "media:create": "wrangler r2 bucket create global-market-media",
+    "migrate:v6": "node scripts/migrate-v6.mjs",
+    "loadtest:v6": "node scripts/load-test-v6.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.27.0"
