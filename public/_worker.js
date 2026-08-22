@@ -1,7 +1,4 @@
 const APP_NAME = 'GLOBAL MARKET';
-const V6_SCHEMA_VERSION = '6.0';
-const V6_MIGRATION_META_KEY = 'schema_version';
-const V6_REALTIME_WORKER = 'global-market-realtime';
 const STATE_ID = 'global_market_all';
 const STATE_KEY = `company:${STATE_ID}`;
 const EMPLOYEE_SESSION_COOKIE = 'GLOBAL_MARKET_SESSION';
@@ -21,23 +18,8 @@ const PATCH_RECORD_MAX_BYTES = 1_250_000;
 const PATCH_GLOBAL_SCOPE = '__global__';
 const GLOBAL_CLIENT_SCOPE = '__global_clients__';
 const LEGACY_CREDENTIAL_MIGRATION_KEY = 'security:credentials:migrated:v4';
-const STATE_FALLBACK_PREFIX = 'cache:state:v563:';
-const PUBLIC_PAYLOAD_CACHE_KEY = 'cache:public-payload:v563';
-const CLIENT_PAYLOAD_CACHE_PREFIX = 'cache:client-payload:v563:';
-const PENDING_OPS_PREFIX = 'pending-ops:v563:';
-const FALLBACK_CACHE_TTL = 60 * 60 * 48;
-const FALLBACK_CACHE_MAX_BYTES = 18_000_000;
 let dbReadyPromise = null;
 let legacyMigrationChecked = false;
-let publicStateCache = null;
-let publicStateCacheAt = 0;
-let publicStateLoadPromise = null;
-let d1WriteQueue = Promise.resolve();
-const stateFallbackWriteAt = new Map();
-let publicPayloadCacheWriteAt = 0;
-let v6ReadyCacheValue = null;
-let v6ReadyCacheAt = 0;
-const clientPayloadCacheWriteAt = new Map();
 const AUTH_INIT_KEY = 'security:superadmin:initialized:v2';
 const SUPER_ADMIN_ID = 'superadmin_global_market';
 const SENSITIVE_FIELDS = new Set([
@@ -103,138 +85,13 @@ function errorResponse(error) {
   }
   console.error(error);
   const message = String(error?.message || error || '');
-  if (/overload|too many requests|rate.?limit|quota exceeded|temporar(?:y|ily)|network connection lost|SQLITE_BUSY|database is locked|\bbusy\b|\blocked\b/i.test(message)) {
-    return json({ success: false, error: 'Le stockage cloud est temporairement occupé. La requête sera réessayée après un court délai.', code: 'STORAGE_BUSY' }, { status: 503, headers: { 'Retry-After': '3' } });
+  if (/overload|too many|rate.?limit|quota|temporar|network connection lost/i.test(message)) {
+    return json({ success: false, error: 'Le stockage est momentanément occupé. La sauvegarde sera automatiquement réessayée.', code: 'STORAGE_BUSY' }, { status: 429 });
   }
   if (/too big|too large|SQLITE_TOOBIG|maximum.*size|memory/i.test(message)) {
     return json({ success: false, error: 'Les données à enregistrer sont trop volumineuses. Réduisez les images ou captures.', code: 'STORAGE_TOO_LARGE' }, { status: 413 });
   }
   return json({ success: false, error: 'La sauvegarde n’a pas pu être terminée. Réessayez sans fermer la page.', code: 'STORAGE_WRITE_FAILED' }, { status: 500 });
-}
-
-function isTransientStorageError(error) {
-  if (!error) return false;
-  if (error instanceof HttpError && [408, 425, 429, 500, 502, 503, 504].includes(Number(error.status))) return true;
-  const message = String(error?.message || error || '');
-  return /overload|too many requests|rate.?limit|quota exceeded|temporar(?:y|ily)|network connection lost|SQLITE_BUSY|database is locked|\bbusy\b|\blocked\b/i.test(message);
-}
-
-async function withStorageRetry(task, attempts = 4) {
-  let lastError = null;
-  const delays = [90, 220, 520, 1050, 1800, 3000];
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try { return await task(); }
-    catch (error) {
-      lastError = error;
-      if (!isTransientStorageError(error) || attempt === attempts - 1) throw error;
-      await new Promise(resolve => setTimeout(resolve, delays[Math.min(attempt, delays.length - 1)] + Math.floor(Math.random() * 120)));
-    }
-  }
-  throw lastError;
-}
-
-function fallbackStateKey(companyId = '*') {
-  return `${STATE_FALLBACK_PREFIX}${encodeURIComponent(String(companyId || '*'))}`;
-}
-
-async function readStateFallback(env, companyId = '*') {
-  try {
-    const cached = await env.GLOBAL_MARKET_KV.get(fallbackStateKey(companyId), 'json');
-    if (!cached?.state) return null;
-    return normalizeState(cached.state);
-  } catch (error) {
-    console.warn('Cache de lecture indisponible', error?.message || error);
-    return null;
-  }
-}
-
-async function writeStateFallback(env, companyId, state) {
-  const key = fallbackStateKey(companyId);
-  const now = Date.now();
-  const last = Number(stateFallbackWriteAt.get(key) || 0);
-  if (now - last < 120000) return;
-  const cachedState = companyId === '*' ? cleanClone(state) : scopeState(state, { role: 'admin', companyId });
-  const raw = JSON.stringify({ cachedAt: new Date().toISOString(), state: cachedState });
-  if (new TextEncoder().encode(raw).byteLength > FALLBACK_CACHE_MAX_BYTES) return;
-  stateFallbackWriteAt.set(key, now);
-  try { await env.GLOBAL_MARKET_KV.put(key, raw, { expirationTtl: FALLBACK_CACHE_TTL }); }
-  catch (error) { console.warn('Cache de lecture non actualisé', error?.message || error); }
-}
-
-function pendingOpsPrefixFor(companyId) {
-  return `${PENDING_OPS_PREFIX}${encodeURIComponent(String(companyId || PATCH_GLOBAL_SCOPE))}:`;
-}
-
-async function queuePendingOperations(env, operations, actor) {
-  if (!operations?.length) return null;
-  const companyId = String(actor?.companyId || PATCH_GLOBAL_SCOPE);
-  const key = `${pendingOpsPrefixFor(companyId)}${Date.now().toString(36)}-${randomHex(6)}`;
-  await env.GLOBAL_MARKET_KV.put(key, JSON.stringify({ queuedAt: new Date().toISOString(), companyId, operations }), { expirationTtl: 60 * 60 * 24 * 7 });
-  return key;
-}
-
-function applyPendingOperationsToState(state, operations) {
-  for (const op of operations || []) {
-    const section = String(op?.section || '');
-    const recordId = String(op?.recordId || '');
-    if (!recordId) continue;
-    if (section.startsWith('array:')) applyArrayPatch(state, section.slice(6), recordId, Boolean(op.deleted), op.value ?? null);
-    else if (section.startsWith('object:')) applyObjectPatch(state, section.slice(7), recordId, Boolean(op.deleted), op.value ?? null);
-    else if (section.startsWith('value:')) {
-      const key = section.slice(6);
-      if (op.deleted) delete state[key]; else state[key] = op.value;
-    }
-  }
-  return normalizeState(state);
-}
-
-async function listPendingOperationEntries(env, companyId = '*') {
-  const prefixes = companyId === '*'
-    ? [PENDING_OPS_PREFIX]
-    : [...new Set([pendingOpsPrefixFor(companyId), pendingOpsPrefixFor(GLOBAL_CLIENT_SCOPE), pendingOpsPrefixFor(PATCH_GLOBAL_SCOPE)])];
-  const entries = [];
-  for (const prefix of prefixes) {
-    let cursor;
-    let pages = 0;
-    do {
-      const page = await env.GLOBAL_MARKET_KV.list({ prefix, cursor, limit: 100 });
-      for (const key of page.keys || []) {
-        const payload = await env.GLOBAL_MARKET_KV.get(key.name, 'json');
-        if (payload?.operations?.length) entries.push({ key: key.name, payload });
-      }
-      cursor = page.list_complete ? undefined : page.cursor;
-      pages += 1;
-    } while (cursor && pages < 4);
-  }
-  entries.sort((a, b) => String(a.payload.queuedAt || '').localeCompare(String(b.payload.queuedAt || '')));
-  return entries;
-}
-
-async function applyPendingOperationQueue(env, state, companyId = '*') {
-  try {
-    const entries = await listPendingOperationEntries(env, companyId);
-    for (const entry of entries) applyPendingOperationsToState(state, entry.payload.operations);
-    return { state: normalizeState(state), entries };
-  } catch (error) {
-    console.warn('File de secours non relue', error?.message || error);
-    return { state: normalizeState(state), entries: [] };
-  }
-}
-
-async function drainPendingOperationQueue(env, entries) {
-  for (const entry of (entries || []).slice(0, 12)) {
-    try {
-      const statements = (entry.payload.operations || []).map(op => env.GLOBAL_MARKET_D1.prepare(`INSERT INTO company_state_patches(company_id, section, record_id, deleted, data, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(company_id, section, record_id) DO UPDATE SET deleted=excluded.deleted, data=excluded.data, updated_at=excluded.updated_at`)
-        .bind(String(op.companyId || PATCH_GLOBAL_SCOPE), String(op.section || ''), String(op.recordId || ''), op.deleted ? 1 : 0, op.deleted ? null : patchJson(op.value), String(op.updatedAt || new Date().toISOString())));
-      await enqueueD1Write(async () => runD1Batches(env.GLOBAL_MARKET_D1, statements, 4));
-      await env.GLOBAL_MARKET_KV.delete(entry.key);
-    } catch (error) {
-      if (!isTransientStorageError(error)) console.warn('Échec de reprise de la file D1', error?.message || error);
-      break;
-    }
-  }
 }
 
 function needBindings(env) {
@@ -403,126 +260,87 @@ async function verifyCredential(record, password) {
   return constantTimeEqual(candidate, record.hash);
 }
 
-function dbSchemaStatements(env) {
-  const sql = [
-    `CREATE TABLE IF NOT EXISTS state_meta (company_id TEXT PRIMARY KEY, chunk_count INTEGER NOT NULL, size_bytes INTEGER NOT NULL, updated_at TEXT NOT NULL)`,
-    `CREATE TABLE IF NOT EXISTS state_chunks (company_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (company_id, chunk_index))`,
-    `CREATE TABLE IF NOT EXISTS global_state_meta_v2 (document_id TEXT PRIMARY KEY, revision TEXT NOT NULL, chunk_count INTEGER NOT NULL, size_bytes INTEGER NOT NULL, updated_at TEXT NOT NULL)`,
-    `CREATE TABLE IF NOT EXISTS global_state_chunks_v2 (document_id TEXT NOT NULL, revision TEXT NOT NULL, chunk_index INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (document_id, revision, chunk_index))`,
-    `CREATE TABLE IF NOT EXISTS company_state_meta (company_id TEXT PRIMARY KEY, revision TEXT NOT NULL, chunk_count INTEGER NOT NULL, size_bytes INTEGER NOT NULL, updated_at TEXT NOT NULL)`,
-    `CREATE TABLE IF NOT EXISTS company_state_chunks (company_id TEXT NOT NULL, revision TEXT NOT NULL, chunk_index INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (company_id, revision, chunk_index))`,
-    `CREATE TABLE IF NOT EXISTS company_state_patches (company_id TEXT NOT NULL, section TEXT NOT NULL, record_id TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, data TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (company_id, section, record_id))`,
-    `CREATE TABLE IF NOT EXISTS deleted_companies (company_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL)`,
-    `CREATE TABLE IF NOT EXISTS backups (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL)`,
-    `CREATE TABLE IF NOT EXISTS security_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, actor_id TEXT, company_id TEXT, detail TEXT, ip_hash TEXT, created_at TEXT NOT NULL)`,
-
-    `CREATE TABLE IF NOT EXISTS gm_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)`,
-    `CREATE TABLE IF NOT EXISTS gm_companies (
-      id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT, phone TEXT, status TEXT, plan_code TEXT,
-      subscription_end TEXT, shop_slug TEXT, business_type TEXT, city TEXT, created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL, payload_json TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS gm_users (
-      id TEXT PRIMARY KEY, company_id TEXT, name TEXT, email TEXT, role TEXT NOT NULL, status TEXT NOT NULL,
-      main_admin INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, payload_json TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS gm_items (
-      id TEXT PRIMARY KEY, company_id TEXT NOT NULL, code TEXT, name TEXT NOT NULL, category TEXT, item_type TEXT,
-      sell REAL NOT NULL DEFAULT 0, stock REAL NOT NULL DEFAULT 0, stock_type TEXT, marketplace_hidden INTEGER NOT NULL DEFAULT 0,
-      search_text TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, payload_json TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS gm_sales (
-      id TEXT PRIMARY KEY, company_id TEXT NOT NULL, client_id TEXT, sale_date TEXT, total REAL NOT NULL DEFAULT 0,
-      status TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, payload_json TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS gm_payments (
-      id TEXT PRIMARY KEY, company_id TEXT, order_id TEXT, client_id TEXT, method TEXT, status TEXT,
-      amount REAL NOT NULL DEFAULT 0, currency TEXT, transaction_id TEXT, created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL, payload_json TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS gm_orders (
-      id TEXT PRIMARY KEY, checkout_id TEXT, company_id TEXT NOT NULL, client_id TEXT NOT NULL, order_date TEXT NOT NULL,
-      subtotal REAL NOT NULL DEFAULT 0, delivery_fee REAL NOT NULL DEFAULT 0, total REAL NOT NULL DEFAULT 0,
-      delivery_city TEXT, delivery_neighborhood TEXT, shipping_method TEXT, payment_method TEXT,
-      payment_status TEXT, validation_status TEXT, delivery_status TEXT, deleted_by_client INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL, payload_json TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS gm_order_items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, order_id TEXT NOT NULL, item_id TEXT, item_name TEXT, category TEXT,
-      item_type TEXT, qty REAL NOT NULL DEFAULT 0, unit REAL NOT NULL DEFAULT 0, total REAL NOT NULL DEFAULT 0,
-      FOREIGN KEY(order_id) REFERENCES gm_orders(id) ON DELETE CASCADE
-    )`,
-    `CREATE TABLE IF NOT EXISTS gm_clients (
-      id TEXT PRIMARY KEY, company_id TEXT NOT NULL, name TEXT, phone TEXT, email TEXT, created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL, payload_json TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS gm_market_clients (
-      id TEXT PRIMARY KEY, name TEXT NOT NULL, phone TEXT NOT NULL UNIQUE, email TEXT, created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL, payload_json TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS gm_market_messages (
-      id TEXT PRIMARY KEY, company_id TEXT NOT NULL, client_id TEXT, sender_type TEXT NOT NULL, sender_name TEXT,
-      body TEXT NOT NULL, admin_deleted INTEGER NOT NULL DEFAULT 0, client_deleted INTEGER NOT NULL DEFAULT 0,
-      read_by_admin INTEGER NOT NULL DEFAULT 0, read_by_client INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL, payload_json TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS gm_password_reset_requests (
-      id TEXT PRIMARY KEY, company_id TEXT, user_id TEXT, role TEXT, status TEXT, created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL, payload_json TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS gm_stock_entries (id TEXT PRIMARY KEY, company_id TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, payload_json TEXT NOT NULL)`,
-    `CREATE TABLE IF NOT EXISTS gm_stock_outputs (id TEXT PRIMARY KEY, company_id TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, payload_json TEXT NOT NULL)`,
-    `CREATE TABLE IF NOT EXISTS gm_stock_movements (id TEXT PRIMARY KEY, company_id TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, payload_json TEXT NOT NULL)`,
-    `CREATE TABLE IF NOT EXISTS gm_caisse_logs (id TEXT PRIMARY KEY, company_id TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, payload_json TEXT NOT NULL)`,
-    `CREATE TABLE IF NOT EXISTS gm_company_settings (
-      company_id TEXT NOT NULL, section TEXT NOT NULL, payload_json TEXT NOT NULL, updated_at TEXT NOT NULL,
-      PRIMARY KEY(company_id, section)
-    )`,
-    `CREATE TABLE IF NOT EXISTS gm_client_order_hidden (
-      client_id TEXT NOT NULL, order_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(client_id, order_id)
-    )`,
-
-    `CREATE INDEX IF NOT EXISTS idx_global_state_chunks_v2_current ON global_state_chunks_v2(document_id, revision, chunk_index)`,
-    `CREATE INDEX IF NOT EXISTS idx_company_state_chunks_current ON company_state_chunks(company_id, revision, chunk_index)`,
-    `CREATE INDEX IF NOT EXISTS idx_company_state_patches_scope ON company_state_patches(company_id, section, record_id)`,
-    `CREATE INDEX IF NOT EXISTS idx_backups_company_id ON backups(company_id, id DESC)`,
-    `CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events(created_at DESC)`,
-    `CREATE INDEX IF NOT EXISTS idx_gm_companies_shop_slug ON gm_companies(shop_slug)`,
-    `CREATE INDEX IF NOT EXISTS idx_gm_companies_status ON gm_companies(status, subscription_end)`,
-    `CREATE INDEX IF NOT EXISTS idx_gm_users_company ON gm_users(company_id, role, status)`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_gm_users_email ON gm_users(email) WHERE email IS NOT NULL AND email <> ''`,
-    `CREATE INDEX IF NOT EXISTS idx_gm_items_market ON gm_items(marketplace_hidden, company_id, updated_at DESC)`,
-    `CREATE INDEX IF NOT EXISTS idx_gm_items_company ON gm_items(company_id, updated_at DESC)`,
-    `CREATE INDEX IF NOT EXISTS idx_gm_items_category ON gm_items(category, marketplace_hidden, updated_at DESC)`,
-    `CREATE INDEX IF NOT EXISTS idx_gm_orders_client ON gm_orders(client_id, order_date DESC)`,
-    `CREATE INDEX IF NOT EXISTS idx_gm_orders_company_status ON gm_orders(company_id, validation_status, payment_status, order_date DESC)`,
-    `CREATE INDEX IF NOT EXISTS idx_gm_order_items_order ON gm_order_items(order_id)`,
-    `CREATE INDEX IF NOT EXISTS idx_gm_messages_company ON gm_market_messages(company_id, admin_deleted, created_at DESC)`,
-    `CREATE INDEX IF NOT EXISTS idx_gm_messages_client ON gm_market_messages(client_id, client_deleted, created_at DESC)`,
-    `CREATE INDEX IF NOT EXISTS idx_gm_sales_company_date ON gm_sales(company_id, sale_date DESC)`,
-    `CREATE INDEX IF NOT EXISTS idx_gm_payments_company_date ON gm_payments(company_id, created_at DESC)`,
-    `CREATE INDEX IF NOT EXISTS idx_gm_reset_status ON gm_password_reset_requests(status, created_at DESC)`,
-    `CREATE TRIGGER IF NOT EXISTS trg_gm_items_nonnegative_stock BEFORE UPDATE OF stock ON gm_items
-       WHEN NEW.stock < 0 AND COALESCE(OLD.stock_type,'') <> 'unlimited'
-       BEGIN SELECT RAISE(ABORT, 'INSUFFICIENT_STOCK'); END`
-  ];
-  return sql.map(statement => env.GLOBAL_MARKET_D1.prepare(statement));
-}
-
 async function ensureDB(env) {
   needBindings(env);
   if (!dbReadyPromise) {
-    dbReadyPromise = (async () => {
-      try {
-        await env.GLOBAL_MARKET_D1.prepare('SELECT key FROM gm_meta LIMIT 1').first();
-        return true;
-      } catch (error) {
-        const message = String(error?.message || error || '');
-        if (!/no such table|does not exist|missing table/i.test(message)) throw error;
-        await runD1Batches(env.GLOBAL_MARKET_D1, dbSchemaStatements(env), 20);
-        return true;
-      }
-    })().catch(error => { dbReadyPromise = null; throw error; });
+    dbReadyPromise = env.GLOBAL_MARKET_D1.batch([
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS state_meta (
+        company_id TEXT PRIMARY KEY,
+        chunk_count INTEGER NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+      )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS state_chunks (
+        company_id TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        data TEXT NOT NULL,
+        PRIMARY KEY (company_id, chunk_index)
+      )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS global_state_meta_v2 (
+        document_id TEXT PRIMARY KEY,
+        revision TEXT NOT NULL,
+        chunk_count INTEGER NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+      )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS global_state_chunks_v2 (
+        document_id TEXT NOT NULL,
+        revision TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        data TEXT NOT NULL,
+        PRIMARY KEY (document_id, revision, chunk_index)
+      )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS company_state_meta (
+        company_id TEXT PRIMARY KEY,
+        revision TEXT NOT NULL,
+        chunk_count INTEGER NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+      )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS company_state_chunks (
+        company_id TEXT NOT NULL,
+        revision TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        data TEXT NOT NULL,
+        PRIMARY KEY (company_id, revision, chunk_index)
+      )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS company_state_patches (
+        company_id TEXT NOT NULL,
+        section TEXT NOT NULL,
+        record_id TEXT NOT NULL,
+        deleted INTEGER NOT NULL DEFAULT 0,
+        data TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (company_id, section, record_id)
+      )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS deleted_companies (
+        company_id TEXT PRIMARY KEY,
+        deleted_at TEXT NOT NULL
+      )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS backups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id TEXT NOT NULL,
+        data TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`),
+      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS security_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type TEXT NOT NULL,
+        actor_id TEXT,
+        company_id TEXT,
+        detail TEXT,
+        ip_hash TEXT,
+        created_at TEXT NOT NULL
+      )`),
+      env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_global_state_chunks_v2_current ON global_state_chunks_v2(document_id, revision, chunk_index)'),
+      env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_company_state_chunks_current ON company_state_chunks(company_id, revision, chunk_index)'),
+      env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_company_state_patches_scope ON company_state_patches(company_id, section, record_id)'),
+      env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_backups_company_id ON backups(company_id, id DESC)'),
+      env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events(created_at DESC)')
+    ]).catch(error => {
+      dbReadyPromise = null;
+      throw error;
+    });
   }
   await dbReadyPromise;
 }
@@ -537,7 +355,6 @@ function defaultState() {
     orders: [],
     clients: [],
     marketClients: [],
-    marketMessages: [],
     passwordResetRequests: [],
     app: { name: APP_NAME, storageVersion: 3, initializedAt: new Date().toISOString() }
   };
@@ -550,7 +367,7 @@ function dateOnlyPlusDays(startValue, days) {
 
 function normalizeState(value) {
   const data = value && typeof value === 'object' ? value : {};
-  for (const key of ['companies', 'users', 'items', 'sales', 'payments', 'orders', 'clients', 'marketClients', 'marketMessages', 'passwordResetRequests']) {
+  for (const key of ['companies', 'users', 'items', 'sales', 'payments', 'orders', 'clients', 'marketClients', 'passwordResetRequests']) {
     if (!Array.isArray(data[key])) data[key] = [];
   }
   if (!data.app || typeof data.app !== 'object') data.app = {};
@@ -667,30 +484,8 @@ async function writeD1State(env, companyId, raw) {
 
 async function runD1Batches(db, statements, batchSize = COMPANY_BATCH_SIZE) {
   for (let index = 0; index < statements.length; index += batchSize) {
-    const batch = statements.slice(index, index + batchSize);
-    let lastError = null;
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      try {
-        await db.batch(batch);
-        lastError = null;
-        break;
-      } catch (error) {
-        lastError = error;
-        const message = String(error?.message || error || '');
-        const temporary = /SQLITE_BUSY|database is locked|\bbusy\b|\blocked\b|overload|temporar(?:y|ily)|too many requests|rate.?limit/i.test(message);
-        if (!temporary || attempt === 5) throw error;
-        const delays = [120, 300, 700, 1400, 2800, 5200];
-        await new Promise(resolve => setTimeout(resolve, delays[attempt] + Math.floor(Math.random() * 180)));
-      }
-    }
-    if (lastError) throw lastError;
+    await db.batch(statements.slice(index, index + batchSize));
   }
-}
-
-function enqueueD1Write(task) {
-  const run = d1WriteQueue.then(task, task);
-  d1WriteQueue = run.catch(() => undefined);
-  return run;
 }
 
 async function writeGlobalStateV2(env, raw) {
@@ -937,7 +732,7 @@ async function saveState(env, state) {
   return { state: normalized, d1, storage: 'd1-versioned' };
 }
 
-async function loadStatePrimary(env, companyId = '*') {
+async function loadState(env, companyId = '*') {
   await ensureDB(env);
   let state = await readGlobalStateV2(env);
   if (!state) {
@@ -949,35 +744,13 @@ async function loadStatePrimary(env, companyId = '*') {
   }
   state = normalizeState(state);
   await ensureLegacyCredentialsMigrated(env, state);
+
+  // Les modifications courantes sont lues depuis de petits documents par entreprise.
+  // Un utilisateur normal ne charge que son entreprise, ce qui réduit fortement CPU et mémoire.
   const snapshots = await readCompanySnapshots(env, companyId === '*' ? null : companyId);
   for (const entry of snapshots) state = applyCompanySnapshot(state, entry.companyId, entry.state);
   state = await applyStoredStatePatches(env, state, companyId);
   state = await applyDeletedCompanies(env, state, companyId);
-  return normalizeState(state);
-}
-
-async function loadStateLegacy(env, companyId = '*') {
-  let primaryState = null;
-  let lastError = null;
-  try {
-    primaryState = await withStorageRetry(() => loadStatePrimary(env, companyId), 4);
-  } catch (error) {
-    lastError = error;
-    if (!isTransientStorageError(error)) throw error;
-  }
-
-  let state = primaryState || await readStateFallback(env, companyId);
-  if (!state && companyId !== '*') state = await readStateFallback(env, '*');
-  if (!state) throw lastError || new HttpError(503, 'Le stockage cloud est temporairement indisponible.', 'STORAGE_BUSY', { 'Retry-After': '2' });
-
-  const pending = await applyPendingOperationQueue(env, state, companyId);
-  state = pending.state;
-
-  if (primaryState) {
-    await writeStateFallback(env, companyId, state);
-    // Reprise opportuniste non bloquante : la lecture reste prioritaire.
-    if (pending.entries.length) drainPendingOperationQueue(env, pending.entries).catch(error => console.warn('Reprise D1 différée', error?.message || error));
-  }
   return normalizeState(state);
 }
 
@@ -1176,7 +949,7 @@ async function createClientSession(env, client, auth) {
   return { sid, session };
 }
 
-async function getClientSession(request, env, requireCsrf = false, suppliedState = null) {
+async function getClientSession(request, env, requireCsrf = false) {
   const sid = getCookie(request, CLIENT_SESSION_COOKIE);
   if (!sid) throw new HttpError(401, 'Connexion client requise.', 'CLIENT_UNAUTHENTICATED');
   const session = await env.GLOBAL_MARKET_KV.get(`client-session:${sid}`, 'json');
@@ -1191,7 +964,7 @@ async function getClientSession(request, env, requireCsrf = false, suppliedState
   }
   // Le compte client GLOBAL MARKET n'appartient plus à une boutique particulière.
   // On charge donc l'état global afin de retrouver le même client et ses commandes multi-boutiques.
-  const state = suppliedState || await loadState(env, '*');
+  const state = await loadState(env, '*');
   const client = state.marketClients.find(c => c.id === session.clientId);
   const auth = client ? await getClientAuth(env, client.id) : null;
   if (!client || !auth || Number(auth.version) !== Number(session.authVersion)) {
@@ -1220,7 +993,7 @@ function cleanClone(value) {
 }
 
 const COMPANY_ARRAY_KEYS = [
-  'items', 'sales', 'orders', 'clients', 'marketClients', 'marketMessages', 'stockEntries', 'stockOutputs',
+  'items', 'sales', 'orders', 'clients', 'marketClients', 'stockEntries', 'stockOutputs',
   'stockMovements', 'caisseLogs', 'passwordResetRequests', 'payments'
 ];
 const COMPANY_OBJECT_KEYS = ['categories', 'monthlyObligations', 'obligations', 'cartClearedAt', 'cartValidatedAt'];
@@ -1378,22 +1151,17 @@ async function markCompanyDeleted(env, companyId) {
 
 async function writePatchStatements(env, statements) {
   if (!statements.length) return { patchCount: 0, storage: 'd1-delta' };
-  const result = await enqueueD1Write(async () => {
-    await runD1Batches(env.GLOBAL_MARKET_D1, statements, 4);
-    return { patchCount: statements.length, storage: 'd1-delta' };
-  });
-  invalidatePublicStateCache();
-  return result;
+  await runD1Batches(env.GLOBAL_MARKET_D1, statements, 6);
+  return { patchCount: statements.length, storage: 'd1-delta' };
 }
-
 
 function allowedDeltaArrayKeys(role) {
   if (role === 'superadmin' || role === 'system') return new Set(['companies', 'users', ...COMPANY_ARRAY_KEYS]);
   if (role === 'caisse') return new Set(['items', 'sales', 'orders', 'stockEntries', 'stockOutputs', 'stockMovements', 'caisseLogs']);
-  return new Set(['companies', 'items', 'sales', 'orders', 'clients', 'marketClients', 'marketMessages', 'stockEntries', 'stockOutputs', 'stockMovements', 'caisseLogs']);
+  return new Set(['companies', 'items', 'sales', 'orders', 'clients', 'marketClients', 'stockEntries', 'stockOutputs', 'stockMovements', 'caisseLogs']);
 }
 
-async function persistStateDeltaLegacy(env, delta, actor) {
+async function persistStateDelta(env, delta, actor) {
   await ensureDB(env);
   if (!delta || typeof delta !== 'object') throw new HttpError(400, 'Modification de sauvegarde invalide.', 'INVALID_DELTA');
   if (containsCredentialFields(delta)) throw new HttpError(400, 'Les mots de passe ne doivent jamais être enregistrés dans les données de l’application.', 'CREDENTIALS_IN_STATE');
@@ -1404,17 +1172,14 @@ async function persistStateDeltaLegacy(env, delta, actor) {
   const allowedArrays = allowedDeltaArrayKeys(role);
   const now = new Date().toISOString();
   const statements = [];
-  const operations = [];
   const upsertPatch = (companyId, section, recordId, value) => {
     const raw = patchJson(value);
-    operations.push({ companyId, section, recordId: String(recordId), deleted: false, value: cleanClone(value), updatedAt: now });
     statements.push(env.GLOBAL_MARKET_D1.prepare(`INSERT INTO company_state_patches(company_id, section, record_id, deleted, data, updated_at)
       VALUES (?, ?, ?, 0, ?, ?)
       ON CONFLICT(company_id, section, record_id) DO UPDATE SET deleted=0, data=excluded.data, updated_at=excluded.updated_at`
     ).bind(companyId, section, String(recordId), raw, now));
   };
   const deletePatch = (companyId, section, recordId) => {
-    operations.push({ companyId, section, recordId: String(recordId), deleted: true, value: null, updatedAt: now });
     statements.push(env.GLOBAL_MARKET_D1.prepare(`INSERT INTO company_state_patches(company_id, section, record_id, deleted, data, updated_at)
       VALUES (?, ?, ?, 1, NULL, ?)
       ON CONFLICT(company_id, section, record_id) DO UPDATE SET deleted=1, data=NULL, updated_at=excluded.updated_at`
@@ -1475,14 +1240,7 @@ async function persistStateDeltaLegacy(env, delta, actor) {
   if (isSuper) {
     for (const [key, value] of Object.entries(delta.values || {})) upsertPatch(PATCH_GLOBAL_SCOPE, `value:${key}`, key, value);
   }
-  try {
-    return await writePatchStatements(env, statements);
-  } catch (error) {
-    if (!isTransientStorageError(error)) throw error;
-    const queueKey = await queuePendingOperations(env, operations, { role, companyId: actorCompanyId || PATCH_GLOBAL_SCOPE });
-    invalidatePublicStateCache();
-    return { patchCount: operations.length, storage: 'kv-write-ahead-fallback', queued: true, queueKey };
-  }
+  return writePatchStatements(env, statements);
 }
 
 
@@ -1608,7 +1366,7 @@ async function handleDeleteCompany(request, env) {
   }
 
   removeCompanyDataFromState(ctx.state, companyId);
-  if(await v6IsReady(env)) await v6DeleteCompanyCascade(env,companyId); else await markCompanyDeleted(env, companyId);
+  await markCompanyDeleted(env, companyId);
   const saved = { state: ctx.state };
   await deleteKvSessionsForCompany(env, companyId);
   await audit(
@@ -1762,86 +1520,25 @@ function publicItem(item) {
   return Object.fromEntries(allowed.map(k => [k, item[k]]));
 }
 
-async function loadPublicStateCached(env) {
-  const now = Date.now();
-  if (publicStateCache && now - publicStateCacheAt < 3500) return cleanClone(publicStateCache);
-  if (!publicStateLoadPromise) {
-    publicStateLoadPromise = loadState(env, '*').then(state => {
-      publicStateCache = cleanClone(state);
-      publicStateCacheAt = Date.now();
-      return publicStateCache;
-    }).finally(() => { publicStateLoadPromise = null; });
-  }
-  return cleanClone(await publicStateLoadPromise);
-}
-
-function invalidatePublicStateCache() {
-  publicStateCache = null;
-  publicStateCacheAt = 0;
-}
-
-async function cachePublicPayload(env, payload, clientId = '') {
-  const base = { companies: payload.companies || [], items: payload.items || [], marketClients: [], orders: [], marketMessages: [], clientDeletedOrders: {}, app: payload.app || {}, clientSession: null };
-  const now = Date.now();
-  if (now - publicPayloadCacheWriteAt > 120000) {
-    const raw = JSON.stringify(base);
-    if (new TextEncoder().encode(raw).byteLength <= FALLBACK_CACHE_MAX_BYTES) {
-      publicPayloadCacheWriteAt = now;
-      try { await env.GLOBAL_MARKET_KV.put(PUBLIC_PAYLOAD_CACHE_KEY, raw, { expirationTtl: FALLBACK_CACHE_TTL }); } catch {}
-    }
-  }
-  if (clientId) {
-    const last = Number(clientPayloadCacheWriteAt.get(clientId) || 0);
-    if (now - last > 90000) {
-      const raw = JSON.stringify(payload);
-      if (new TextEncoder().encode(raw).byteLength <= FALLBACK_CACHE_MAX_BYTES) {
-        clientPayloadCacheWriteAt.set(clientId, now);
-        try { await env.GLOBAL_MARKET_KV.put(`${CLIENT_PAYLOAD_CACHE_PREFIX}${clientId}`, raw, { expirationTtl: FALLBACK_CACHE_TTL }); } catch {}
-      }
-    }
-  }
-}
-
 async function publicLoadPayload(request, env) {
-  let state = null;
-  let loadError = null;
-  try { state = await loadPublicStateCached(env); }
-  catch (error) { loadError = error; if (!isTransientStorageError(error)) throw error; }
-
-  if (!state) {
-    const sid = getCookie(request, CLIENT_SESSION_COOKIE);
-    const session = sid ? await env.GLOBAL_MARKET_KV.get(`client-session:${sid}`, 'json') : null;
-    if (session?.clientId && Number(session.expiresAt || 0) > Date.now()) {
-      const clientCached = await env.GLOBAL_MARKET_KV.get(`${CLIENT_PAYLOAD_CACHE_PREFIX}${session.clientId}`, 'json');
-      if (clientCached) return clientCached;
-    }
-    const publicCached = await env.GLOBAL_MARKET_KV.get(PUBLIC_PAYLOAD_CACHE_KEY, 'json');
-    if (publicCached) return publicCached;
-    throw loadError || new HttpError(503, 'Catalogue momentanément indisponible.', 'STORAGE_BUSY', { 'Retry-After': '2' });
-  }
-
+  const state = await loadState(env, '*');
   const payload = {
     companies: state.companies.map(publicCompany),
     items: state.items.map(publicItem),
     marketClients: [],
     orders: [],
-    marketMessages: [],
     clientDeletedOrders: {},
     app: state.app || {}
   };
-  let clientId = '';
   try {
-    const clientAuth = await getClientSession(request, env, false, state);
-    clientId = clientAuth.client.id;
+    const clientAuth = await getClientSession(request, env, false);
     payload.marketClients = [cleanClone(clientAuth.client)];
     payload.orders = state.orders.filter(o => o.clientId === clientAuth.client.id).map(cleanClone);
-    payload.marketMessages = (state.marketMessages || []).filter(m => m.clientId === clientAuth.client.id && !m.clientDeleted).map(cleanClone);
     payload.clientDeletedOrders[clientAuth.client.id] = (state.clientDeletedOrders || {})[clientAuth.client.id] || [];
     payload.clientSession = publicClientSessionView(clientAuth.session);
   } catch {
     payload.clientSession = null;
   }
-  await cachePublicPayload(env, payload, clientId);
   return payload;
 }
 
@@ -2323,548 +2020,21 @@ async function handlePublicOrder(request, env) {
   return json({ success: true, checkoutId, orders: createdOrders.map(cleanClone), grandTotal }, { status: 201 });
 }
 
-async function handlePublicOrderCancel(request, env) {
-  const ctx = await getClientSession(request, env, true);
-  const body = await readJson(request, 20_000);
-  const order = ctx.state.orders.find(o => o.id === body.orderId && o.clientId === ctx.client.id);
-  if (!order) throw new HttpError(404, 'Commande introuvable.', 'ORDER_NOT_FOUND');
-  if (String(order.paymentStatus || '').toLowerCase().includes('confirm')) {
-    throw new HttpError(409, 'Une commande dont le paiement a été confirmé ne peut plus être annulée.', 'ORDER_PAYMENT_CONFIRMED');
-  }
-  if (String(order.validationStatus || '').toLowerCase().includes('annul')) return json({ success: true, order: cleanClone(order) });
-  const changedItems = [];
-  if (!order.stockRestored) {
-    for (const line of Array.isArray(order.items) ? order.items : []) {
-      const item = ctx.state.items.find(i => i.id === line.itemId && i.companyId === order.companyId);
-      if (item && String(line.type || '').toLowerCase() === 'produit' && item.stockType !== 'unlimited') {
-        item.stock = Number(item.stock || 0) + Number(line.qty || 0);
-        changedItems.push(item);
-      }
-    }
-    order.stockRestored = true;
-  }
-  order.validationStatus = 'Annuler';
-  order.deliveryStatus = 'Aucune action';
-  order.afterSaleStatus = 'Annulée par le client';
-  order.delivery = 'Commande annulée';
-  order.clientCancelled = true;
-  order.cancelledAt = new Date().toISOString();
-  order.cancelledBy = 'client';
-  order.marketplaceReported = false;
-  await persistStateDelta(env, { arrays: {
-    items: { upserts: changedItems, deletes: [] },
-    orders: { upserts: [order], deletes: [] }
-  } }, { role: 'system', companyId: order.companyId });
-  return json({ success: true, order: cleanClone(order) });
-}
-
 async function handlePublicOrderDelete(request, env) {
   const ctx = await getClientSession(request, env, true);
   const body = await readJson(request, 20_000);
   const order = ctx.state.orders.find(o => o.id === body.orderId && o.clientId === ctx.client.id);
   if (!order) throw new HttpError(404, 'Commande introuvable.', 'ORDER_NOT_FOUND');
-  if (String(order.paymentStatus || '').toLowerCase().includes('confirm')) {
-    throw new HttpError(409, 'Une commande payée et confirmée ne peut plus être supprimée.', 'ORDER_PAYMENT_CONFIRMED');
-  }
-  if (!String(order.validationStatus || '').toLowerCase().includes('annul')) {
-    throw new HttpError(409, 'Annulez d’abord la commande avant de la supprimer.', 'ORDER_NOT_CANCELLED');
-  }
-  await persistStateDelta(env, { arrays: { orders: { upserts: [], deletes: [{ id: order.id, companyId: order.companyId }] } } }, { role: 'system', companyId: order.companyId });
-  return json({ success: true });
-}
-
-async function handlePublicOrderPayment(request, env) {
-  const ctx = await getClientSession(request, env, true);
-  const body = await readJson(request, 30_000);
-  const order = ctx.state.orders.find(o => o.id === body.orderId && o.clientId === ctx.client.id);
-  if (!order) throw new HttpError(404, 'Commande introuvable.', 'ORDER_NOT_FOUND');
-  const validation = String(order.validationStatus || '').toLowerCase();
-  if (!validation.includes('valid')) throw new HttpError(409, 'Le paiement est disponible uniquement après validation de la commande par la boutique.', 'ORDER_NOT_VALIDATED');
-  if (validation.includes('annul')) throw new HttpError(409, 'Cette commande est annulée.', 'ORDER_CANCELLED');
-  if (String(order.paymentStatus || '').toLowerCase().includes('confirm')) throw new HttpError(409, 'Le paiement de cette commande est déjà confirmé.', 'PAYMENT_ALREADY_CONFIRMED');
-  const method = String(body.method || '').trim().toUpperCase();
-  if (!['WAVE', 'USDT TRC20', 'USDTTRC20'].includes(method)) throw new HttpError(400, 'Moyen de paiement invalide.', 'INVALID_PAYMENT_METHOD');
-  const transactionId = String(body.transactionId || '').trim().slice(0, 200);
-  if (!transactionId) throw new HttpError(400, 'ID de la transaction obligatoire.', 'TRANSACTION_ID_REQUIRED');
-  order.paymentMethod = method.startsWith('USDT') ? 'USDT TRC20' : 'WAVE';
-  order.transactionId = transactionId;
-  order.paymentRef = transactionId;
-  order.paymentProofType = 'transaction_id';
-  order.paymentStatus = 'Paiement déclaré par le client';
-  order.clientPaymentSubmittedAt = new Date().toISOString();
+  order.clientDeletedIds = order.clientDeletedIds || [];
+  if (!order.clientDeletedIds.includes(ctx.client.id)) order.clientDeletedIds.push(ctx.client.id);
   await persistStateDelta(env, { arrays: { orders: { upserts: [order], deletes: [] } } }, { role: 'system', companyId: order.companyId });
-  return json({ success: true, order: cleanClone(order) });
-}
-
-async function handlePublicClientProfileUpdate(request, env) {
-  const ctx = await getClientSession(request, env, true);
-  const body = await readJson(request, 50_000);
-  const client = ctx.client;
-  const oldPhone = normalizePhone(client.phone);
-  const newName = String(body.name ?? client.name ?? '').trim().slice(0, 160);
-  const newPhone = normalizePhone(body.phone ?? client.phone);
-  const newEmail = normalizeIdentifier(body.email ?? client.email);
-  const currentPassword = String(body.currentPassword || '');
-  const newPasswordRaw = String(body.newPassword || '');
-  if (!newName || !newPhone) throw new HttpError(400, 'Nom et identifiant / téléphone obligatoires.', 'MISSING_FIELDS');
-  const changingPhone = newPhone !== oldPhone;
-  const changingPassword = Boolean(newPasswordRaw);
-  if (changingPhone || changingPassword) {
-    if (!currentPassword || !(await verifyCredential(ctx.auth, currentPassword))) throw new HttpError(401, 'Mot de passe actuel incorrect.', 'CURRENT_PASSWORD_INVALID');
-  }
-  if (changingPhone) {
-    const existingId = await env.GLOBAL_MARKET_KV.get(globalClientIndexKey(newPhone));
-    if (existingId && existingId !== client.id) throw new HttpError(409, 'Cet identifiant / téléphone est déjà utilisé.', 'PHONE_EXISTS');
-    if ((ctx.state.marketClients || []).some(c => c.id !== client.id && normalizePhone(c.phone) === newPhone)) throw new HttpError(409, 'Cet identifiant / téléphone est déjà utilisé.', 'PHONE_EXISTS');
-  }
-  client.name = newName;
-  client.phone = newPhone;
-  client.email = newEmail;
-  client.updatedAt = new Date().toISOString();
-  let newAuth = ctx.auth;
-  if (changingPhone || changingPassword) {
-    const passwordToWrite = changingPassword ? validatePassword(newPasswordRaw, 'client') : currentPassword;
-    newAuth = await writeClientCredential(env, client, passwordToWrite);
-  }
-  await persistStateDelta(env, { arrays: { marketClients: { upserts: [client], deletes: [] } } }, { role: 'system', companyId: GLOBAL_CLIENT_SCOPE });
-  if (changingPhone || changingPassword) {
-    await env.GLOBAL_MARKET_KV.delete(`client-session:${ctx.sid}`);
-    const created = await createClientSession(env, client, newAuth);
-    return json({ success: true, client: cleanClone(client), session: publicClientSessionView(created.session) }, { headers: { 'Set-Cookie': setCookie(CLIENT_SESSION_COOKIE, created.sid, CLIENT_SESSION_TTL) } });
-  }
-  return json({ success: true, client: cleanClone(client), session: publicClientSessionView(ctx.session) });
-}
-
-async function handlePublicClientResetRequest(request, env) {
-  assertSameOrigin(request);
-  const body = await readJson(request, 30_000);
-  const phone = normalizePhone(body.phone || body.identifier);
-  const ip = requestIp(request);
-  const key = `rate:client-reset-request:${await rateKeyHash(`${ip}:${phone}`)}`;
-  const rec = await getRateRecord(env, key);
-  if (rec.resetAt > Date.now() && rec.count >= 3) throw new HttpError(429, 'Trop de demandes. Réessayez plus tard.', 'RATE_LIMITED');
-  const state = await loadState(env, '*');
-  const client = (state.marketClients || []).find(c => normalizePhone(c.phone) === phone);
-  if (client) {
-    state.passwordResetRequests = state.passwordResetRequests || [];
-    let req = state.passwordResetRequests.find(r => r.role === 'client' && r.userId === client.id && r.status === 'pending');
-    if (!req) {
-      req = {
-        id: `rst_${crypto.randomUUID()}`, companyId: GLOBAL_CLIENT_SCOPE, userId: client.id,
-        userName: client.name || '', email: client.email || '', role: 'client', phone: client.phone || phone,
-        reason: String(body.reason || 'Mot de passe oublié').slice(0, 300), status: 'pending', createdAt: new Date().toISOString()
-      };
-      await persistStateDelta(env, { arrays: { passwordResetRequests: { upserts: [req], deletes: [] } } }, { role: 'system', companyId: GLOBAL_CLIENT_SCOPE });
-    }
-  }
-  await env.GLOBAL_MARKET_KV.put(key, JSON.stringify({ count: (rec.count || 0) + 1, resetAt: Date.now() + 3600000 }), { expirationTtl: 3600 });
-  return json({ success: true, message: 'Si le compte existe, la demande de réinitialisation a été transmise au Super Admin GLOBAL MARKET.' });
-}
-
-async function handleSuperResetClientPassword(request, env) {
-  const ctx = await getEmployeeSession(request, env, true);
-  requireRole(ctx.user, ['superadmin']);
-  const body = await readJson(request, 30_000);
-  const client = (ctx.state.marketClients || []).find(c => c.id === body.clientId);
-  if (!client) throw new HttpError(404, 'Compte client introuvable.', 'CLIENT_NOT_FOUND');
-  const tempPassword = generateTempPassword();
-  await writeClientCredential(env, client, tempPassword);
-  const reset = (ctx.state.passwordResetRequests || []).find(r => r.id === body.requestId && r.role === 'client' && r.userId === client.id);
-  if (reset) {
-    reset.status = 'done'; reset.doneAt = new Date().toISOString(); reset.doneBy = ctx.user.id;
-  }
-  await persistStateDelta(env, { arrays: {
-    marketClients: { upserts: [client], deletes: [] },
-    passwordResetRequests: { upserts: reset ? [reset] : [], deletes: [] }
-  } }, { role: 'system', companyId: GLOBAL_CLIENT_SCOPE });
-  return json({ success: true, temporaryPassword: tempPassword });
-}
-
-async function handlePublicMessageSend(request, env) {
-  assertSameOrigin(request);
-  const body = await readJson(request, 50_000);
-  const state = await loadState(env, '*');
-  const companyId = String(body.companyId || '').trim();
-  const company = state.companies.find(c => c.id === companyId);
-  if (!company) throw new HttpError(404, 'Boutique introuvable.', 'COMPANY_NOT_FOUND');
-  const text = String(body.message || '').trim().slice(0, 3000);
-  if (!text) throw new HttpError(400, 'Message obligatoire.', 'MESSAGE_REQUIRED');
-  let client = null;
-  try { client = (await getClientSession(request, env, false)).client; } catch {}
-  const message = {
-    id: `msg_${crypto.randomUUID()}`, companyId, clientId: client?.id || '',
-    clientName: client?.name || String(body.name || 'Visiteur').trim().slice(0, 160),
-    clientPhone: client?.phone || normalizePhone(body.phone), clientEmail: client?.email || normalizeIdentifier(body.email),
-    senderType: 'client', senderName: client?.name || String(body.name || 'Visiteur').trim().slice(0, 160),
-    body: text, createdAt: new Date().toISOString(), adminDeleted: false, clientDeleted: false, readByAdmin: false, readByClient: true
-  };
-  await persistStateDelta(env, { arrays: { marketMessages: { upserts: [message], deletes: [] } } }, { role: 'system', companyId });
-  return json({ success: true, message: cleanClone(message) }, { status: 201 });
-}
-
-async function handlePublicMessageDelete(request, env) {
-  const ctx = await getClientSession(request, env, true);
-  const body = await readJson(request, 50_000);
-  const ids = new Set((Array.isArray(body.ids) ? body.ids : [body.id]).map(String).filter(Boolean).slice(0, 200));
-  const changed = [];
-  for (const msg of ctx.state.marketMessages || []) {
-    if (ids.has(String(msg.id)) && msg.clientId === ctx.client.id) {
-      msg.clientDeleted = true; msg.clientDeletedAt = new Date().toISOString(); changed.push(msg);
-    }
-  }
-  const byCompany = new Map();
-  for (const msg of changed) {
-    if (!byCompany.has(msg.companyId)) byCompany.set(msg.companyId, []);
-    byCompany.get(msg.companyId).push(msg);
-  }
-  for (const [companyId, rows] of byCompany) {
-    await persistStateDelta(env, { arrays: { marketMessages: { upserts: rows, deletes: [] } } }, { role: 'system', companyId });
-  }
-  return json({ success: true, count: changed.length });
-}
-
-
-/* ==========================================================================\n   GLOBAL MARKET V6.0 — stockage relationnel D1 + API ciblée + temps réel DO\n   Les anciennes tables JSON sont conservées uniquement pour la migration.\n   ========================================================================== */
-function v6Now() { return new Date().toISOString(); }
-function v6JsonParse(raw, fallback = {}) { try { return raw ? JSON.parse(raw) : fallback; } catch { return fallback; } }
-function v6Payload(row) { return v6JsonParse(row?.payload_json, {}); }
-function v6Bool(value) { return value ? 1 : 0; }
-function v6Created(row) { return String(row?.createdAt || row?.date || row?.created_at || v6Now()); }
-function v6Updated(row) { return String(row?.updatedAt || row?.updated_at || v6Now()); }
-function v6SearchText(row) { return [row?.name,row?.code,row?.cat,row?.category,row?.detail,row?.marketplaceDesc].filter(Boolean).join(' ').toLowerCase().slice(0,4000); }
-function v6ReadDb(request, env, strong = false) {
-  const bookmark = request?.headers?.get?.('X-D1-Bookmark') || (strong ? 'first-primary' : 'first-unconstrained');
-  return typeof env.GLOBAL_MARKET_D1.withSession === 'function' ? env.GLOBAL_MARKET_D1.withSession(bookmark) : env.GLOBAL_MARKET_D1;
-}
-function v6AttachBookmark(response, db) {
-  try { const bookmark = db?.getBookmark?.(); if (bookmark) response.headers.set('X-D1-Bookmark', bookmark); } catch {}
-  response.headers.set('X-Global-Market-Storage', 'D1-RELATIONAL-V6');
-  return response;
-}
-async function v6MetaGet(env, key) { await ensureDB(env); const row = await env.GLOBAL_MARKET_D1.prepare('SELECT value FROM gm_meta WHERE key=?').bind(key).first(); return row?.value ?? null; }
-async function v6MetaSet(env, key, value) { const now=v6Now(); await env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_meta(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`).bind(key,String(value),now).run(); if(key===V6_MIGRATION_META_KEY){v6ReadyCacheValue=String(value)===V6_SCHEMA_VERSION;v6ReadyCacheAt=Date.now();} }
-async function v6IsReady(env, force=false) { const now=Date.now(); if(!force && v6ReadyCacheValue!==null && now-v6ReadyCacheAt<60000)return v6ReadyCacheValue; const ready=(await v6MetaGet(env,V6_MIGRATION_META_KEY))===V6_SCHEMA_VERSION;v6ReadyCacheValue=ready;v6ReadyCacheAt=now;return ready; }
-
-function v6CompanyFromRow(row) { if(!row)return null; return {...v6Payload(row),id:row.id,name:row.name,email:row.email||'',phone:row.phone||'',status:row.status||'',planCode:row.plan_code||'',subscriptionEnd:row.subscription_end||'',shopSlug:row.shop_slug||'',businessType:row.business_type||''}; }
-function v6UserFromRow(row) { if(!row)return null; return {...v6Payload(row),id:row.id,companyId:row.company_id||null,name:row.name||'',email:row.email||'',role:row.role,status:row.status,mainAdmin:Boolean(row.main_admin)}; }
-function v6ItemFromRow(row) { if(!row)return null; return {...v6Payload(row),id:row.id,companyId:row.company_id,code:row.code||'',name:row.name||'',cat:row.category||'',type:row.item_type||'',sell:Number(row.sell||0),stock:Number(row.stock||0),stockType:row.stock_type||'',marketplaceHidden:Boolean(row.marketplace_hidden)}; }
-function v6OrderFromRow(row) { if(!row)return null; return {...v6Payload(row),id:row.id,checkoutId:row.checkout_id||'',companyId:row.company_id,clientId:row.client_id,date:row.order_date,subtotal:Number(row.subtotal||0),deliveryFee:Number(row.delivery_fee||0),total:Number(row.total||0),deliveryCity:row.delivery_city||'',deliveryNeighborhood:row.delivery_neighborhood||'',shippingMethod:row.shipping_method||'',paymentMethod:row.payment_method||'',paymentStatus:row.payment_status||'',validationStatus:row.validation_status||'',deliveryStatus:row.delivery_status||''}; }
-function v6ClientFromRow(row) { if(!row)return null; return {...v6Payload(row),id:row.id,companyId:row.company_id,name:row.name||'',phone:row.phone||'',email:row.email||''}; }
-function v6MarketClientFromRow(row) { if(!row)return null; return {...v6Payload(row),id:row.id,companyId:GLOBAL_CLIENT_SCOPE,scope:'global',name:row.name||'',phone:row.phone||'',email:row.email||''}; }
-function v6MessageFromRow(row) { if(!row)return null; return {...v6Payload(row),id:row.id,companyId:row.company_id,clientId:row.client_id||'',senderType:row.sender_type,senderName:row.sender_name||'',body:row.body,adminDeleted:Boolean(row.admin_deleted),clientDeleted:Boolean(row.client_deleted),readByAdmin:Boolean(row.read_by_admin),readByClient:Boolean(row.read_by_client),createdAt:row.created_at}; }
-function v6GenericFromRow(row) { return row ? v6Payload(row) : null; }
-
-function v6DataUri(value) { return /^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/i.exec(String(value||'')); }
-async function v6ExternalizeMedia(env, ownerType, ownerId, field, value) {
-  const match=v6DataUri(value); if(!match || !env.GLOBAL_MARKET_MEDIA) return value;
-  const mime=match[1].slice(0,100); const bin=atob(match[2].replace(/\s+/g,'')); const bytes=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
-  const ext=(mime.split('/')[1]||'bin').replace(/[^a-z0-9]/gi,'').slice(0,8)||'bin';
-  const key=`${ownerType}/${ownerId}/${field}-${crypto.randomUUID()}.${ext}`;
-  await env.GLOBAL_MARKET_MEDIA.put(key,bytes,{httpMetadata:{contentType:mime,cacheControl:'public, max-age=31536000'}});
-  return `/api/v6/media/${encodeURIComponent(key)}`;
-}
-async function v6PrepareRecordMedia(env,key,row){
-  const copy=cleanClone(row);
-  if(key==='items' && copy.photo) copy.photo=await v6ExternalizeMedia(env,'items',copy.id,'photo',copy.photo);
-  if(key==='companies') {
-    for(const field of ['logo','shopLogo','shopBannerImage']) if(copy[field]) copy[field]=await v6ExternalizeMedia(env,'companies',copy.id,field,copy[field]);
-  }
-  return copy;
-}
-
-async function v6UpsertStatements(env,key,source){
-  const row=await v6PrepareRecordMedia(env,key,source); const now=v6Now(); const created=v6Created(row), updated=v6Updated(row); const raw=JSON.stringify(row);
-  switch(key){
-    case 'companies': return [env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_companies(id,name,email,phone,status,plan_code,subscription_end,shop_slug,business_type,city,created_at,updated_at,payload_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,email=excluded.email,phone=excluded.phone,status=excluded.status,plan_code=excluded.plan_code,subscription_end=excluded.subscription_end,shop_slug=excluded.shop_slug,business_type=excluded.business_type,city=excluded.city,updated_at=excluded.updated_at,payload_json=excluded.payload_json`).bind(row.id,String(row.name||''),normalizeIdentifier(row.email),String(row.phone||''),String(row.status||row.planCode||'FREE'),String(row.planCode||''),String(row.subscriptionEnd||''),String(row.shopSlug||''),String(row.businessType||''),String(row.city||row.address||''),created,updated,raw)];
-    case 'users': return [env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_users(id,company_id,name,email,role,status,main_admin,created_at,updated_at,payload_json) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET company_id=excluded.company_id,name=excluded.name,email=excluded.email,role=excluded.role,status=excluded.status,main_admin=excluded.main_admin,updated_at=excluded.updated_at,payload_json=excluded.payload_json`).bind(row.id,row.companyId||null,String(row.name||''),normalizeIdentifier(row.email||row.username),String(row.role||'caisse'),String(row.status||'active'),v6Bool(row.mainAdmin),created,updated,raw)];
-    case 'items': return [env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_items(id,company_id,code,name,category,item_type,sell,stock,stock_type,marketplace_hidden,search_text,created_at,updated_at,payload_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET company_id=excluded.company_id,code=excluded.code,name=excluded.name,category=excluded.category,item_type=excluded.item_type,sell=excluded.sell,stock=excluded.stock,stock_type=excluded.stock_type,marketplace_hidden=excluded.marketplace_hidden,search_text=excluded.search_text,updated_at=excluded.updated_at,payload_json=excluded.payload_json`).bind(row.id,String(row.companyId||''),String(row.code||''),String(row.name||''),String(row.cat||row.category||''),String(row.type||''),Number(row.sell||0),Number(row.stock||0),String(row.stockType||''),v6Bool(row.marketplaceHidden),v6SearchText(row),created,updated,raw)];
-    case 'sales': return [env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_sales(id,company_id,client_id,sale_date,total,status,created_at,updated_at,payload_json) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET company_id=excluded.company_id,client_id=excluded.client_id,sale_date=excluded.sale_date,total=excluded.total,status=excluded.status,updated_at=excluded.updated_at,payload_json=excluded.payload_json`).bind(row.id,String(row.companyId||''),String(row.clientId||''),String(row.date||created),Number(row.total||0),String(row.status||row.saleStatus||''),created,updated,raw)];
-    case 'payments': return [env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_payments(id,company_id,order_id,client_id,method,status,amount,currency,transaction_id,created_at,updated_at,payload_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET company_id=excluded.company_id,order_id=excluded.order_id,client_id=excluded.client_id,method=excluded.method,status=excluded.status,amount=excluded.amount,currency=excluded.currency,transaction_id=excluded.transaction_id,updated_at=excluded.updated_at,payload_json=excluded.payload_json`).bind(row.id,String(row.companyId||''),String(row.orderId||''),String(row.clientId||''),String(row.method||row.paymentMethod||''),String(row.status||row.paymentStatus||''),Number(row.amount||row.total||0),String(row.currency||row.paymentCurrency||'FCFA'),String(row.transactionId||row.paymentRef||''),created,updated,raw)];
-    case 'orders': {
-      const stmts=[env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_orders(id,checkout_id,company_id,client_id,order_date,subtotal,delivery_fee,total,delivery_city,delivery_neighborhood,shipping_method,payment_method,payment_status,validation_status,delivery_status,deleted_by_client,created_at,updated_at,payload_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET checkout_id=excluded.checkout_id,company_id=excluded.company_id,client_id=excluded.client_id,order_date=excluded.order_date,subtotal=excluded.subtotal,delivery_fee=excluded.delivery_fee,total=excluded.total,delivery_city=excluded.delivery_city,delivery_neighborhood=excluded.delivery_neighborhood,shipping_method=excluded.shipping_method,payment_method=excluded.payment_method,payment_status=excluded.payment_status,validation_status=excluded.validation_status,delivery_status=excluded.delivery_status,deleted_by_client=excluded.deleted_by_client,updated_at=excluded.updated_at,payload_json=excluded.payload_json`).bind(row.id,String(row.checkoutId||''),String(row.companyId||''),String(row.clientId||''),String(row.date||created),Number(row.subtotal||0),Number(row.deliveryFee||0),Number(row.total||0),String(row.deliveryCity||''),String(row.deliveryNeighborhood||''),String(row.shippingMethod||''),String(row.paymentMethod||''),String(row.paymentStatus||''),String(row.validationStatus||''),String(row.deliveryStatus||row.delivery||''),v6Bool(row.clientDeleted),created,updated,raw), env.GLOBAL_MARKET_D1.prepare('DELETE FROM gm_order_items WHERE order_id=?').bind(row.id)];
-      for(const line of Array.isArray(row.items)?row.items:[]) stmts.push(env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_order_items(order_id,item_id,item_name,category,item_type,qty,unit,total) VALUES(?,?,?,?,?,?,?,?)`).bind(row.id,String(line.itemId||''),String(line.item||line.name||''),String(line.category||line.cat||''),String(line.type||''),Number(line.qty||0),Number(line.unit||0),Number(line.total||0)));
-      return stmts;
-    }
-    case 'clients': return [env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_clients(id,company_id,name,phone,email,created_at,updated_at,payload_json) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET company_id=excluded.company_id,name=excluded.name,phone=excluded.phone,email=excluded.email,updated_at=excluded.updated_at,payload_json=excluded.payload_json`).bind(row.id,String(row.companyId||''),String(row.name||''),String(row.phone||''),normalizeIdentifier(row.email),created,updated,raw)];
-    case 'marketClients': return [env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_market_clients(id,name,phone,email,created_at,updated_at,payload_json) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,phone=excluded.phone,email=excluded.email,updated_at=excluded.updated_at,payload_json=excluded.payload_json`).bind(row.id,String(row.name||''),normalizePhone(row.phone),normalizeIdentifier(row.email),created,updated,raw)];
-    case 'marketMessages': return [env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_market_messages(id,company_id,client_id,sender_type,sender_name,body,admin_deleted,client_deleted,read_by_admin,read_by_client,created_at,updated_at,payload_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET company_id=excluded.company_id,client_id=excluded.client_id,sender_type=excluded.sender_type,sender_name=excluded.sender_name,body=excluded.body,admin_deleted=excluded.admin_deleted,client_deleted=excluded.client_deleted,read_by_admin=excluded.read_by_admin,read_by_client=excluded.read_by_client,updated_at=excluded.updated_at,payload_json=excluded.payload_json`).bind(row.id,String(row.companyId||''),String(row.clientId||''),String(row.senderType||'client'),String(row.senderName||''),String(row.body||row.message||''),v6Bool(row.adminDeleted),v6Bool(row.clientDeleted),v6Bool(row.readByAdmin),v6Bool(row.readByClient),created,updated,raw)];
-    case 'passwordResetRequests': return [env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_password_reset_requests(id,company_id,user_id,role,status,created_at,updated_at,payload_json) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET company_id=excluded.company_id,user_id=excluded.user_id,role=excluded.role,status=excluded.status,updated_at=excluded.updated_at,payload_json=excluded.payload_json`).bind(row.id,String(row.companyId||''),String(row.userId||''),String(row.role||''),String(row.status||'pending'),created,updated,raw)];
-    case 'stockEntries': case 'stockOutputs': case 'stockMovements': case 'caisseLogs': {
-      const table={stockEntries:'gm_stock_entries',stockOutputs:'gm_stock_outputs',stockMovements:'gm_stock_movements',caisseLogs:'gm_caisse_logs'}[key];
-      return [env.GLOBAL_MARKET_D1.prepare(`INSERT INTO ${table}(id,company_id,created_at,updated_at,payload_json) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET company_id=excluded.company_id,updated_at=excluded.updated_at,payload_json=excluded.payload_json`).bind(row.id,String(row.companyId||''),created,updated,raw)];
-    }
-    default: return [];
-  }
-}
-function v6DeleteStatements(env,key,id){
-  const table={companies:'gm_companies',users:'gm_users',items:'gm_items',sales:'gm_sales',payments:'gm_payments',orders:'gm_orders',clients:'gm_clients',marketClients:'gm_market_clients',marketMessages:'gm_market_messages',passwordResetRequests:'gm_password_reset_requests',stockEntries:'gm_stock_entries',stockOutputs:'gm_stock_outputs',stockMovements:'gm_stock_movements',caisseLogs:'gm_caisse_logs'}[key];
-  if(!table)return[]; const stmts=[]; if(key==='orders')stmts.push(env.GLOBAL_MARKET_D1.prepare('DELETE FROM gm_order_items WHERE order_id=?').bind(id)); stmts.push(env.GLOBAL_MARKET_D1.prepare(`DELETE FROM ${table} WHERE id=?`).bind(id)); return stmts;
-}
-async function v6PersistStateDelta(env,delta,actor){
-  await ensureDB(env); const role=actor?.role||'caisse', actorCompanyId=String(actor?.companyId||''); const isSuper=role==='superadmin', isAdmin=isSuper||role==='admin'||role==='system';
-  const allowed=allowedDeltaArrayKeys(role); const statements=[]; const realtime=[];
-  for(const [key,changes] of Object.entries(delta?.arrays||{})){
-    if(!allowed.has(key))continue;
-    for(const source0 of Array.isArray(changes?.upserts)?changes.upserts:[]){
-      if(!source0?.id)continue; const source=cleanClone(source0);
-      if(!isSuper && key!=='marketClients' && key!=='passwordResetRequests' && key!=='companies') source.companyId=actorCompanyId;
-      if(key==='companies'&&!isAdmin)continue;
-      statements.push(...await v6UpsertStatements(env,key,source));
-      if(key==='orders'){ realtime.push({room:`company:${source.companyId}`,event:{type:'order',action:'updated',order:source}}); if(source.clientId)realtime.push({room:`client:${source.clientId}`,event:{type:'order',action:'updated',order:source}}); }
-      if(key==='marketMessages'){ const room=source.senderType==='admin'?`client:${source.clientId}`:`company:${source.companyId}`; realtime.push({room,event:{type:'message',action:'new',message:source}}); }
-    }
-    for(const deletion of Array.isArray(changes?.deletes)?changes.deletes:[]){ const id=String(deletion?.id||''); if(id) statements.push(...v6DeleteStatements(env,key,id)); }
-  }
-  if(isAdmin){
-    for(const [key,changes] of Object.entries(delta?.objects||{})){
-      for(const source of Array.isArray(changes?.upserts)?changes.upserts:[]){ const companyId=isSuper?String(source?.companyId||source?.recordId||''):actorCompanyId; if(!companyId||!source?.recordId)continue; statements.push(env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_company_settings(company_id,section,payload_json,updated_at) VALUES(?,?,?,?) ON CONFLICT(company_id,section) DO UPDATE SET payload_json=excluded.payload_json,updated_at=excluded.updated_at`).bind(companyId,key,JSON.stringify(source.value??null),v6Now())); }
-      for(const deletion of Array.isArray(changes?.deletes)?changes.deletes:[]){ const companyId=isSuper?String(deletion?.companyId||deletion?.recordId||''):actorCompanyId; if(companyId)statements.push(env.GLOBAL_MARKET_D1.prepare('DELETE FROM gm_company_settings WHERE company_id=? AND section=?').bind(companyId,key)); }
-    }
-  }
-  if(statements.length) await runD1Batches(env.GLOBAL_MARKET_D1,statements,30);
-  await Promise.allSettled(realtime.map(x=>v6RealtimePublish(env,x.room,x.event)));
-  return {storage:'d1-relational-v6',patchCount:statements.length};
-}
-
-async function v6ReadTable(db,sql,bindings=[],mapper=v6GenericFromRow){ const res=await db.prepare(sql).bind(...bindings).all(); return (res.results||[]).map(mapper).filter(Boolean); }
-async function v6LoadState(env,companyId='*',request=null){
-  await ensureDB(env); const db=v6ReadDb(request,env,false); const state=defaultState(); state.app={name:APP_NAME,storageVersion:6,architecture:'D1 relational + targeted APIs + WebSocket'};
-  if(companyId==='*'){
-    const [companies,users,marketClients,resets,saleStats,paymentStats]=await Promise.all([
-      v6ReadTable(db,'SELECT * FROM gm_companies ORDER BY created_at DESC',[],v6CompanyFromRow),
-      v6ReadTable(db,'SELECT * FROM gm_users ORDER BY created_at DESC',[],v6UserFromRow),
-      v6ReadTable(db,'SELECT * FROM gm_market_clients ORDER BY created_at DESC LIMIT 5000',[],v6MarketClientFromRow),
-      v6ReadTable(db,'SELECT * FROM gm_password_reset_requests ORDER BY created_at DESC LIMIT 1000',[],v6GenericFromRow),
-      db.prepare(`SELECT company_id,COUNT(*) sale_count,COALESCE(SUM(total),0) sale_total FROM gm_sales GROUP BY company_id`).all(),
-      db.prepare(`SELECT company_id,COUNT(*) payment_count,COALESCE(SUM(amount),0) payment_total FROM gm_payments GROUP BY company_id`).all()
-    ]);
-    const sm=new Map((saleStats.results||[]).map(x=>[x.company_id,x])),pm=new Map((paymentStats.results||[]).map(x=>[x.company_id,x]));for(const c of companies){const s=sm.get(c.id)||{},p=pm.get(c.id)||{};c.v6Stats={salesCount:Number(s.sale_count||0),salesTotal:Number(s.sale_total||0),paymentCount:Number(p.payment_count||0),paymentTotal:Number(p.payment_total||0)};}
-    state.companies=companies; state.users=users; state.marketClients=marketClients; state.passwordResetRequests=resets; return normalizeState(state);
-  }
-  const cid=String(companyId||'');
-  const queries=await Promise.all([
-    v6ReadTable(db,'SELECT * FROM gm_companies WHERE id=?',[cid],v6CompanyFromRow),
-    v6ReadTable(db,'SELECT * FROM gm_users WHERE company_id=? ORDER BY created_at',[cid],v6UserFromRow),
-    v6ReadTable(db,'SELECT * FROM gm_items WHERE company_id=? ORDER BY updated_at DESC',[cid],v6ItemFromRow),
-    v6ReadTable(db,'SELECT * FROM gm_sales WHERE company_id=? ORDER BY sale_date DESC LIMIT 10000',[cid],v6GenericFromRow),
-    v6ReadTable(db,'SELECT * FROM gm_orders WHERE company_id=? ORDER BY order_date DESC LIMIT 5000',[cid],v6OrderFromRow),
-    v6ReadTable(db,'SELECT * FROM gm_clients WHERE company_id=? ORDER BY created_at DESC LIMIT 5000',[cid],v6ClientFromRow),
-    v6ReadTable(db,'SELECT * FROM gm_market_messages WHERE company_id=? AND admin_deleted=0 ORDER BY created_at DESC LIMIT 5000',[cid],v6MessageFromRow),
-    v6ReadTable(db,'SELECT * FROM gm_stock_entries WHERE company_id=? ORDER BY created_at DESC LIMIT 5000',[cid],v6GenericFromRow),
-    v6ReadTable(db,'SELECT * FROM gm_stock_outputs WHERE company_id=? ORDER BY created_at DESC LIMIT 5000',[cid],v6GenericFromRow),
-    v6ReadTable(db,'SELECT * FROM gm_stock_movements WHERE company_id=? ORDER BY created_at DESC LIMIT 10000',[cid],v6GenericFromRow),
-    v6ReadTable(db,'SELECT * FROM gm_caisse_logs WHERE company_id=? ORDER BY created_at DESC LIMIT 10000',[cid],v6GenericFromRow),
-    v6ReadTable(db,'SELECT * FROM gm_password_reset_requests WHERE company_id=? ORDER BY created_at DESC LIMIT 1000',[cid],v6GenericFromRow),
-    v6ReadTable(db,'SELECT * FROM gm_payments WHERE company_id=? ORDER BY created_at DESC LIMIT 5000',[cid],v6GenericFromRow),
-    v6ReadTable(db,`SELECT * FROM gm_market_clients WHERE id IN (SELECT client_id FROM gm_orders WHERE company_id=? UNION SELECT client_id FROM gm_market_messages WHERE company_id=?)`,[cid,cid],v6MarketClientFromRow),
-    v6ReadTable(db,'SELECT * FROM gm_company_settings WHERE company_id=?',[cid],r=>r)
-  ]);
-  [state.companies,state.users,state.items,state.sales,state.orders,state.clients,state.marketMessages,state.stockEntries,state.stockOutputs,state.stockMovements,state.caisseLogs,state.passwordResetRequests,state.payments,state.marketClients]=queries;
-  for(const row of queries[14]||[]){ const val=v6JsonParse(row.payload_json,null); if(['categories','monthlyObligations','obligations','cartClearedAt','cartValidatedAt','clientDeletedOrders'].includes(row.section)) state[row.section]={[cid]:val}; else state[row.section]={[cid]:val}; }
-  return normalizeState(state);
-}
-async function loadState(env,companyId='*'){ if(await v6IsReady(env)) return v6LoadState(env,companyId); return loadStateLegacy(env,companyId); }
-async function persistStateDelta(env,delta,actor){ if(await v6IsReady(env)) return v6PersistStateDelta(env,delta,actor); return persistStateDeltaLegacy(env,delta,actor); }
-
-
-async function v6DeleteCompanyCascade(env,companyId){
-  const cid=String(companyId||''); if(!cid)return;
-  const orderRows=await env.GLOBAL_MARKET_D1.prepare('SELECT id FROM gm_orders WHERE company_id=?').bind(cid).all();
-  const orderIds=(orderRows.results||[]).map(r=>r.id); const stmts=[];
-  for(const id of orderIds)stmts.push(env.GLOBAL_MARKET_D1.prepare('DELETE FROM gm_order_items WHERE order_id=?').bind(id));
-  for(const table of ['gm_orders','gm_payments','gm_sales','gm_clients','gm_market_messages','gm_stock_entries','gm_stock_outputs','gm_stock_movements','gm_caisse_logs','gm_items','gm_password_reset_requests','gm_users','gm_company_settings']){
-    stmts.push(env.GLOBAL_MARKET_D1.prepare(`DELETE FROM ${table} WHERE company_id=?`).bind(cid));
-  }
-  stmts.push(env.GLOBAL_MARKET_D1.prepare('DELETE FROM gm_companies WHERE id=?').bind(cid));
-  if(stmts.length)await runD1Batches(env.GLOBAL_MARKET_D1,stmts,30);
-}
-
-async function v6MigrateLegacy(env){
-  await ensureDB(env); const existing=await v6MetaGet(env,V6_MIGRATION_META_KEY); if(existing===V6_SCHEMA_VERSION){const recovery=await v603RecoverLegacyCatalogIfNeeded(env);return {already:true,recovery};}
-  await v6MetaSet(env,'migration_status','running');
-  const legacy=await loadStateLegacy(env,'*');
-  const ordered=['companies','users','marketClients','clients','items','sales','orders','payments','marketMessages','passwordResetRequests','stockEntries','stockOutputs','stockMovements','caisseLogs'];
-  let rows=0, statements=0;
-  for(const key of ordered){
-    const source=Array.isArray(legacy[key])?legacy[key]:[]; let buffer=[];
-    for(const row of source){ const st=await v6UpsertStatements(env,key,row); buffer.push(...st); rows++; if(buffer.length>=30){await runD1Batches(env.GLOBAL_MARKET_D1,buffer,30);statements+=buffer.length;buffer=[];} }
-    if(buffer.length){await runD1Batches(env.GLOBAL_MARKET_D1,buffer,30);statements+=buffer.length;}
-  }
-  for(const section of [...COMPANY_OBJECT_KEYS,'clientDeletedOrders']){
-    const obj=legacy[section]&&typeof legacy[section]==='object'?legacy[section]:{}; const st=[];
-    for(const [companyId,value] of Object.entries(obj)){ st.push(env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_company_settings(company_id,section,payload_json,updated_at) VALUES(?,?,?,?) ON CONFLICT(company_id,section) DO UPDATE SET payload_json=excluded.payload_json,updated_at=excluded.updated_at`).bind(companyId,section,JSON.stringify(value??null),v6Now())); }
-    if(st.length){await runD1Batches(env.GLOBAL_MARKET_D1,st,30);statements+=st.length;}
-  }
-  await v6MetaSet(env,V6_MIGRATION_META_KEY,V6_SCHEMA_VERSION); await v6MetaSet(env,'migration_status','done'); await v6MetaSet(env,'migration_completed_at',v6Now());
-  return {already:false,rows,statements,version:V6_SCHEMA_VERSION};
-}
-function v6AuthorizeMigration(request,env){ const provided=String(request.headers.get('Authorization')||'').replace(/^Bearer\s+/i,'')||String(request.headers.get('X-Migration-Key')||''); const expected=String(env.V6_MIGRATION_KEY||''); if(!expected||!constantTimeEqual(provided,expected))throw new HttpError(403,'Clé de migration V6 invalide ou absente.','V6_MIGRATION_FORBIDDEN'); }
-
-async function v6FindUser(db,idOrEmail){ const value=String(idOrEmail||''); let row=await db.prepare('SELECT * FROM gm_users WHERE id=? LIMIT 1').bind(value).first(); if(!row)row=await db.prepare('SELECT * FROM gm_users WHERE lower(email)=? LIMIT 1').bind(normalizeIdentifier(value)).first(); return v6UserFromRow(row); }
-async function v6FindClientByPhone(db,phone){ return v6MarketClientFromRow(await db.prepare('SELECT * FROM gm_market_clients WHERE phone=? LIMIT 1').bind(normalizePhone(phone)).first()); }
-async function v6GetEmployeeSession(request,env,requireCsrf=false){
-  const sid=getCookie(request,EMPLOYEE_SESSION_COOKIE); if(!sid)throw new HttpError(401,'Connexion requise.','UNAUTHENTICATED'); const session=await env.GLOBAL_MARKET_KV.get(`session:${sid}`,'json');
-  if(!session||Number(session.expiresAt||0)<=Date.now()){if(sid)await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);throw new HttpError(401,'Session expirée. Reconnectez-vous.','SESSION_EXPIRED');}
-  if(requireCsrf){assertSameOrigin(request);const csrf=request.headers.get('X-CSRF-Token')||'';if(!csrf||!constantTimeEqual(csrf,session.csrfToken))throw new HttpError(403,'Jeton de sécurité invalide.','CSRF_REJECTED');}
-  const db=v6ReadDb(request,env,true), user=await v6FindUser(db,session.userId), auth=user?await getAuth(env,user.id):null; if(!user||user.status!=='active'||!auth||Number(auth.version)!==Number(session.authVersion))throw new HttpError(401,'Session invalidée. Reconnectez-vous.','SESSION_INVALIDATED');
-  const state=await v6LoadState(env,user.role==='superadmin'?'*':user.companyId,request); return {sid,session,user,auth,state,db};
-}
-async function v6GetClientSession(request,env,requireCsrf=false){
-  const sid=getCookie(request,CLIENT_SESSION_COOKIE); if(!sid)throw new HttpError(401,'Connexion client requise.','CLIENT_UNAUTHENTICATED'); const session=await env.GLOBAL_MARKET_KV.get(`client-session:${sid}`,'json');
-  if(!session||Number(session.expiresAt||0)<=Date.now())throw new HttpError(401,'Session client expirée.','CLIENT_SESSION_EXPIRED');
-  if(requireCsrf){assertSameOrigin(request);const csrf=request.headers.get('X-CSRF-Token')||'';if(!csrf||!constantTimeEqual(csrf,session.csrfToken))throw new HttpError(403,'Jeton de sécurité client invalide.','CSRF_REJECTED');}
-  const db=v6ReadDb(request,env,true); const client=v6MarketClientFromRow(await db.prepare('SELECT * FROM gm_market_clients WHERE id=?').bind(session.clientId).first()); const auth=client?await getClientAuth(env,client.id):null; if(!client||!auth||Number(auth.version)!==Number(session.authVersion))throw new HttpError(401,'Session client invalidée.','CLIENT_SESSION_INVALIDATED'); return {sid,session,client,auth,db};
-}
-
-async function handleV6Login(request,env){
-  assertSameOrigin(request); const body=await readJson(request,20000),identifier=normalizeIdentifier(body.identifier||body.email),password=String(body.password||''),requestedRole=String(body.role||''); if(!identifier||!password)throw new HttpError(400,'Identifiant et mot de passe obligatoires.','MISSING_CREDENTIALS');
-  const rate=await assertLoginRateAllowed(env,requestIp(request),identifier); const db=v6ReadDb(request,env,true); let indexedId=await env.GLOBAL_MARKET_KV.get(authIndexKey(identifier)); let user=await v6FindUser(db,indexedId||identifier);
-  if(identifier===configuredSuperAdminIdentifier(env)){ if(!user){const p={...SUPER_ADMIN_PROFILE,email:identifier};await runD1Batches(env.GLOBAL_MARKET_D1,await v6UpsertStatements(env,'users',p),20);user=p;} await ensureSuperAdminCredential(env,{users:[user]}); }
-  const auth=user?await getAuth(env,user.id):null,valid=user&&user.status==='active'&&await verifyCredential(auth,password); if(!valid){await recordLoginFailure(env,rate);throw new HttpError(401,'Identifiant ou mot de passe incorrect.','INVALID_CREDENTIALS');}
-  if(requestedRole==='caisse'&&user.role!=='caisse')throw new HttpError(403,'Profil incorrect : sélectionnez Administrateur.','ROLE_MISMATCH'); if(requestedRole==='admin'&&!['admin','superadmin'].includes(user.role))throw new HttpError(403,'Profil incorrect : sélectionnez La Caisse.','ROLE_MISMATCH');
-  if(user.companyId){const company=v6CompanyFromRow(await db.prepare('SELECT * FROM gm_companies WHERE id=?').bind(user.companyId).first());const status=companyStatus(company);if(['expired','blocked','suspended'].includes(status))throw new HttpError(403,`Accès entreprise ${status}.`,'COMPANY_ACCESS_BLOCKED');}
-  await clearLoginRate(env,rate); const created=await createEmployeeSession(env,user,auth); const data=await v6LoadState(env,user.role==='superadmin'?'*':user.companyId,request); return v6AttachBookmark(json({success:true,session:publicSessionView(created.session),mustChangePassword:Boolean(auth.mustChangePassword),data:scopeState(data,user)},{headers:{'Set-Cookie':setCookie(EMPLOYEE_SESSION_COOKIE,created.sid,created.ttl)}}),db);
-}
-async function handleV6RegisterCompany(request,env){
-  assertSameOrigin(request);const body=await readJson(request,100000),name=String(body.name||'').trim(),email=normalizeIdentifier(body.email),password=validatePassword(body.password,'admin');if(!name||!email)throw new HttpError(400,'Raison sociale et e-mail obligatoires.','MISSING_FIELDS');const db=v6ReadDb(request,env,true);if(await db.prepare('SELECT id FROM gm_users WHERE email=? LIMIT 1').bind(email).first())throw new HttpError(409,'Cet e-mail est déjà utilisé.','EMAIL_EXISTS');
-  const cid=`ent_${crypto.randomUUID()}`,uid=`usr_${crypto.randomUUID()}`,now=new Date(),end=new Date(now.getTime()+21*86400000).toISOString().slice(0,10),slug=String(name).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'')||cid;
-  const company={id:cid,name,legalForm:String(body.legalForm||''),rccm:String(body.rccm||''),taxAccount:String(body.taxAccount||''),activity:String(body.activity||''),owner:String(body.owner||''),address:String(body.address||''),phone:String(body.phone||''),email,businessType:String(body.businessType||'boutique'),status:'FREE',planCode:'FREE',plan:'Plan Free — 21 jours',subscriptionStart:now.toISOString().slice(0,10),subscriptionEnd:end,createdAt:now.toISOString(),notes:'',shopSlug:slug,shopBanner:'Boutique officielle',shopColor:'#024644'};
-  const user={id:uid,companyId:cid,name:company.owner||'Administrateur principal',email,role:'admin',status:'active',createdAt:now.toISOString(),mainAdmin:true};const stmts=[...await v6UpsertStatements(env,'companies',company),...await v6UpsertStatements(env,'users',user)];await env.GLOBAL_MARKET_D1.batch(stmts);await writeUserCredential(env,user,password);const auth=await getAuth(env,user.id),created=await createEmployeeSession(env,user,auth);return v6AttachBookmark(json({success:true,session:publicSessionView(created.session),data:await v6LoadState(env,cid,request)},{status:201,headers:{'Set-Cookie':setCookie(EMPLOYEE_SESSION_COOKIE,created.sid,created.ttl)}}),db);
-}
-async function handleV6ClientRegister(request,env){assertSameOrigin(request);const body=await readJson(request,50000),name=String(body.name||'').trim(),phone=normalizePhone(body.phone),email=normalizeIdentifier(body.email),password=validatePassword(body.password,'client');if(!name||!phone)throw new HttpError(400,'Nom et téléphone obligatoires.','MISSING_FIELDS');const db=v6ReadDb(request,env,true);if(await db.prepare('SELECT id FROM gm_market_clients WHERE phone=?').bind(phone).first())throw new HttpError(409,'Ce téléphone possède déjà un compte client GLOBAL MARKET.','PHONE_EXISTS');const client={id:`clt_${crypto.randomUUID()}`,companyId:GLOBAL_CLIENT_SCOPE,scope:'global',name,phone,email,createdAt:v6Now()};await env.GLOBAL_MARKET_D1.batch(await v6UpsertStatements(env,'marketClients',client));await writeClientCredential(env,client,password);await env.GLOBAL_MARKET_KV.put(globalClientIndexKey(phone),client.id);const created=await createClientSession(env,client,await getClientAuth(env,client.id));return v6AttachBookmark(json({success:true,client:cleanClone(client),session:publicClientSessionView(created.session)},{status:201,headers:{'Set-Cookie':setCookie(CLIENT_SESSION_COOKIE,created.sid,CLIENT_SESSION_TTL)}}),db);}
-async function handleV6ClientLogin(request,env){assertSameOrigin(request);const body=await readJson(request,30000),phone=normalizePhone(body.phone),password=String(body.password||''),rate=await assertLoginRateAllowed(env,requestIp(request),`client:global:${phone}`),db=v6ReadDb(request,env,true),client=await v6FindClientByPhone(db,phone),auth=client?await getClientAuth(env,client.id):null;if(!client||!(await verifyCredential(auth,password))){await recordLoginFailure(env,rate);throw new HttpError(401,'Téléphone ou mot de passe incorrect.','INVALID_CREDENTIALS');}await clearLoginRate(env,rate);const created=await createClientSession(env,client,auth);return v6AttachBookmark(json({success:true,client:cleanClone(client),session:publicClientSessionView(created.session)},{headers:{'Set-Cookie':setCookie(CLIENT_SESSION_COOKIE,created.sid,CLIENT_SESSION_TTL)}}),db);}
-
-function v6CatalogParams(url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(48,Math.max(4,Number(url.searchParams.get('pageSize')||16))),q=String(url.searchParams.get('q')||'').trim().toLowerCase().slice(0,120),category=String(url.searchParams.get('category')||'').trim().slice(0,120),type=String(url.searchParams.get('type')||'').trim().toLowerCase(),sort=String(url.searchParams.get('sort')||'recent'),companyId=String(url.searchParams.get('companyId')||'').trim();return{page,pageSize,q,category,type,sort,companyId};}
-const V6_PUBLIC_CATALOG_CACHE_SECONDS=20;
-const V6_PUBLIC_COMPANY_CACHE_SECONDS=45;
-async function v6CacheJsonGet(key){try{const r=await caches.default.match(new Request(key));return r?await r.json():null}catch{return null}}
-async function v6CacheJsonPut(key,value,ttl,executionCtx){try{const r=json(value,{headers:{'Cache-Control':`public, max-age=${ttl}`}});const task=caches.default.put(new Request(key),r);if(executionCtx?.waitUntil)executionCtx.waitUntil(task);else await task}catch{}}
-let V603_CATALOG_RECOVERY_PROMISE=null,V603_CATALOG_RECOVERY_AT=0,V603_CATALOG_RECOVERY_RESULT=null;
-async function v603LegacyCatalogData(request,env){
-  const legacy=await loadStateLegacy(env,'*'),url=new URL(request.url),p=v6CatalogParams(url),all=Array.isArray(legacy.items)?legacy.items:[],companies=Array.isArray(legacy.companies)?legacy.companies:[],cmap=new Map(companies.map(c=>[String(c.id||''),c]));
-  let rows=all.filter(i=>{const c=cmap.get(String(i.companyId||''));return c&&!i.marketplaceHidden&&!(isBoutiqueItem(i)&&i.stockType!=='unlimited'&&Number(i.stock||0)<=0)});
-  if(p.q)rows=rows.filter(i=>v6SearchText(i).includes(p.q));if(p.category)rows=rows.filter(i=>String(i.cat||i.category||'')===p.category);if(p.companyId)rows=rows.filter(i=>String(i.companyId||'')===p.companyId);
-  if(p.type==='product')rows=rows.filter(i=>!['service','services','prestation'].includes(String(i.type||'').toLowerCase()));if(p.type==='service')rows=rows.filter(i=>['service','services','prestation'].includes(String(i.type||'').toLowerCase()));
-  if(p.sort==='priceAsc')rows.sort((a,b)=>Number(a.sell||0)-Number(b.sell||0));else if(p.sort==='priceDesc')rows.sort((a,b)=>Number(b.sell||0)-Number(a.sell||0));else if(p.sort==='name')rows.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'fr'));else rows.sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||'')));
-  const total=rows.length,pages=Math.max(1,Math.ceil(total/p.pageSize)),page=Math.min(p.page,pages),items=rows.slice((page-1)*p.pageSize,page*p.pageSize).map(publicItem),categories=[...new Set(rows.map(i=>String(i.cat||i.category||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'));
-  const companyIds=new Set(items.map(i=>String(i.companyId||'')));return {items,companies:companies.filter(c=>companyIds.has(String(c.id||''))).map(publicCompany),pagination:{page,pageSize:p.pageSize,total,pages},categories,legacyFallback:true};
-}
-async function v603RecoverLegacyCatalogIfNeeded(env){
-  const now=Date.now();if(V603_CATALOG_RECOVERY_RESULT&&now-V603_CATALOG_RECOVERY_AT<300000)return V603_CATALOG_RECOVERY_RESULT;if(V603_CATALOG_RECOVERY_PROMISE)return V603_CATALOG_RECOVERY_PROMISE;
-  V603_CATALOG_RECOVERY_PROMISE=(async()=>{
-    await ensureDB(env);const counts=await env.GLOBAL_MARKET_D1.prepare(`SELECT (SELECT COUNT(*) FROM gm_items) AS items,(SELECT COUNT(*) FROM gm_companies) AS companies`).first();
-    if(Number(counts?.items||0)>0&&Number(counts?.companies||0)>0)return {recovered:false,reason:'relational-catalog-present',items:Number(counts.items||0),companies:Number(counts.companies||0)};
-    const legacy=await loadStateLegacy(env,'*'),legacyItems=Array.isArray(legacy.items)?legacy.items.filter(x=>x?.id&&x?.companyId):[],legacyCompanies=Array.isArray(legacy.companies)?legacy.companies.filter(x=>x?.id):[];
-    if(!legacyItems.length||!legacyCompanies.length)return {recovered:false,reason:'no-legacy-catalog',items:legacyItems.length,companies:legacyCompanies.length};
-    const neededCompanyIds=new Set(legacyItems.map(x=>String(x.companyId||'')));let statements=[];
-    for(const company of legacyCompanies.filter(c=>neededCompanyIds.has(String(c.id||''))))statements.push(...await v6UpsertStatements(env,'companies',company));
-    for(const item of legacyItems)statements.push(...await v6UpsertStatements(env,'items',item));
-    if(statements.length)await runD1Batches(env.GLOBAL_MARKET_D1,statements,20);
-    await v6MetaSet(env,'catalog_recovery_v603',JSON.stringify({at:v6Now(),items:legacyItems.length,companies:neededCompanyIds.size}));invalidatePublicStateCache();
-    return {recovered:true,reason:'legacy-backfill',items:legacyItems.length,companies:neededCompanyIds.size};
-  })().catch(error=>({recovered:false,reason:'recovery-error',error:String(error?.message||error||'')})).finally(()=>{V603_CATALOG_RECOVERY_PROMISE=null});
-  const result=await V603_CATALOG_RECOVERY_PROMISE;V603_CATALOG_RECOVERY_RESULT=result;V603_CATALOG_RECOVERY_AT=Date.now();return result;
-}
-async function v6CatalogQueryCached(request,env,executionCtx){
-  const url=new URL(request.url),p=v6CatalogParams(url),key=`https://cache.global-market.internal/catalog-v603?page=${p.page}&pageSize=${p.pageSize}&q=${encodeURIComponent(p.q)}&category=${encodeURIComponent(p.category)}&type=${encodeURIComponent(p.type)}&sort=${encodeURIComponent(p.sort)}&companyId=${encodeURIComponent(p.companyId)}`;
-  const cached=await v6CacheJsonGet(key);if(cached&&Array.isArray(cached.items)&&cached.items.length)return {...cached,edgeCached:true};
-  let data=await v6CatalogQuery(request,env);
-  if(!Array.isArray(data.items)||!data.items.length){
-    const recovery=await v603RecoverLegacyCatalogIfNeeded(env);
-    if(recovery.recovered)data=await v6CatalogQuery(request,env);
-    if(!Array.isArray(data.items)||!data.items.length){try{const legacy=await v603LegacyCatalogData(request,env);if(Array.isArray(legacy.items)&&legacy.items.length)data={...legacy,recovery};}catch(error){console.warn('[V6.0.3] Catalogue legacy de secours indisponible',error?.message||error)}}
-  }
-  await v6CacheJsonPut(key,data,V6_PUBLIC_CATALOG_CACHE_SECONDS,executionCtx);return data;
-}
-async function v6PublicCompaniesCached(request,env,executionCtx){
-  const key='https://cache.global-market.internal/companies-public-v6',cached=await v6CacheJsonGet(key);if(cached?.companies)return cached.companies;
-  const db=v6ReadDb(request,env,false),companies=await v6ReadTable(db,`SELECT * FROM gm_companies WHERE status NOT IN ('blocked','suspended') AND (subscription_end IS NULL OR subscription_end='' OR subscription_end>=date('now')) ORDER BY name COLLATE NOCASE ASC`,[],v6CompanyFromRow);
-  await v6CacheJsonPut(key,{companies},V6_PUBLIC_COMPANY_CACHE_SECONDS,executionCtx);return companies;
-}
-async function v6CatalogQuery(request,env){
-  const db=v6ReadDb(request,env,false),url=new URL(request.url),p=v6CatalogParams(url),where=[`i.marketplace_hidden=0`,`c.status NOT IN ('blocked','suspended')`,`(c.subscription_end IS NULL OR c.subscription_end='' OR c.subscription_end>=date('now'))`,`(i.stock_type='unlimited' OR lower(COALESCE(i.item_type,'')) IN ('service','services','prestation') OR i.stock>0)`],bind=[];
-  if(p.q){where.push('i.search_text LIKE ?');bind.push(`%${p.q}%`)} if(p.category){where.push('i.category=?');bind.push(p.category)} if(p.type==='product'){where.push("lower(COALESCE(i.item_type,'')) NOT IN ('service','services','prestation')")} if(p.type==='service'){where.push("lower(COALESCE(i.item_type,'')) IN ('service','services','prestation')")} if(p.companyId){where.push('i.company_id=?');bind.push(p.companyId)}
-  const order=p.sort==='priceAsc'?'i.sell ASC':p.sort==='priceDesc'?'i.sell DESC':p.sort==='name'?'i.name COLLATE NOCASE ASC':'i.updated_at DESC'; const whereSql=where.join(' AND '); const offset=(p.page-1)*p.pageSize;
-  const [countRow,itemRows,cats]=await Promise.all([db.prepare(`SELECT COUNT(*) AS n FROM gm_items i JOIN gm_companies c ON c.id=i.company_id WHERE ${whereSql}`).bind(...bind).first(),db.prepare(`SELECT i.* FROM gm_items i JOIN gm_companies c ON c.id=i.company_id WHERE ${whereSql} ORDER BY ${order} LIMIT ? OFFSET ?`).bind(...bind,p.pageSize,offset).all(),db.prepare(`SELECT DISTINCT i.category FROM gm_items i JOIN gm_companies c ON c.id=i.company_id WHERE i.marketplace_hidden=0 AND i.category<>'' ORDER BY i.category LIMIT 100`).all()]);
-  const items=(itemRows.results||[]).map(v6ItemFromRow).map(publicItem); const companyIds=[...new Set(items.map(x=>x.companyId))]; let companies=[]; if(companyIds.length){const marks=companyIds.map(()=>'?').join(',');companies=await v6ReadTable(db,`SELECT * FROM gm_companies WHERE id IN (${marks})`,companyIds,v6CompanyFromRow);}
-  const total=Number(countRow?.n||0),pages=Math.max(1,Math.ceil(total/p.pageSize)); return {items,companies:companies.map(publicCompany),pagination:{page:Math.min(p.page,pages),pageSize:p.pageSize,total,pages},categories:(cats.results||[]).map(r=>r.category).filter(Boolean)};
-}
-async function handleV6Bootstrap(request,env,executionCtx){
-  const [catalog,companies]=await Promise.all([v6CatalogQueryCached(request,env,executionCtx),v6PublicCompaniesCached(request,env,executionCtx)]),db=v6ReadDb(request,env,false); let clientSession=null,marketClients=[],orders=[],marketMessages=[];
-  try{const ctx=await v6GetClientSession(request,env,false);clientSession=publicClientSessionView(ctx.session);marketClients=[cleanClone(ctx.client)];orders=await v6ReadTable(db,'SELECT * FROM gm_orders WHERE client_id=? AND deleted_by_client=0 ORDER BY order_date DESC LIMIT 250',[ctx.client.id],v6OrderFromRow);marketMessages=await v6ReadTable(db,'SELECT * FROM gm_market_messages WHERE client_id=? AND client_deleted=0 ORDER BY created_at DESC LIMIT 250',[ctx.client.id],v6MessageFromRow);}catch{}
-  const companyMap=new Map((companies||[]).map(c=>[c.id,c]));for(const c of catalog.companies||[])companyMap.set(c.id,c);
-  return v6AttachBookmark(json({companies:[...companyMap.values()].map(publicCompany),items:catalog.items,marketClients,orders,marketMessages,clientDeletedOrders:{},clientSession,app:{name:APP_NAME,storageVersion:6},catalogMeta:{pagination:catalog.pagination,categories:catalog.categories}}),db);
-}
-async function handleV6Catalog(request,env,executionCtx){const db=v6ReadDb(request,env,false),data=await v6CatalogQueryCached(request,env,executionCtx);return v6AttachBookmark(json(data,{headers:{'X-Global-Market-Edge-Cache':data.edgeCached?'HIT':'MISS'}}),db);}
-async function handleV6ClientOrders(request,env){const ctx=await v6GetClientSession(request,env,false),url=new URL(request.url),page=Math.max(1,Number(url.searchParams.get('page')||1)),size=Math.min(100,Math.max(10,Number(url.searchParams.get('pageSize')||30))),count=await ctx.db.prepare('SELECT COUNT(*) n FROM gm_orders WHERE client_id=? AND deleted_by_client=0').bind(ctx.client.id).first(),rows=await ctx.db.prepare('SELECT * FROM gm_orders WHERE client_id=? AND deleted_by_client=0 ORDER BY order_date DESC LIMIT ? OFFSET ?').bind(ctx.client.id,size,(page-1)*size).all();return v6AttachBookmark(json({orders:(rows.results||[]).map(v6OrderFromRow),pagination:{page,pageSize:size,total:Number(count?.n||0),pages:Math.max(1,Math.ceil(Number(count?.n||0)/size))}}),ctx.db);}
-async function handleV6ClientMessages(request,env){const ctx=await v6GetClientSession(request,env,false),url=new URL(request.url),page=Math.max(1,Number(url.searchParams.get('page')||1)),size=Math.min(100,Math.max(10,Number(url.searchParams.get('pageSize')||50))),count=await ctx.db.prepare('SELECT COUNT(*) n FROM gm_market_messages WHERE client_id=? AND client_deleted=0').bind(ctx.client.id).first(),rows=await ctx.db.prepare('SELECT * FROM gm_market_messages WHERE client_id=? AND client_deleted=0 ORDER BY created_at DESC LIMIT ? OFFSET ?').bind(ctx.client.id,size,(page-1)*size).all();return v6AttachBookmark(json({messages:(rows.results||[]).map(v6MessageFromRow),pagination:{page,pageSize:size,total:Number(count?.n||0),pages:Math.max(1,Math.ceil(Number(count?.n||0)/size))}}),ctx.db);}
-async function handleV6AdminOrders(request,env){const ctx=await v6GetEmployeeSession(request,env,false);requireRole(ctx.user,['admin','caisse']);const url=new URL(request.url),page=Math.max(1,Number(url.searchParams.get('page')||1)),size=Math.min(100,Math.max(10,Number(url.searchParams.get('pageSize')||50))),count=await ctx.db.prepare('SELECT COUNT(*) n FROM gm_orders WHERE company_id=?').bind(ctx.user.companyId).first(),rows=await ctx.db.prepare('SELECT * FROM gm_orders WHERE company_id=? ORDER BY order_date DESC LIMIT ? OFFSET ?').bind(ctx.user.companyId,size,(page-1)*size).all();return v6AttachBookmark(json({orders:(rows.results||[]).map(v6OrderFromRow),pagination:{page,pageSize:size,total:Number(count?.n||0),pages:Math.max(1,Math.ceil(Number(count?.n||0)/size))}}),ctx.db);}
-async function handleV6AdminMessages(request,env){const ctx=await v6GetEmployeeSession(request,env,false);requireRole(ctx.user,['admin','caisse']);const url=new URL(request.url),page=Math.max(1,Number(url.searchParams.get('page')||1)),size=Math.min(100,Math.max(10,Number(url.searchParams.get('pageSize')||50))),count=await ctx.db.prepare('SELECT COUNT(*) n FROM gm_market_messages WHERE company_id=? AND admin_deleted=0').bind(ctx.user.companyId).first(),rows=await ctx.db.prepare('SELECT * FROM gm_market_messages WHERE company_id=? AND admin_deleted=0 ORDER BY created_at DESC LIMIT ? OFFSET ?').bind(ctx.user.companyId,size,(page-1)*size).all();return v6AttachBookmark(json({messages:(rows.results||[]).map(v6MessageFromRow),pagination:{page,pageSize:size,total:Number(count?.n||0),pages:Math.max(1,Math.ceil(Number(count?.n||0)/size))}}),ctx.db);}
-
-
-async function handleV6AdminMarketplaceSnapshot(request,env){
-  const ctx=await v6GetEmployeeSession(request,env,false);requireRole(ctx.user,['admin','caisse']);const cid=ctx.user.companyId,db=ctx.db,url=new URL(request.url),orderSize=Math.min(100,Math.max(10,Number(url.searchParams.get('orderSize')||40))),messageSize=Math.min(100,Math.max(10,Number(url.searchParams.get('messageSize')||50)));
-  const [orders,messages,items,clients]=await Promise.all([
-    v6ReadTable(db,'SELECT * FROM gm_orders WHERE company_id=? ORDER BY order_date DESC LIMIT ?',[cid,orderSize],v6OrderFromRow),
-    v6ReadTable(db,'SELECT * FROM gm_market_messages WHERE company_id=? AND admin_deleted=0 ORDER BY created_at DESC LIMIT ?',[cid,messageSize],v6MessageFromRow),
-    v6ReadTable(db,'SELECT * FROM gm_items WHERE company_id=? ORDER BY updated_at DESC LIMIT 250',[cid],v6ItemFromRow),
-    v6ReadTable(db,`SELECT * FROM gm_market_clients WHERE id IN (SELECT client_id FROM gm_orders WHERE company_id=? UNION SELECT client_id FROM gm_market_messages WHERE company_id=?) LIMIT 250`,[cid,cid],v6MarketClientFromRow)
-  ]);
-  return v6AttachBookmark(json({orders,messages,items,marketClients:clients}),db);
-}
-
-async function handleV6Order(request,env){
-  assertSameOrigin(request);const ctx=await v6GetClientSession(request,env,true),body=await readJson(request,500000),cart=Array.isArray(body.cart)?body.cart:[];if(!cart.length||cart.length>60)throw new HttpError(400,'Panier vide ou trop volumineux.','INVALID_CART');const ids=[...new Set(cart.map(x=>String(x.itemId||'')).filter(Boolean))],marks=ids.map(()=>'?').join(','),rows=await ctx.db.prepare(`SELECT * FROM gm_items WHERE id IN (${marks})`).bind(...ids).all(),itemMap=new Map((rows.results||[]).map(r=>[r.id,v6ItemFromRow(r)]));const groups=new Map();
-  for(const line of cart){const item=itemMap.get(String(line.itemId||''));if(!item||item.marketplaceHidden)throw new HttpError(400,'Un article du panier est introuvable.','ITEM_NOT_FOUND');const qty=Math.max(1,Math.min(10000,Number(line.qty||1))),isProduct=!['service','services','prestation'].includes(String(item.type||'').toLowerCase()),unit=Number(item.sell||0);if(isProduct&&item.stockType!=='unlimited'&&Number(item.stock||0)<qty)throw new HttpError(409,`Stock insuffisant pour : ${item.name}`,'INSUFFICIENT_STOCK');if(!groups.has(item.companyId))groups.set(item.companyId,{lines:[],company:null});groups.get(item.companyId).lines.push({itemId:item.id,item:item.name,category:item.cat||'',type:isProduct?'Produit':'Service',qty,unit,total:unit*qty});}
-  const cids=[...groups.keys()],cmarks=cids.map(()=>'?').join(','),crow=await ctx.db.prepare(`SELECT * FROM gm_companies WHERE id IN (${cmarks})`).bind(...cids).all(),cmap=new Map((crow.results||[]).map(r=>[r.id,v6CompanyFromRow(r)]));for(const [cid,g] of groups){g.company=cmap.get(cid);if(!g.company)throw new HttpError(400,'Boutique introuvable.','COMPANY_NOT_FOUND');}
-  const deliveryCity=String(body.deliveryCity||'').trim().slice(0,80),deliveryNeighborhood=String(body.deliveryNeighborhood||'').trim().slice(0,100),deliveryAddressDetail=String(body.deliveryAddressDetail||'').trim().slice(0,500),shippingByCompany=new Map((Array.isArray(body.shippingByCompany)?body.shippingByCompany:[]).map(x=>[String(x?.companyId||''),String(x?.methodId||x?.method||'')]));let prepared=[],grand=0,hasOutside=false;for(const[cid,g]of groups){const subtotal=g.lines.reduce((s,x)=>s+x.total,0);let delivery={deliveryFee:Math.round(subtotal*marketDeliveryRateForSubtotal(subtotal)),deliveryFeeRate:marketDeliveryRateForSubtotal(subtotal),city:'',neighborhoodName:'',methodName:'',methodId:'',cityFee:0,methodFee:0,local:true,pickup:false};if(deliveryCity){delivery=calculateMarketDelivery(g.company,subtotal,deliveryCity,shippingByCompany.get(cid)||'',deliveryNeighborhood);if(!delivery.local)hasOutside=true;if(!delivery.pickup&&!deliveryAddressDetail)throw new HttpError(400,'Le détail sur l’adresse de livraison est obligatoire.','DELIVERY_ADDRESS_REQUIRED');}grand+=subtotal+delivery.deliveryFee;prepared.push({cid,g,subtotal,delivery});}if(deliveryCity&&hasOutside&&grand<10000)throw new HttpError(400,`Toute commande hors de la ville de la boutique doit avoir un total général d’au moins 10 000 FCFA. Total actuel : ${Math.round(grand).toLocaleString('fr-FR')} FCFA.`,'OUTSIDE_CITY_MINIMUM_ORDER');
-  const checkoutId=`achat_${crypto.randomUUID()}`,now=v6Now(),orders=[],stmts=[];for(const p of prepared){for(const line of p.g.lines)if(line.type==='Produit')stmts.push(env.GLOBAL_MARKET_D1.prepare(`UPDATE gm_items SET stock=CASE WHEN stock_type='unlimited' THEN stock ELSE stock-? END,updated_at=? WHERE id=?`).bind(line.qty,now,line.itemId));const total=p.subtotal+p.delivery.deliveryFee,order={id:`cmd_${crypto.randomUUID()}`,checkoutId,companyId:p.cid,shopName:p.g.company.name||'Boutique',clientId:ctx.client.id,client:ctx.client.name,clientPhone:ctx.client.phone,clientEmail:ctx.client.email||'',date:now,items:p.g.lines,item:p.g.lines.map(x=>x.item).join(', '),qty:p.g.lines.reduce((a,x)=>a+x.qty,0),subtotal:p.subtotal,deliveryFeeRate:p.delivery.deliveryFeeRate,deliveryFee:p.delivery.deliveryFee,total,deliveryCity:p.delivery.city||deliveryCity,deliveryNeighborhood:p.delivery.neighborhoodName||'',deliveryAddressDetail,shippingMethod:p.delivery.methodName||'',shippingMethodId:p.delivery.methodId||'',shippingCityFee:p.delivery.cityFee||0,shippingMethodFee:p.delivery.methodFee||0,paymentMethod:'PAIEMENT À LA LIVRAISON',paymentTiming:'delivery',paymentStatus:'À payer à la livraison',paymentCurrency:'FCFA',paymentAmount:total,transactionId:'',paymentRef:'',validationStatus:'En attente de validation',deliveryStatus:'En attente de validation',delivery:'En attente de validation',source:'GLOBAL MARKET V6'};orders.push(order);stmts.push(...await v6UpsertStatements(env,'orders',order));}
-  try{await env.GLOBAL_MARKET_D1.batch(stmts);}catch(error){if(/INSUFFICIENT_STOCK/i.test(String(error?.message||error)))throw new HttpError(409,'Le stock d’un produit vient de changer. Actualisez le panier.','INSUFFICIENT_STOCK');throw error;}await Promise.allSettled(orders.map(o=>v6RealtimePublish(env,`company:${o.companyId}`,{type:'order',action:'new',order:o})));return json({success:true,checkoutId,orders:orders.map(cleanClone),grandTotal:grand},{status:201});
-}
-async function v6GetClientOrder(ctx,id){const row=await ctx.db.prepare('SELECT * FROM gm_orders WHERE id=? AND client_id=?').bind(String(id||''),ctx.client.id).first();return v6OrderFromRow(row);}
-async function handleV6OrderPayment(request,env){const ctx=await v6GetClientSession(request,env,true),body=await readJson(request,30000),order=await v6GetClientOrder(ctx,body.orderId);if(!order)throw new HttpError(404,'Commande introuvable.','ORDER_NOT_FOUND');const validation=String(order.validationStatus||'').toLowerCase();if(!validation.includes('valid')||validation.includes('annul'))throw new HttpError(409,'Le paiement est disponible uniquement après validation de la commande.','ORDER_NOT_VALIDATED');const method=String(body.method||'').trim().toUpperCase(),transactionId=String(body.transactionId||'').trim().slice(0,200);if(!['WAVE','USDT TRC20','USDTTRC20'].includes(method)||!transactionId)throw new HttpError(400,'Moyen de paiement ou ID de transaction invalide.','INVALID_PAYMENT');order.paymentMethod=method.startsWith('USDT')?'USDT TRC20':'WAVE';order.transactionId=transactionId;order.paymentRef=transactionId;order.paymentStatus='Paiement déclaré par le client';order.clientPaymentSubmittedAt=v6Now();await env.GLOBAL_MARKET_D1.batch(await v6UpsertStatements(env,'orders',order));await v6RealtimePublish(env,`company:${order.companyId}`,{type:'order',action:'payment-submitted',order});return json({success:true,order});}
-async function handleV6OrderCancel(request,env){const ctx=await v6GetClientSession(request,env,true),body=await readJson(request,20000),order=await v6GetClientOrder(ctx,body.orderId);if(!order)throw new HttpError(404,'Commande introuvable.','ORDER_NOT_FOUND');if(String(order.paymentStatus||'').toLowerCase().includes('confirm'))throw new HttpError(409,'Une commande payée et confirmée ne peut plus être annulée.','ORDER_PAYMENT_CONFIRMED');const stmts=[];if(!order.stockRestored){for(const line of order.items||[])if(String(line.type||'').toLowerCase()==='produit')stmts.push(env.GLOBAL_MARKET_D1.prepare(`UPDATE gm_items SET stock=CASE WHEN stock_type='unlimited' THEN stock ELSE stock+? END,updated_at=? WHERE id=?`).bind(Number(line.qty||0),v6Now(),line.itemId));order.stockRestored=true;}order.validationStatus='Annuler';order.deliveryStatus='Aucune action';order.afterSaleStatus='Annulée par le client';order.delivery='Commande annulée';order.clientCancelled=true;order.cancelledAt=v6Now();order.cancelledBy='client';stmts.push(...await v6UpsertStatements(env,'orders',order));await env.GLOBAL_MARKET_D1.batch(stmts);await v6RealtimePublish(env,`company:${order.companyId}`,{type:'order',action:'cancelled',order});return json({success:true,order});}
-async function handleV6OrderDelete(request,env){const ctx=await v6GetClientSession(request,env,true),body=await readJson(request,20000),order=await v6GetClientOrder(ctx,body.orderId);if(!order)throw new HttpError(404,'Commande introuvable.','ORDER_NOT_FOUND');if(String(order.paymentStatus||'').toLowerCase().includes('confirm'))throw new HttpError(409,'Une commande payée et confirmée ne peut plus être supprimée.','ORDER_PAYMENT_CONFIRMED');if(!String(order.validationStatus||'').toLowerCase().includes('annul'))throw new HttpError(409,'Annulez d’abord la commande avant de la supprimer.','ORDER_NOT_CANCELLED');await env.GLOBAL_MARKET_D1.batch(v6DeleteStatements(env,'orders',order.id));await v6RealtimePublish(env,`company:${order.companyId}`,{type:'order',action:'deleted',orderId:order.id});return json({success:true});}
-async function handleV6MessageSend(request,env){assertSameOrigin(request);const body=await readJson(request,50000),companyId=String(body.companyId||'').trim(),db=v6ReadDb(request,env,true),company=v6CompanyFromRow(await db.prepare('SELECT * FROM gm_companies WHERE id=?').bind(companyId).first());if(!company)throw new HttpError(404,'Boutique introuvable.','COMPANY_NOT_FOUND');const text=String(body.message||'').trim().slice(0,3000);if(!text)throw new HttpError(400,'Message obligatoire.','MESSAGE_REQUIRED');let client=null;try{client=(await v6GetClientSession(request,env,false)).client}catch{}const message={id:`msg_${crypto.randomUUID()}`,companyId,clientId:client?.id||'',clientName:client?.name||String(body.name||'Visiteur').trim().slice(0,160),clientPhone:client?.phone||normalizePhone(body.phone),clientEmail:client?.email||normalizeIdentifier(body.email),senderType:'client',senderName:client?.name||String(body.name||'Visiteur').trim().slice(0,160),body:text,createdAt:v6Now(),adminDeleted:false,clientDeleted:false,readByAdmin:false,readByClient:true};await env.GLOBAL_MARKET_D1.batch(await v6UpsertStatements(env,'marketMessages',message));await v6RealtimePublish(env,`company:${companyId}`,{type:'message',action:'new',message});return json({success:true,message},{status:201});}
-async function handleV6MessageDelete(request,env){const ctx=await v6GetClientSession(request,env,true),body=await readJson(request,50000),ids=(Array.isArray(body.ids)?body.ids:[body.id]).map(String).filter(Boolean).slice(0,200);if(!ids.length)return json({success:true,count:0});const marks=ids.map(()=>'?').join(','),rows=await ctx.db.prepare(`SELECT * FROM gm_market_messages WHERE client_id=? AND id IN (${marks})`).bind(ctx.client.id,...ids).all(),stmts=[];for(const row of rows.results||[]){const m=v6MessageFromRow(row);m.clientDeleted=true;m.clientDeletedAt=v6Now();stmts.push(...await v6UpsertStatements(env,'marketMessages',m));}if(stmts.length)await runD1Batches(env.GLOBAL_MARKET_D1,stmts,30);return json({success:true,count:(rows.results||[]).length});}
-async function handleV6ClientProfile(request,env){const ctx=await v6GetClientSession(request,env,true),body=await readJson(request,50000),client=ctx.client,oldPhone=normalizePhone(client.phone),newName=String(body.name??client.name??'').trim().slice(0,160),newPhone=normalizePhone(body.phone??client.phone),newEmail=normalizeIdentifier(body.email??client.email),currentPassword=String(body.currentPassword||''),newPasswordRaw=String(body.newPassword||'');if(!newName||!newPhone)throw new HttpError(400,'Nom et identifiant / téléphone obligatoires.','MISSING_FIELDS');if((newPhone!==oldPhone||newPasswordRaw)&&(!currentPassword||!(await verifyCredential(ctx.auth,currentPassword))))throw new HttpError(401,'Mot de passe actuel incorrect.','CURRENT_PASSWORD_INVALID');if(newPhone!==oldPhone&&await ctx.db.prepare('SELECT id FROM gm_market_clients WHERE phone=? AND id<>?').bind(newPhone,client.id).first())throw new HttpError(409,'Cet identifiant / téléphone est déjà utilisé.','PHONE_EXISTS');client.name=newName;client.phone=newPhone;client.email=newEmail;client.updatedAt=v6Now();let auth=ctx.auth;if(newPhone!==oldPhone||newPasswordRaw)auth=await writeClientCredential(env,client,newPasswordRaw?validatePassword(newPasswordRaw,'client'):currentPassword);await env.GLOBAL_MARKET_D1.batch(await v6UpsertStatements(env,'marketClients',client));if(newPhone!==oldPhone){await env.GLOBAL_MARKET_KV.delete(globalClientIndexKey(oldPhone));await env.GLOBAL_MARKET_KV.put(globalClientIndexKey(newPhone),client.id);}if(newPhone!==oldPhone||newPasswordRaw){await env.GLOBAL_MARKET_KV.delete(`client-session:${ctx.sid}`);const created=await createClientSession(env,client,auth);return json({success:true,client,session:publicClientSessionView(created.session)},{headers:{'Set-Cookie':setCookie(CLIENT_SESSION_COOKIE,created.sid,CLIENT_SESSION_TTL)}});}return json({success:true,client,session:publicClientSessionView(ctx.session)});}
-async function handleV6ClientResetRequest(request,env){assertSameOrigin(request);const body=await readJson(request,30000),phone=normalizePhone(body.phone||body.identifier),db=v6ReadDb(request,env,true),client=await v6FindClientByPhone(db,phone);if(client){let row=await db.prepare(`SELECT * FROM gm_password_reset_requests WHERE user_id=? AND role='client' AND status='pending' ORDER BY created_at DESC LIMIT 1`).bind(client.id).first();if(!row){const req={id:`rst_${crypto.randomUUID()}`,companyId:GLOBAL_CLIENT_SCOPE,userId:client.id,userName:client.name||'',email:client.email||'',role:'client',phone:client.phone||phone,reason:String(body.reason||'Mot de passe oublié').slice(0,300),status:'pending',createdAt:v6Now()};await env.GLOBAL_MARKET_D1.batch(await v6UpsertStatements(env,'passwordResetRequests',req));}}return json({success:true,message:'Si le compte existe, la demande de réinitialisation a été transmise au Super Admin GLOBAL MARKET.'});}
-
-async function v6RealtimePublish(env,room,event){if(!env.REALTIME_HUB||!room)return;try{const id=env.REALTIME_HUB.idFromName(room),stub=env.REALTIME_HUB.get(id);await stub.fetch('https://realtime.internal/publish',{method:'POST',headers:{'Content-Type':'application/json','X-Room':room},body:JSON.stringify({...event,room,at:v6Now()})});}catch(error){console.warn('Temps réel différé',error?.message||error);}}
-async function handleV6Realtime(request,env){if(!env.REALTIME_HUB)throw new HttpError(424,'Le service temps réel n’est pas encore lié au projet Pages.','REALTIME_BINDING_MISSING');let room='';try{const ctx=await v6GetEmployeeSession(request,env,false);room=ctx.user.role==='superadmin'?'superadmin':`company:${ctx.user.companyId}`;}catch{try{const ctx=await v6GetClientSession(request,env,false);room=`client:${ctx.client.id}`;}catch{throw new HttpError(401,'Connexion requise pour le temps réel.','UNAUTHENTICATED');}}const id=env.REALTIME_HUB.idFromName(room),stub=env.REALTIME_HUB.get(id),headers=new Headers(request.headers);headers.set('X-Room',room);return stub.fetch(new Request('https://realtime.internal/connect',{method:'GET',headers}));}
-async function handleV6Media(request,env,key){if(!env.GLOBAL_MARKET_MEDIA)throw new HttpError(404,'Média indisponible.','MEDIA_NOT_FOUND');const object=await env.GLOBAL_MARKET_MEDIA.get(key);if(!object)throw new HttpError(404,'Média introuvable.','MEDIA_NOT_FOUND');const headers=new Headers();object.writeHttpMetadata(headers);headers.set('etag',object.httpEtag);headers.set('Cache-Control',headers.get('Cache-Control')||'public, max-age=31536000, immutable');return new Response(object.body,{headers});}
-
-
-async function handleV6LegacyBootstrapBridge(request,env){
-  const payload=await publicLoadPayload(request,env),url=new URL(request.url),p=v6CatalogParams(url),all=Array.isArray(payload.items)?payload.items:[],companies=Array.isArray(payload.companies)?payload.companies:[],cmap=new Map(companies.map(c=>[c.id,c]));
-  let rows=all.filter(i=>{const c=cmap.get(i.companyId);return c&&!i.marketplaceHidden&&!(isBoutiqueItem(i)&&i.stockType!=='unlimited'&&Number(i.stock||0)<=0)});
-  if(p.q)rows=rows.filter(i=>v6SearchText(i).includes(p.q)); if(p.category)rows=rows.filter(i=>String(i.cat||i.category||'')===p.category); if(p.companyId)rows=rows.filter(i=>String(i.companyId||'')===p.companyId);
-  if(p.type==='product')rows=rows.filter(i=>!['service','services','prestation'].includes(String(i.type||'').toLowerCase())); if(p.type==='service')rows=rows.filter(i=>['service','services','prestation'].includes(String(i.type||'').toLowerCase()));
-  if(p.sort==='priceAsc')rows.sort((a,b)=>Number(a.sell||0)-Number(b.sell||0)); else if(p.sort==='priceDesc')rows.sort((a,b)=>Number(b.sell||0)-Number(a.sell||0)); else if(p.sort==='name')rows.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'fr')); else rows.sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||'')));
-  const total=rows.length,pages=Math.max(1,Math.ceil(total/p.pageSize)),page=Math.min(p.page,pages),items=rows.slice((page-1)*p.pageSize,page*p.pageSize),categories=[...new Set(rows.map(i=>String(i.cat||i.category||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'));
-  return json({...payload,items,catalogMeta:{pagination:{page,pageSize:p.pageSize,total,pages},categories},migrationPending:true});
-}
-async function handleV6LegacyCatalogBridge(request,env){
-  const response=await handleV6LegacyBootstrapBridge(request,env),data=await response.json();return json({items:data.items||[],pagination:data.catalogMeta?.pagination||{},categories:data.catalogMeta?.categories||[],migrationPending:true});
+  return json({ success: true });
 }
 
 async function handleApi(request, env, executionCtx) {
   needBindings(env);
   const url = new URL(request.url);
   try {
-    const v6Ready = await v6IsReady(env);
-    if (url.pathname === '/api/v6/migration-status' && request.method === 'GET') return json({ready:v6Ready,version:await v6MetaGet(env,V6_MIGRATION_META_KEY),status:await v6MetaGet(env,'migration_status')||'not-started'});
-    if (url.pathname === '/api/v6/migrate' && request.method === 'POST') { v6AuthorizeMigration(request,env); return json({success:true,...await v6MigrateLegacy(env)}); }
-    if (url.pathname.startsWith('/api/v6/media/') && request.method === 'GET') return await handleV6Media(request,env,decodeURIComponent(url.pathname.slice('/api/v6/media/'.length)));
-    if (url.pathname === '/api/v6/realtime-status' && request.method === 'GET') return json({available:Boolean(env.REALTIME_HUB),mode:env.REALTIME_HUB?'websocket':'polling-fallback'});
-    if (v6Ready && url.pathname === '/api/v6/realtime' && request.method === 'GET') return await handleV6Realtime(request,env);
-    if (url.pathname === '/api/v6/catalog' && request.method === 'GET') return v6Ready ? await handleV6Catalog(request,env,executionCtx) : await handleV6LegacyCatalogBridge(request,env);
-    if (url.pathname === '/api/v6/bootstrap' && request.method === 'GET') return v6Ready ? await handleV6Bootstrap(request,env,executionCtx) : await handleV6LegacyBootstrapBridge(request,env);
-    if (v6Ready && url.pathname === '/api/v6/client/orders' && request.method === 'GET') return await handleV6ClientOrders(request,env);
-    if (v6Ready && url.pathname === '/api/v6/client/messages' && request.method === 'GET') return await handleV6ClientMessages(request,env);
-    if (v6Ready && url.pathname === '/api/v6/admin/orders' && request.method === 'GET') return await handleV6AdminOrders(request,env);
-    if (v6Ready && url.pathname === '/api/v6/admin/messages' && request.method === 'GET') return await handleV6AdminMessages(request,env);
-    if (v6Ready && url.pathname === '/api/v6/admin/marketplace-snapshot' && request.method === 'GET') return await handleV6AdminMarketplaceSnapshot(request,env);
     if (url.pathname === '/api/health' && request.method === 'GET') {
       await ensureDB(env);
       const [auth, d1Probe] = await Promise.all([
@@ -2873,22 +2043,17 @@ async function handleApi(request, env, executionCtx) {
       ]);
       return json({
         ok: Boolean(d1Probe?.ok), app: APP_NAME, kv: true, d1: Boolean(d1Probe?.ok),
-        relationalCatalog: await env.GLOBAL_MARKET_D1.prepare(`SELECT (SELECT COUNT(*) FROM gm_items) AS items,(SELECT COUNT(*) FROM gm_companies) AS companies`).first(),
-        catalogRecovery: await v6MetaGet(env,'catalog_recovery_v603'),
         securityInitialized: Boolean(auth?.hash),
         setupRequired: !auth?.hash,
         superAdminEmailConfigured: Boolean(configuredSuperAdminIdentifier(env)),
         superAdminPasswordSecretConfigured: Boolean(String(env.SUPER_ADMIN_INITIAL_PASSWORD || '')),
-        saveMode: (await v6IsReady(env)) ? 'relational-d1-v6' : 'legacy-migration-mode',
-        relationalV6: await v6IsReady(env),
-        realtimeBound: Boolean(env.REALTIME_HUB),
-        mediaBound: Boolean(env.GLOBAL_MARKET_MEDIA),
+        saveMode: 'incremental-d1-delta-v7',
         time: new Date().toISOString()
       });
     }
 
-    if (url.pathname === '/api/login' && request.method === 'POST') return v6Ready ? await handleV6Login(request, env) : await handleLogin(request, env);
-    if (url.pathname === '/api/register-company' && request.method === 'POST') return v6Ready ? await handleV6RegisterCompany(request, env) : await handleRegisterCompany(request, env);
+    if (url.pathname === '/api/login' && request.method === 'POST') return await handleLogin(request, env);
+    if (url.pathname === '/api/register-company' && request.method === 'POST') return await handleRegisterCompany(request, env);
     if (url.pathname === '/api/password/change' && request.method === 'POST') return await handlePasswordChange(request, env);
     if (url.pathname === '/api/password/request-reset' && request.method === 'POST') return await handlePasswordResetRequest(request, env);
 
@@ -2946,23 +2111,16 @@ async function handleApi(request, env, executionCtx) {
     if (url.pathname === '/api/users/delete' && request.method === 'POST') return await handleDeleteUser(request, env);
     if (url.pathname === '/api/users/reset-password' && request.method === 'POST') return await handleResetUserPassword(request, env);
 
-    if (url.pathname === '/api/public/load' && request.method === 'GET') return v6Ready ? await handleV6Bootstrap(request, env, executionCtx) : json(await publicLoadPayload(request, env));
-    if (url.pathname === '/api/public/client/register' && request.method === 'POST') return v6Ready ? await handleV6ClientRegister(request, env) : await handlePublicClientRegister(request, env);
-    if (url.pathname === '/api/public/client/login' && request.method === 'POST') return v6Ready ? await handleV6ClientLogin(request, env) : await handlePublicClientLogin(request, env);
-    if (url.pathname === '/api/public/client/profile' && request.method === 'POST') return v6Ready ? await handleV6ClientProfile(request, env) : await handlePublicClientProfileUpdate(request, env);
-    if (url.pathname === '/api/public/client/request-reset' && request.method === 'POST') return v6Ready ? await handleV6ClientResetRequest(request, env) : await handlePublicClientResetRequest(request, env);
-    if (url.pathname === '/api/client/reset-password' && request.method === 'POST') return await handleSuperResetClientPassword(request, env);
+    if (url.pathname === '/api/public/load' && request.method === 'GET') return json(await publicLoadPayload(request, env));
+    if (url.pathname === '/api/public/client/register' && request.method === 'POST') return await handlePublicClientRegister(request, env);
+    if (url.pathname === '/api/public/client/login' && request.method === 'POST') return await handlePublicClientLogin(request, env);
     if (url.pathname === '/api/public/client/session' && request.method === 'DELETE') {
       const sid = getCookie(request, CLIENT_SESSION_COOKIE);
       if (sid) await env.GLOBAL_MARKET_KV.delete(`client-session:${sid}`);
       return json({ success: true }, { headers: { 'Set-Cookie': setCookie(CLIENT_SESSION_COOKIE, '', 0) } });
     }
-    if (url.pathname === '/api/public/order' && request.method === 'POST') return v6Ready ? await handleV6Order(request, env) : await handlePublicOrder(request, env);
-    if (url.pathname === '/api/public/order/payment' && request.method === 'POST') return v6Ready ? await handleV6OrderPayment(request, env) : await handlePublicOrderPayment(request, env);
-    if (url.pathname === '/api/public/order/cancel' && request.method === 'POST') return v6Ready ? await handleV6OrderCancel(request, env) : await handlePublicOrderCancel(request, env);
-    if (url.pathname === '/api/public/order/delete' && request.method === 'POST') return v6Ready ? await handleV6OrderDelete(request, env) : await handlePublicOrderDelete(request, env);
-    if (url.pathname === '/api/public/message' && request.method === 'POST') return v6Ready ? await handleV6MessageSend(request, env) : await handlePublicMessageSend(request, env);
-    if (url.pathname === '/api/public/message/delete' && request.method === 'POST') return v6Ready ? await handleV6MessageDelete(request, env) : await handlePublicMessageDelete(request, env);
+    if (url.pathname === '/api/public/order' && request.method === 'POST') return await handlePublicOrder(request, env);
+    if (url.pathname === '/api/public/order/delete' && request.method === 'POST') return await handlePublicOrderDelete(request, env);
 
     throw new HttpError(404, `API introuvable : ${url.pathname}`, 'NOT_FOUND');
   } catch (error) {
@@ -2991,7 +2149,7 @@ export default {
       headers.set('Cache-Control', 'no-cache, must-revalidate, max-age=0');
     }
 
-    headers.set('X-Global-Market-Architecture', 'V6-D1-RELATIONAL-WEBSOCKET');
+    headers.set('X-Global-Market-Cache-Fix', '2026-08-05-v4.2-delta');
     return new Response(assetResponse.body, {
       status: assetResponse.status,
       statusText: assetResponse.statusText,

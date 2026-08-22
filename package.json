@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "6.0.3",
+  "version": "5.5.1",
   "private": true,
-  "description": "GLOBAL MARKET V6.0.3 - D1 relationnel avec récupération automatique du catalogue V5 et fallback anti-catalogue vide.",
+  "description": "GLOBAL MARKET - panier en 3 sections horizontales, frais d’expédition automatiques par moyen et minimum de 10 000 FCFA sur le total général de chaque commande hors ville.",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -12,16 +12,7 @@
     "build": "npm run validate && node scripts/build.mjs",
     "check": "npm run build",
     "dev": "npm run build && wrangler pages dev public",
-    "deploy": "npm run build && wrangler pages deploy public --project-name=globalmarketci",
-    "db:v6": "wrangler d1 execute global_market_d1 --remote --file=cloudflare/schema-v6.sql",
-    "realtime:deploy": "wrangler deploy --config realtime-worker/wrangler.json",
-    "media:create": "wrangler r2 bucket create global-market-media",
-    "migrate:v6": "node scripts/migrate-v6.mjs",
-    "loadtest:v6": "node scripts/load-test-v6.mjs",
-    "pages:deploy": "npm run build && wrangler pages deploy public --project-name=globalmarketci",
-    "pages:deploy:media": "npm run build && wrangler pages deploy public --project-name=globalmarketci --config wrangler.pages-with-media.json",
-    "pages:deploy:realtime": "npm run build && wrangler pages deploy public --project-name=globalmarketci --config wrangler.pages-with-realtime.json",
-    "pages:deploy:full": "npm run build && wrangler pages deploy public --project-name=globalmarketci --config wrangler.pages-full.json"
+    "deploy": "npm run build && wrangler pages deploy public --project-name=globalmarketci"
   },
   "devDependencies": {
     "wrangler": "^4.27.0"

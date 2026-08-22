@@ -256,22 +256,10 @@ function g3Alert(message,title='Message GLOBAL MARKET',type='info'){g3Popup({mes
 function g3Success(message,title='Succès GLOBAL MARKET'){g3Popup({message,title,type:'success'});}
 function g3Confirm(message,title='Confirmation GLOBAL MARKET'){return g3Popup({message,title,type:'confirm'});}
 function g3Prompt(message,defaultValue='',title='Saisie GLOBAL MARKET'){return g3Popup({message,defaultValue,title,type:'prompt'});}
-window.alert=function(message){
-  const text=String(message??'');
-  if(/service cloud est (?:temporairement|momentanément) occupé|service cloud est très sollicité|stockage cloud est temporairement occupé|synchronisation temporairement retardée/i.test(text)){
-    console.info('[GLOBAL MARKET] synchronisation différée :',text);
-    scheduleCloudRefresh(CLOUD_SESSION?'employee':'public',700);
-    return;
-  }
-  g3Alert(message);
-};
+window.alert=function(message){g3Alert(message)};
 
 const CLOUD_KEY='global_market_all';
 let CLOUD_DATA=null;
-let GM_V6_D1_BOOKMARK='';
-let GM_V6_CATALOG_META=null;
-let GM_V6_CURRENT_CATALOG_ITEMS=[];
-const GM_V6_CATALOG_CACHE=new Map();
 let CLOUD_SESSION=null;
 let PUBLIC_CLIENT_SESSION=null;
 let CLOUD_SAVE_TIMER=null;
@@ -282,28 +270,12 @@ let CLOUD_SAVE_RETRY_DELAY=2500;
 let CLOUD_LAST_ACK_DATA=null;
 let CLOUD_DATA_READY=false;
 let CLOUD_BOOT_SEQUENCE=0;
-let CLOUD_REFRESH_TIMER=null;
-let CLOUD_REFRESH_IN_FLIGHT=null;
-let CLOUD_LAST_REFRESH_MODE='public';
-function defaultData(){return {companies:[],users:[],items:[],sales:[],payments:[],orders:[],clients:[],marketClients:[],marketMessages:[],passwordResetRequests:[]}}
-function normalizeData(d){d=d&&typeof d==='object'?d:{}; if(d.data&&typeof d.data==='object') d=d.data; const base=defaultData(); return Object.assign(base,d,{companies:Array.isArray(d.companies)?d.companies:[],users:Array.isArray(d.users)?d.users:[],items:Array.isArray(d.items)?d.items:[],sales:Array.isArray(d.sales)?d.sales:[],payments:Array.isArray(d.payments)?d.payments:[],orders:Array.isArray(d.orders)?d.orders:[],clients:Array.isArray(d.clients)?d.clients:[],marketClients:Array.isArray(d.marketClients)?d.marketClients:[],marketMessages:Array.isArray(d.marketMessages)?d.marketMessages:[],passwordResetRequests:Array.isArray(d.passwordResetRequests)?d.passwordResetRequests:[]})}
+function defaultData(){return {companies:[],users:[],items:[],sales:[],payments:[],orders:[],clients:[],marketClients:[],passwordResetRequests:[]}}
+function normalizeData(d){d=d&&typeof d==='object'?d:{}; if(d.data&&typeof d.data==='object') d=d.data; const base=defaultData(); return Object.assign(base,d,{companies:Array.isArray(d.companies)?d.companies:[],users:Array.isArray(d.users)?d.users:[],items:Array.isArray(d.items)?d.items:[],sales:Array.isArray(d.sales)?d.sales:[],payments:Array.isArray(d.payments)?d.payments:[],orders:Array.isArray(d.orders)?d.orders:[],clients:Array.isArray(d.clients)?d.clients:[],marketClients:Array.isArray(d.marketClients)?d.marketClients:[],passwordResetRequests:Array.isArray(d.passwordResetRequests)?d.passwordResetRequests:[]})}
 function rememberCloudCache(){/* Sécurité : aucune base complète n'est conservée dans localStorage. */}
 function readCloudCache(){return null}
-async function fetchWithTimeout(url,opts={},ms=6500){const c=new AbortController();const t=setTimeout(()=>c.abort(),ms);try{const headers=new Headers(opts.headers||{});if(String(url).startsWith('/api/')&&GM_V6_D1_BOOKMARK)headers.set('X-D1-Bookmark',GM_V6_D1_BOOKMARK);const r=await fetch(url,{...opts,headers,credentials:'same-origin',signal:c.signal});const bm=r.headers.get('X-D1-Bookmark');if(bm)GM_V6_D1_BOOKMARK=bm;return r;}finally{clearTimeout(t)}}
-async function readApiPayload(r){const j=await r.json().catch(()=>({})); if(!r.ok){const temporary=[408,425,429,500,502,503,504].includes(Number(r.status)); const fallback=temporary?'Le service cloud n’a pas répondu correctement.':'Requête refusée (code '+r.status+').'; const e=new Error(j.error||fallback); e.status=r.status; e.code=j.code||''; e.payload=j; e.retryAfter=Number(r.headers?.get?.('Retry-After')||0); throw e;} return j}
-async function fetchApiJsonWithRetry(url,opts={},timeoutMs=12000,attempts=6){
-  let lastError=null;
-  for(let attempt=0;attempt<attempts;attempt++){
-    try{const r=await fetchWithTimeout(url,opts,timeoutMs);return await readApiPayload(r)}catch(error){
-      lastError=error;
-      if(!isTransientCloudSaveError(error)||attempt===attempts-1)throw error;
-      const serverDelay=Math.max(0,Number(error?.retryAfter||0)*1000);
-      const backoff=[250,600,1200,2200,3800,6000,9000][Math.min(attempt,6)];
-      await waitMs(Math.max(serverDelay,backoff)+Math.floor(Math.random()*180));
-    }
-  }
-  throw lastError||new Error('Service cloud indisponible.');
-}
+async function fetchWithTimeout(url,opts={},ms=6500){const c=new AbortController(); const t=setTimeout(()=>c.abort(),ms); try{return await fetch(url,{...opts,credentials:'same-origin',signal:c.signal});}finally{clearTimeout(t)}}
+async function readApiPayload(r){const j=await r.json().catch(()=>({})); if(!r.ok){const temporary=[408,425,429,500,502,503,504].includes(Number(r.status)); const fallback=temporary?'Le service cloud est momentanément occupé. Une nouvelle tentative sera effectuée.':`Requête refusée (code ${r.status}).`; const e=new Error(j.error||fallback); e.status=r.status; e.code=j.code||''; e.payload=j; throw e;} return j}
 function employeeSecurityHeaders(extra={}){return {'Content-Type':'application/json',...(CLOUD_SESSION?.csrfToken?{'X-CSRF-Token':CLOUD_SESSION.csrfToken}:{}),...extra}}
 function clientSecurityHeaders(extra={}){return {'Content-Type':'application/json',...(PUBLIC_CLIENT_SESSION?.csrfToken?{'X-CSRF-Token':PUBLIC_CLIENT_SESSION.csrfToken}:{}),...extra}}
 function cloneCloudData(value){return value==null?value:JSON.parse(JSON.stringify(value))}
@@ -346,42 +318,8 @@ function buildCloudDelta(previous,current){
   return delta;
 }
 function cloudDeltaIsEmpty(delta){return !Object.keys(delta?.arrays||{}).length&&!Object.keys(delta?.objects||{}).length&&!Object.keys(delta?.values||{}).length}
-function scheduleCloudRefresh(mode=CLOUD_SESSION?'employee':'public',delay=1800){
-  CLOUD_LAST_REFRESH_MODE=mode;
-  if(CLOUD_REFRESH_TIMER||document.hidden||!navigator.onLine)return;
-  CLOUD_REFRESH_TIMER=setTimeout(async()=>{
-    CLOUD_REFRESH_TIMER=null;
-    if(CLOUD_REFRESH_IN_FLIGHT)return;
-    CLOUD_REFRESH_IN_FLIGHT=(async()=>{
-      try{
-        if(CLOUD_LAST_REFRESH_MODE==='employee'&&CLOUD_SESSION)await cloudLoadData({allowStale:false,background:true});
-        else await cloudLoadPublicData({allowStale:false,background:true});
-        if(location.hash==='#home'||!CLOUD_SESSION)renderGlobalShop();else render();
-      }catch(e){if(isTransientCloudSaveError(e))scheduleCloudRefresh(CLOUD_LAST_REFRESH_MODE,Math.min(15000,delay*2));else console.warn('Actualisation cloud différée',e)}
-    })();
-    try{await CLOUD_REFRESH_IN_FLIGHT}finally{CLOUD_REFRESH_IN_FLIGHT=null}
-  },delay);
-}
-async function cloudLoadData(options={}){
-  const allowStale=options.allowStale!==false;
-  try{
-    const j=await fetchApiJsonWithRetry('/api/load',{cache:'no-store'},12000,2);
-    CLOUD_DATA=normalizeData(j); CLOUD_LAST_ACK_DATA=cloneCloudData(CLOUD_DATA); CLOUD_DATA_READY=true; return CLOUD_DATA;
-  }catch(error){
-    if(allowStale&&isTransientCloudSaveError(error)&&CLOUD_DATA&&CLOUD_DATA_READY){scheduleCloudRefresh('employee');return CLOUD_DATA}
-    throw error;
-  }
-}
-async function cloudLoadPublicData(options={}){
-  const allowStale=options.allowStale!==false;
-  try{
-    const j=await fetchApiJsonWithRetry('/api/v6/bootstrap?page=1&pageSize=16',{cache:'no-store'},12000,2);
-    PUBLIC_CLIENT_SESSION=j.clientSession||PUBLIC_CLIENT_SESSION||null; GM_V6_CATALOG_META=j.catalogMeta||GM_V6_CATALOG_META; GM_V6_CURRENT_CATALOG_ITEMS=Array.isArray(j.items)?j.items:[]; for(const it of GM_V6_CURRENT_CATALOG_ITEMS)GM_V6_CATALOG_CACHE.set(it.id,it); CLOUD_DATA=normalizeData(j); CLOUD_DATA.items=[...GM_V6_CATALOG_CACHE.values()]; CLOUD_LAST_ACK_DATA=cloneCloudData(CLOUD_DATA); CLOUD_DATA_READY=true; if(PUBLIC_CLIENT_SESSION?.clientId) window.publicShopClientId=PUBLIC_CLIENT_SESSION.clientId; else window.publicShopClientId=''; return CLOUD_DATA;
-  }catch(error){
-    if(allowStale&&isTransientCloudSaveError(error)&&CLOUD_DATA&&CLOUD_DATA_READY){scheduleCloudRefresh('public');return CLOUD_DATA}
-    throw error;
-  }
-}
+async function cloudLoadData(){const r=await fetchWithTimeout('/api/load',{cache:'no-store'},12000); const j=await readApiPayload(r); CLOUD_DATA=normalizeData(j); CLOUD_LAST_ACK_DATA=cloneCloudData(CLOUD_DATA); CLOUD_DATA_READY=true; return CLOUD_DATA}
+async function cloudLoadPublicData(){const r=await fetchWithTimeout('/api/public/load',{cache:'no-store'},12000); const j=await readApiPayload(r); PUBLIC_CLIENT_SESSION=j.clientSession||null; CLOUD_DATA=normalizeData(j); CLOUD_LAST_ACK_DATA=cloneCloudData(CLOUD_DATA); CLOUD_DATA_READY=true; if(PUBLIC_CLIENT_SESSION?.clientId) window.publicShopClientId=PUBLIC_CLIENT_SESSION.clientId; else window.publicShopClientId=''; return CLOUD_DATA}
 function waitMs(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
 function isTransientCloudSaveError(error){return !error?.status||[408,425,429,500,502,503,504].includes(Number(error.status))||error?.name==='AbortError'}
 function scheduleCloudSaveRetry(){
@@ -440,8 +378,7 @@ function handleCloudSaveFailure(e){
   const detail=e?.code?`${e.message} (${e.code})`:e?.message||'Erreur inconnue';
   alert('Enregistrement impossible : '+detail);
 }
-window.addEventListener('online',()=>{if(CLOUD_SAVE_PENDING&&CLOUD_SESSION) cloudSaveNow(CLOUD_DATA).catch(handleCloudSaveFailure);scheduleCloudRefresh(CLOUD_SESSION?'employee':'public',300)});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)scheduleCloudRefresh(CLOUD_SESSION?'employee':'public',250)});
+window.addEventListener('online',()=>{if(CLOUD_SAVE_PENDING&&CLOUD_SESSION) cloudSaveNow(CLOUD_DATA).catch(handleCloudSaveFailure)});
 window.addEventListener('pagehide',()=>{
   if(!CLOUD_SESSION||!CLOUD_DATA||!CLOUD_LAST_ACK_DATA) return;
   const delta=buildCloudDelta(CLOUD_LAST_ACK_DATA,CLOUD_DATA);
@@ -493,10 +430,9 @@ async function cloudStart(){
   }catch(e){
     console.error(e);
     if(sequence===CLOUD_BOOT_SEQUENCE){
-      if(!CLOUD_DATA)CLOUD_DATA=defaultData();
-      location.hash='#home';
+      CLOUD_SESSION=null;CLOUD_DATA=defaultData();CLOUD_DATA_READY=false;location.hash='#home';
+      try{await cloudLoadPublicData()}catch(_e){}
       renderGlobalShop();
-      scheduleCloudRefresh('public',1200);
     }
   }
 }
@@ -3597,9 +3533,9 @@ async function superResetAdminPassword(uid){
   alert('Mot de passe temporaire généré pour '+(u.name||u.email)+' :\n\n'+temp+'\n\nIl est chiffré et devra être changé à la prochaine connexion.');
   closeSuperModal(); showCompanyDetails(u.companyId);
 }
-function renderSuper(){const {d,user}=current(); const ca=(d.companies||[]).some(c=>c.v6Stats)?(d.companies||[]).reduce((n,c)=>n+Number(c.v6Stats?.salesTotal||0),0):d.sales.filter(isSaleValidated).reduce((a,b)=>a+b.total,0); const active=d.companies.filter(c=>statusCompany(c)==='active'||statusCompany(c)==='trial').length; const expired=d.companies.filter(c=>statusCompany(c)==='expired').length; app.innerHTML=globalUniversalHeader('super')+`<div class="superShell superUnifiedShell"><aside class="superSide"><div class="superBrand"><div class="superLogo">MS</div><div><h2>MEGA SERVICES</h2><p>Super Admin GLOBAL MARKET</p></div></div><div class="superMenu"><button class="active" onclick="renderSuper()">📊 Vue générale</button><button onclick="exportData()">📤 Exporter données</button><button class="danger" onclick="logout()">🚪 Déconnexion</button></div><div class="superNote">Gestion centrale des entreprises, abonnements, utilisateurs et chiffres déclarés.</div></aside><main class="superMain"><div class="superHero"><div><span class="superKicker">Administration centrale</span><h1>Gestion professionnelle des entreprises inscrites</h1><p>Suivi des abonnements, contrôle des statuts, chiffre d’affaires et actions rapides MEGA SERVICES.</p></div><button class="superExport" onclick="exportData()">📤 Exporter données</button></div><div class="superStats"><div class="superStat"><span>🏢</span><small>Entreprises</small><b>${d.companies.length}</b></div><div class="superStat"><span>✅</span><small>Actives</small><b>${active}</b></div><div class="superStat"><span>⏳</span><small>Expirées</small><b>${expired}</b></div><div class="superStat"><span>💰</span><small>CA déclaré</small><b>${money(ca)}</b></div></div><section class="superPanel"><div class="superPanelHead"><div><h2>Entreprises inscrites</h2><p>Liste simplifiée : cliquez sur <b>Voir détails</b> devant chaque entreprise pour ouvrir la fiche complète avec les actions.</p></div><span>${d.companies.length} entreprise(s)</span></div><div class="superTableWrap"><table class="superTable superCompanyList"><thead><tr><th>Entreprise</th><th>Responsable</th><th>Abonnement</th><th>CA déclaré</th><th>Actions</th></tr></thead><tbody>${d.companies.map(c=>{let s=c.v6Stats?Number(c.v6Stats.salesTotal||0):d.sales.filter(x=>x.companyId===c.id&&isSaleValidated(x)).reduce((a,b)=>a+b.total,0), st=statusCompany(c); return `<tr><td><div class="companyNameLine"><button class="detailsBtn" onclick="showCompanyDetails('${c.id}')">Voir détails</button><strong>${esc(c.name)}</strong></div></td><td>${esc(c.owner)}</td><td><span class="statusPill ${st}">${st}</span><br><small>${esc(planDef(c).label)} — Fin : ${esc(c.subscriptionEnd)}</small></td><td><b>${money(s)}</b></td><td><div class="superCompanyActions"><button class="detailsBtn wide" onclick="showCompanyDetails('${c.id}')">Ouvrir la fiche</button><button class="danger companyDeleteBtn" data-delete-company="${c.id}" onclick="deleteCompanyAccount('${c.id}')">Supprimer le compte</button></div></td></tr>`}).join('')}</tbody></table></div></section><section class="superPanel"><div class="superPanelHead"><div><h2>Réinitialisation mots de passe Administrateur</h2><p>Règle de sécurité : seul le Super Admin GLOBAL MARKET peut réinitialiser un compte Administrateur d’entreprise.</p></div></div>${superPasswordResetRequestsBox()}</section></main></div>`}
+function renderSuper(){const {d,user}=current(); const ca=d.sales.filter(isSaleValidated).reduce((a,b)=>a+b.total,0); const active=d.companies.filter(c=>statusCompany(c)==='active'||statusCompany(c)==='trial').length; const expired=d.companies.filter(c=>statusCompany(c)==='expired').length; app.innerHTML=globalUniversalHeader('super')+`<div class="superShell superUnifiedShell"><aside class="superSide"><div class="superBrand"><div class="superLogo">MS</div><div><h2>MEGA SERVICES</h2><p>Super Admin GLOBAL MARKET</p></div></div><div class="superMenu"><button class="active" onclick="renderSuper()">📊 Vue générale</button><button onclick="exportData()">📤 Exporter données</button><button class="danger" onclick="logout()">🚪 Déconnexion</button></div><div class="superNote">Gestion centrale des entreprises, abonnements, utilisateurs et chiffres déclarés.</div></aside><main class="superMain"><div class="superHero"><div><span class="superKicker">Administration centrale</span><h1>Gestion professionnelle des entreprises inscrites</h1><p>Suivi des abonnements, contrôle des statuts, chiffre d’affaires et actions rapides MEGA SERVICES.</p></div><button class="superExport" onclick="exportData()">📤 Exporter données</button></div><div class="superStats"><div class="superStat"><span>🏢</span><small>Entreprises</small><b>${d.companies.length}</b></div><div class="superStat"><span>✅</span><small>Actives</small><b>${active}</b></div><div class="superStat"><span>⏳</span><small>Expirées</small><b>${expired}</b></div><div class="superStat"><span>💰</span><small>CA déclaré</small><b>${money(ca)}</b></div></div><section class="superPanel"><div class="superPanelHead"><div><h2>Entreprises inscrites</h2><p>Liste simplifiée : cliquez sur <b>Voir détails</b> devant chaque entreprise pour ouvrir la fiche complète avec les actions.</p></div><span>${d.companies.length} entreprise(s)</span></div><div class="superTableWrap"><table class="superTable superCompanyList"><thead><tr><th>Entreprise</th><th>Responsable</th><th>Abonnement</th><th>CA déclaré</th><th>Actions</th></tr></thead><tbody>${d.companies.map(c=>{let s=d.sales.filter(x=>x.companyId===c.id&&isSaleValidated(x)).reduce((a,b)=>a+b.total,0), st=statusCompany(c); return `<tr><td><div class="companyNameLine"><button class="detailsBtn" onclick="showCompanyDetails('${c.id}')">Voir détails</button><strong>${esc(c.name)}</strong></div></td><td>${esc(c.owner)}</td><td><span class="statusPill ${st}">${st}</span><br><small>${esc(planDef(c).label)} — Fin : ${esc(c.subscriptionEnd)}</small></td><td><b>${money(s)}</b></td><td><div class="superCompanyActions"><button class="detailsBtn wide" onclick="showCompanyDetails('${c.id}')">Ouvrir la fiche</button><button class="danger companyDeleteBtn" data-delete-company="${c.id}" onclick="deleteCompanyAccount('${c.id}')">Supprimer le compte</button></div></td></tr>`}).join('')}</tbody></table></div></section><section class="superPanel"><div class="superPanelHead"><div><h2>Réinitialisation mots de passe Administrateur</h2><p>Règle de sécurité : seul le Super Admin GLOBAL MARKET peut réinitialiser un compte Administrateur d’entreprise.</p></div></div>${superPasswordResetRequestsBox()}</section></main></div>`}
 
-function showCompanyDetails(cid){const d=seed(), c=d.companies.find(x=>x.id===cid); if(!c)return; const us=d.users.filter(u=>u.companyId===c.id), sales=d.sales.filter(x=>x.companyId===c.id&&isSaleValidated(x)), pay=d.payments.filter(x=>x.companyId===c.id); const ca=c.v6Stats?Number(c.v6Stats.salesTotal||0):sales.reduce((a,b)=>a+b.total,0), articles=sales.reduce((a,b)=>a+(Number(b.qty)||0),0), saleCount=c.v6Stats?Number(c.v6Stats.salesCount||0):sales.length, paymentCount=c.v6Stats?Number(c.v6Stats.paymentCount||0):pay.length, st=statusCompany(c); const old=document.querySelector('.superModalBackdrop'); if(old)old.remove(); const box=document.createElement('div'); box.className='superModalBackdrop'; box.innerHTML=`<div class="superCompanyModal"><button class="superClose" onclick="closeSuperModal()">×</button><div class="companyModalHead"><div><span class="superKicker">Fiche entreprise</span><h2>${esc(c.name)}</h2><p>Informations d’inscription, abonnement, utilisateurs, chiffre d’affaires et gestion des accès.</p></div><span class="statusPill ${st}">${st}</span></div><div class="companyDetailGrid"><div><small>Responsable</small><b>${esc(c.owner)}</b></div><div><small>Téléphone</small><b>${esc(c.phone)}</b></div><div><small>Email</small><b>${esc(c.email)}</b></div><div><small>Type de commerce</small><b>${esc(c.businessType)}</b></div><div><small>Plan</small><b>${esc(c.plan)}</b></div><div><small>Début abonnement</small><b>${esc(c.subscriptionStart||'-')}</b></div><div><small>Fin abonnement</small><b>${esc(c.subscriptionEnd||'-')}</b></div><div><small>Utilisateurs</small><b>${us.length}</b></div><div><small>Ventes réalisées</small><b>${saleCount}</b></div><div><small>Articles vendus</small><b>${articles}</b></div><div><small>Chiffre d’affaires</small><b>${money(ca)}</b></div><div><small>Paiements enregistrés</small><b>${paymentCount}</b></div></div><h3>Utilisateurs du compte</h3><div class="miniList">${us.length?us.map(u=>`<div><b>${esc(u.name)}</b><span>${esc(u.role)} — ${esc(u.email)} — ${esc(u.status||'active')}${u.mustChangePassword?' — mot de passe temporaire':''}</span>${u.role==='admin'?`<button class="detailsBtn" onclick="superResetAdminPassword('${u.id}')">Réinitialiser admin</button>`:''}</div>`).join(''):'<em>Aucun utilisateur enregistré.</em>'}</div>${planActivationButtons(c.id,planCode(c))}<div class="superModalActions"><button onclick="renewCompany('${c.id}');closeSuperModal()">Renouveler</button><button class="soft" onclick="setCompanyStatus('${c.id}','suspended');closeSuperModal()">Suspendre</button><button class="danger" onclick="setCompanyStatus('${c.id}','blocked');closeSuperModal()">Bloquer</button><button class="ok" onclick="setCompanyStatus('${c.id}','active');closeSuperModal()">Activer</button><button class="danger companyDeleteBtn" data-delete-company="${c.id}" onclick="deleteCompanyAccount('${c.id}')">Supprimer définitivement le compte</button></div></div>`; document.body.appendChild(box)}
+function showCompanyDetails(cid){const d=seed(), c=d.companies.find(x=>x.id===cid); if(!c)return; const us=d.users.filter(u=>u.companyId===c.id), sales=d.sales.filter(x=>x.companyId===c.id&&isSaleValidated(x)), pay=d.payments.filter(x=>x.companyId===c.id); const ca=sales.reduce((a,b)=>a+b.total,0), articles=sales.reduce((a,b)=>a+(Number(b.qty)||0),0), st=statusCompany(c); const old=document.querySelector('.superModalBackdrop'); if(old)old.remove(); const box=document.createElement('div'); box.className='superModalBackdrop'; box.innerHTML=`<div class="superCompanyModal"><button class="superClose" onclick="closeSuperModal()">×</button><div class="companyModalHead"><div><span class="superKicker">Fiche entreprise</span><h2>${esc(c.name)}</h2><p>Informations d’inscription, abonnement, utilisateurs, chiffre d’affaires et gestion des accès.</p></div><span class="statusPill ${st}">${st}</span></div><div class="companyDetailGrid"><div><small>Responsable</small><b>${esc(c.owner)}</b></div><div><small>Téléphone</small><b>${esc(c.phone)}</b></div><div><small>Email</small><b>${esc(c.email)}</b></div><div><small>Type de commerce</small><b>${esc(c.businessType)}</b></div><div><small>Plan</small><b>${esc(c.plan)}</b></div><div><small>Début abonnement</small><b>${esc(c.subscriptionStart||'-')}</b></div><div><small>Fin abonnement</small><b>${esc(c.subscriptionEnd||'-')}</b></div><div><small>Utilisateurs</small><b>${us.length}</b></div><div><small>Ventes réalisées</small><b>${sales.length}</b></div><div><small>Articles vendus</small><b>${articles}</b></div><div><small>Chiffre d’affaires</small><b>${money(ca)}</b></div><div><small>Paiements enregistrés</small><b>${pay.length}</b></div></div><h3>Utilisateurs du compte</h3><div class="miniList">${us.length?us.map(u=>`<div><b>${esc(u.name)}</b><span>${esc(u.role)} — ${esc(u.email)} — ${esc(u.status||'active')}${u.mustChangePassword?' — mot de passe temporaire':''}</span>${u.role==='admin'?`<button class="detailsBtn" onclick="superResetAdminPassword('${u.id}')">Réinitialiser admin</button>`:''}</div>`).join(''):'<em>Aucun utilisateur enregistré.</em>'}</div>${planActivationButtons(c.id,planCode(c))}<div class="superModalActions"><button onclick="renewCompany('${c.id}');closeSuperModal()">Renouveler</button><button class="soft" onclick="setCompanyStatus('${c.id}','suspended');closeSuperModal()">Suspendre</button><button class="danger" onclick="setCompanyStatus('${c.id}','blocked');closeSuperModal()">Bloquer</button><button class="ok" onclick="setCompanyStatus('${c.id}','active');closeSuperModal()">Activer</button><button class="danger companyDeleteBtn" data-delete-company="${c.id}" onclick="deleteCompanyAccount('${c.id}')">Supprimer définitivement le compte</button></div></div>`; document.body.appendChild(box)}
 function closeSuperModal(){const m=document.querySelector('.superModalBackdrop'); if(m)m.remove()}
 
 async function deleteCompanyAccount(cid){
@@ -4255,7 +4191,7 @@ async function fakeCustomerOrder(iid){const {d,company}=current(); const it=(d.i
 async function updateOrderStatus(oid){const {d,company}=current(); const o=(d.orders||[]).find(x=>x.id===oid&&x.companyId===company.id); if(!o) return; const st=await g3Prompt('Statut livraison :',o.delivery||'Commande reçue','Statut livraison'); if(st){o.delivery=st; save(d); showMarketplacePage();}}
 
 
-const GLOBAL_MARKET_HOME_PAGE_SIZE=16;
+const GLOBAL_MARKET_HOME_PAGE_SIZE=12;
 function globalMarketBrandMark(){return `<span class="gmHomeLogoMark" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28"/><path d="M15 21h6l5 22h22l4-15H25M29 50a3 3 0 1 0 0 .1M45 50a3 3 0 1 0 0 .1M21 13c6 5 16 6 23 1M18 37c9 3 21 3 31 0M32 8c-7 7-10 15-9 24M32 8c7 7 10 15 9 24"/></svg></span>`}
 function globalMarketCardHtml(i,company={}){
   const desc=String(i.marketplaceDesc||i.detail||i.desc||'Produit ou service proposé sur GLOBAL MARKET.');
@@ -4298,9 +4234,9 @@ function renderGlobalShop(){
   const d=seed();
   const companies=(d.companies||[]).filter(c=>hasPlanFeature(c,'public_shop'));
   const companyMap=new Map(companies.map(c=>[c.id,c]));
-  const realItems=(GM_V6_CURRENT_CATALOG_ITEMS.length?GM_V6_CURRENT_CATALOG_ITEMS:(d.items||[])).filter(i=>{const c=companyMap.get(i.companyId);return c&&!i.marketplaceHidden&&!(isBoutiqueItem(i)&&i.stockType!=='unlimited'&&Number(i.stock||0)<=0)});
+  const realItems=(d.items||[]).filter(i=>{const c=companyMap.get(i.companyId);return c&&!i.marketplaceHidden&&!(isBoutiqueItem(i)&&i.stockType!=='unlimited'&&Number(i.stock||0)<=0)});
   const displayItems=realItems;
-  const cats=(GM_V6_CATALOG_META?.categories?.length?GM_V6_CATALOG_META.categories:[...new Set(displayItems.map(i=>String(i.cat||'').trim()).filter(Boolean))]).sort((a,b)=>String(a).localeCompare(String(b),'fr'));
+  const cats=[...new Set(displayItems.map(i=>String(i.cat||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'));
   const cards=displayItems.map(i=>globalMarketCardHtml(i,companyMap.get(i.companyId)||{})).join('');
   const emptyCopy=realItems.length?'<b>Aucun résultat</b><span>Modifiez votre recherche ou vos filtres.</span>':'<b>Aucun produit ou service publié pour le moment.</b><span>Les offres apparaîtront ici dès leur publication par les boutiques GLOBAL MARKET.</span>';
   app.innerHTML=`<main class="gmHomePage">
@@ -4317,29 +4253,39 @@ function renderGlobalShop(){
     <footer class="gmHomeFooter"><div>${globalMarketBrandMark()}<span><b>GLOBAL MARKET</b><small>Produits & services en toute confiance</small></span></div><nav class="gmHomeLegalLinks" aria-label="Informations légales"><button type="button" onclick="openLegalPopup('cgu')">Conditions générales d'utilisation</button><button type="button" onclick="openLegalPopup('privacy')">Notre politique de confidentialité</button></nav><p>Marketplace multi-entreprises · © 2026 MEGA SERVICES SARL U</p></footer>
   </main>`;
   window.globalMarketPage=1;
-  requestAnimationFrame(()=>{const meta=GM_V6_CATALOG_META?.pagination;if(meta){window.globalMarketPage=Number(meta.page||1);const count=document.getElementById('gmHomeResultCount');if(count)count.textContent=Number(meta.total||0)?`${meta.total} résultat${Number(meta.total)>1?'s':''} · page ${meta.page}/${meta.pages}`:'0 résultat';renderGlobalMarketPagination(Number(meta.pages||1));}else filterGlobalShop(false);refreshGlobalMarketCartBadge();initFlexibleHorizontalMenu()});
+  requestAnimationFrame(()=>{filterGlobalShop(false);refreshGlobalMarketCartBadge();initFlexibleHorizontalMenu()});
 }
 function syncGlobalMarketSearch(sourceId){const source=document.getElementById(sourceId),target=document.getElementById('globalShopSearch');if(target)target.value=source?.value||'';filterGlobalShop(true);document.getElementById('gmHomeCatalogTop')?.scrollIntoView({behavior:'smooth',block:'start'});}
-let GM_V6_CATALOG_TIMER=null,GM_V6_CATALOG_LOADING=false;
-async function gmV6LoadCatalogPage(page=1){
-  if(GM_V6_CATALOG_LOADING)return;GM_V6_CATALOG_LOADING=true;
-  try{
-    const q=String(document.getElementById('globalShopSearch')?.value||'').trim(),type=document.getElementById('globalShopType')?.value||'',category=document.getElementById('globalShopCat')?.value||'',sort=document.getElementById('globalShopSort')?.value||'recent';
-    const params=new URLSearchParams({page:String(Math.max(1,Number(page||1))),pageSize:String(GLOBAL_MARKET_HOME_PAGE_SIZE),q,type,category,sort});
-    const j=await fetchApiJsonWithRetry('/api/v6/catalog?'+params.toString(),{cache:'no-store'},10000,2);GM_V6_CATALOG_META={pagination:j.pagination||{},categories:j.categories||[]};GM_V6_CURRENT_CATALOG_ITEMS=Array.isArray(j.items)?j.items:[];
-    for(const c of j.companies||[]){const idx=CLOUD_DATA.companies.findIndex(x=>x.id===c.id);if(idx>=0)CLOUD_DATA.companies[idx]={...CLOUD_DATA.companies[idx],...c};else CLOUD_DATA.companies.push(c)}
-    for(const it of GM_V6_CURRENT_CATALOG_ITEMS)GM_V6_CATALOG_CACHE.set(it.id,it);CLOUD_DATA.items=[...GM_V6_CATALOG_CACHE.values()];window.globalMarketPage=Number(j.pagination?.page||1);
-    const companyMap=new Map((CLOUD_DATA.companies||[]).map(c=>[c.id,c])),grid=document.getElementById('gmHomeCatalogGrid');if(grid)grid.innerHTML=GM_V6_CURRENT_CATALOG_ITEMS.map(i=>globalMarketCardHtml(i,companyMap.get(i.companyId)||{})).join('');
-    const total=Number(j.pagination?.total||0),pages=Number(j.pagination?.pages||1),count=document.getElementById('gmHomeResultCount');if(count)count.textContent=total?`${total} résultat${total>1?'s':''} · page ${window.globalMarketPage}/${pages}`:'0 résultat';const empty=document.getElementById('gmHomeEmpty');if(empty)empty.hidden=total>0;renderGlobalMarketPagination(pages);
-  }catch(e){console.warn('Catalogue V6 non actualisé',e)}finally{GM_V6_CATALOG_LOADING=false}
+function filterGlobalShop(resetPage=true){
+  if(resetPage) window.globalMarketPage=1;
+  const q=String(document.getElementById('globalShopSearch')?.value||'').toLowerCase().trim();
+  const t=document.getElementById('globalShopType')?.value||'';
+  const cat=document.getElementById('globalShopCat')?.value||'';
+  const sort=document.getElementById('globalShopSort')?.value||'recent';
+  const grid=document.getElementById('gmHomeCatalogGrid'); if(!grid)return;
+  const all=[...grid.querySelectorAll('.gmHomeCatalogCard')];
+  const matched=all.filter(card=>(!q||String(card.dataset.search||'').includes(q))&&(!t||card.dataset.type===t)&&(!cat||card.dataset.cat===cat));
+  matched.sort((a,b)=>sort==='priceAsc'?Number(a.dataset.price)-Number(b.dataset.price):sort==='priceDesc'?Number(b.dataset.price)-Number(a.dataset.price):sort==='name'?String(a.dataset.name).localeCompare(String(b.dataset.name),'fr'):Number(b.dataset.date)-Number(a.dataset.date));
+  matched.forEach(card=>grid.appendChild(card));
+  const total=matched.length,pages=Math.max(1,Math.ceil(total/GLOBAL_MARKET_HOME_PAGE_SIZE));
+  window.globalMarketPage=Math.min(Math.max(1,Number(window.globalMarketPage||1)),pages);
+  const first=(window.globalMarketPage-1)*GLOBAL_MARKET_HOME_PAGE_SIZE,last=first+GLOBAL_MARKET_HOME_PAGE_SIZE,visible=new Set(matched.slice(first,last));
+  all.forEach(card=>card.hidden=!visible.has(card));
+  const count=document.getElementById('gmHomeResultCount');if(count)count.textContent=total?`${total} résultat${total>1?'s':''} · page ${window.globalMarketPage}/${pages}`:'0 résultat';
+  const empty=document.getElementById('gmHomeEmpty');if(empty)empty.hidden=total>0;
+  renderGlobalMarketPagination(pages);
 }
-function filterGlobalShop(resetPage=true){if(resetPage)window.globalMarketPage=1;if(GM_V6_CATALOG_TIMER)clearTimeout(GM_V6_CATALOG_TIMER);GM_V6_CATALOG_TIMER=setTimeout(()=>gmV6LoadCatalogPage(window.globalMarketPage||1),180)}
 function renderGlobalMarketPagination(pages){
-  const nav=document.getElementById('gmHomePagination');if(!nav)return;if(pages<=1){nav.innerHTML='<button disabled>‹</button><button class="active">1</button><button disabled>›</button>';return}
-  const current=Number(window.globalMarketPage||1);let nums=[];if(pages<=7)nums=Array.from({length:pages},(_,i)=>i+1);else{const set=new Set([1,2,pages-1,pages,current-1,current,current+1].filter(n=>n>=1&&n<=pages));nums=[...set].sort((a,b)=>a-b)}let html=`<button ${current<=1?'disabled':''} onclick="changeGlobalShopPage(-1)">‹</button>`,prev=0;for(const n of nums){if(prev&&n-prev>1)html+='<span>…</span>';html+=`<button class="${n===current?'active':''}" onclick="setGlobalShopPage(${n})">${n}</button>`;prev=n}html+=`<button ${current>=pages?'disabled':''} onclick="changeGlobalShopPage(1)">›</button>`;nav.innerHTML=html;
+  const nav=document.getElementById('gmHomePagination');if(!nav)return;
+  if(pages<=1){nav.innerHTML='';return}
+  const current=Number(window.globalMarketPage||1);let nums=[];
+  if(pages<=7) nums=Array.from({length:pages},(_,i)=>i+1); else {const set=new Set([1,2,pages-1,pages,current-1,current,current+1].filter(n=>n>=1&&n<=pages));nums=[...set].sort((a,b)=>a-b)}
+  let html=`<button ${current<=1?'disabled':''} onclick="changeGlobalShopPage(-1)">‹</button>`;let prev=0;
+  nums.forEach(n=>{if(prev&&n-prev>1)html+='<span>…</span>';html+=`<button class="${n===current?'active':''}" onclick="setGlobalShopPage(${n})">${n}</button>`;prev=n});
+  html+=`<button ${current>=pages?'disabled':''} onclick="changeGlobalShopPage(1)">›</button>`;nav.innerHTML=html;
 }
-function setGlobalShopPage(page){window.globalMarketPage=Math.max(1,Number(page||1));gmV6LoadCatalogPage(window.globalMarketPage);document.getElementById('gmHomeCatalogTop')?.scrollIntoView({behavior:'smooth',block:'start'})}
-function changeGlobalShopPage(delta){setGlobalShopPage(Number(window.globalMarketPage||1)+Number(delta||0))}
+function setGlobalShopPage(page){window.globalMarketPage=Math.max(1,Number(page||1));filterGlobalShop(false);document.getElementById('gmHomeCatalogTop')?.scrollIntoView({behavior:'smooth',block:'start'});}
+function changeGlobalShopPage(delta){setGlobalShopPage(Number(window.globalMarketPage||1)+Number(delta||0));}
 function globalMarketCartCount(){window.publicShopCart=window.publicShopCart||{};return Object.values(window.publicShopCart).reduce((sum,cart)=>sum+(Array.isArray(cart)?cart.reduce((a,x)=>a+Number(x.qty||0),0):0),0)}
 function refreshGlobalMarketCartBadge(){const badge=document.getElementById('gmGlobalCartBadge');if(badge)badge.textContent=globalMarketCartCount();}
 async function addGlobalMarketItemToCart(companyId,itemId){await addToPublicCart(companyId,itemId);refreshGlobalMarketCartBadge();}
@@ -5321,42 +5267,38 @@ function openStockItemDetailPro(iid){
 */
 async function secureEmployeePost(path,payload={}){
   let lastError=null;
-  for(let attempt=0;attempt<6;attempt++){
+  for(let attempt=0;attempt<4;attempt++){
     try{
-      const r=await fetchWithTimeout(path,{method:'POST',headers:employeeSecurityHeaders(),body:JSON.stringify(payload),cache:'no-store'},25000);
+      const r=await fetchWithTimeout(path,{method:'POST',headers:employeeSecurityHeaders(),body:JSON.stringify(payload),cache:'no-store'},20000);
       return await readApiPayload(r);
     }catch(error){
       lastError=error;
-      if(!isTransientCloudSaveError(error)||attempt===5) throw error;
-      const serverDelay=Math.max(0,Number(error?.retryAfter||0)*1000);
-      await waitMs(Math.max(serverDelay,[300,700,1400,2600,4200,6500][attempt])+Math.floor(Math.random()*150));
+      if(!isTransientCloudSaveError(error)||attempt===3) throw error;
+      await waitMs([500,1200,2500,5000][attempt]);
     }
   }
   throw lastError;
 }
 async function securePublicPost(path,payload={}){
   let lastError=null;
-  for(let attempt=0;attempt<6;attempt++){
+  for(let attempt=0;attempt<4;attempt++){
     try{
-      const r=await fetchWithTimeout(path,{method:'POST',headers:clientSecurityHeaders(),body:JSON.stringify(payload),cache:'no-store'},25000);
+      const r=await fetchWithTimeout(path,{method:'POST',headers:clientSecurityHeaders(),body:JSON.stringify(payload),cache:'no-store'},20000);
       return await readApiPayload(r);
     }catch(error){
       lastError=error;
-      if(!isTransientCloudSaveError(error)||attempt===5) throw error;
-      const serverDelay=Math.max(0,Number(error?.retryAfter||0)*1000);
-      await waitMs(Math.max(serverDelay,[300,700,1400,2600,4200,6500][attempt])+Math.floor(Math.random()*150));
+      if(!isTransientCloudSaveError(error)||attempt===3) throw error;
+      await waitMs([500,1200,2500,5000][attempt]);
     }
   }
   throw lastError;
 }
 function secureErrorMessage(error,fallback='Opération sécurisée impossible.'){
-  if(error?.status===429&&error?.code==='RATE_LIMITED')return error.message||'Trop de tentatives. Réessayez plus tard.';
-  if(error?.code==='STORAGE_BUSY'||error?.status===503)return 'Synchronisation temporairement retardée. Vos données restent affichées et GLOBAL MARKET continue automatiquement en arrière-plan.';
+  if(error?.status===429) return error.message||'Trop de tentatives. Réessayez plus tard.';
   if(error?.code==='SETUP_REQUIRED') return 'Les secrets Cloudflare SUPER_ADMIN_EMAIL et SUPER_ADMIN_INITIAL_PASSWORD doivent être configurés avant la première connexion Super Admin.';
   if(error?.name==='AbortError') return 'La connexion a pris trop de temps ou a été interrompue. Vérifiez votre connexion internet puis réessayez.';
   const msg=String(error?.message||'').trim();
   if(/operation was aborted/i.test(msg)||/failed to fetch/i.test(msg)||/network/i.test(msg)) return 'Connexion au serveur impossible pour le moment. Vérifiez votre réseau puis réessayez.';
-  if(/service cloud n.a pas répondu|momentanément occupé|stockage.*occupé/i.test(msg)) return 'Synchronisation temporairement retardée. Vos données restent affichées et GLOBAL MARKET continue automatiquement en arrière-plan.';
   return msg||fallback;
 }
 async function openGlobalShopLogin(){location.hash='#home';try{await cloudLoadPublicData()}catch(e){console.error(e);CLOUD_DATA=defaultData()}renderGlobalShop();}
@@ -5369,7 +5311,8 @@ async function login(){
   if(!password){setLoginMessage('Le mot de passe est obligatoire.','error');$('#loginPass')?.focus();return}
   setLoginLoading(true);
   try{
-    const j=await fetchApiJsonWithRetry('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identifier,password,role})},12000,3);
+    const r=await fetchWithTimeout('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identifier,password,role})},12000);
+    const j=await readApiPayload(r);
     CLOUD_SESSION=j.session||null;
     if(j.data&&typeof j.data==='object'){
       CLOUD_DATA=normalizeData(j.data);
@@ -5731,7 +5674,7 @@ async function savePublicClientRegister(){
 }
 async function loginPublicClient(){
   const phone=($('#clientLoginPhone')?.value||'').trim(),password=($('#clientLoginPass')?.value||'').trim();
-  try{const j=await fetchApiJsonWithRetry('/api/public/client/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,password})},12000,3);PUBLIC_CLIENT_SESSION=j.session||null;window.publicShopClientId=j.client?.id||'';await cloudLoadPublicData();document.getElementById('clientLoginModal')?.remove();render();setTimeout(()=>openClientSpace(),0);}catch(e){alert(secureErrorMessage(e,'Téléphone ou mot de passe incorrect.'));}
+  try{const r=await fetchWithTimeout('/api/public/client/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,password})},12000);const j=await readApiPayload(r);PUBLIC_CLIENT_SESSION=j.session||null;window.publicShopClientId=j.client?.id||'';await cloudLoadPublicData();document.getElementById('clientLoginModal')?.remove();render();setTimeout(()=>openClientSpace(),0);}catch(e){alert(secureErrorMessage(e,'Téléphone ou mot de passe incorrect.'));}
 }
 async function logoutPublicClient(){
   try{await fetchWithTimeout('/api/public/client/session',{method:'DELETE',headers:clientSecurityHeaders()},6000)}catch(e){}
@@ -6074,7 +6017,7 @@ async function loginPublicClient(){
   const btn=document.querySelector('#clientLoginModal .gmHomePrimaryAuth');if(btn){btn.disabled=true;btn.textContent='CONNEXION EN COURS…';}
   const phone=($('#clientLoginPhone')?.value||'').trim(),password=($('#clientLoginPass')?.value||'').trim();
   if(!phone||!password){GM_CLIENT_LOGIN_BUSY=false;if(btn){btn.disabled=false;btn.textContent='Se connecter';}return alert('Téléphone et mot de passe obligatoires.');}
-  try{const j=await fetchApiJsonWithRetry('/api/public/client/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,password})},12000,3);PUBLIC_CLIENT_SESSION=j.session||null;window.publicShopClientId=j.client?.id||'';await cloudLoadPublicData();document.getElementById('clientLoginModal')?.remove();render();setTimeout(()=>openClientSpace(),0);}catch(e){alert(secureErrorMessage(e,'Téléphone ou mot de passe incorrect.'));}finally{GM_CLIENT_LOGIN_BUSY=false;if(btn?.isConnected){btn.disabled=false;btn.textContent='Se connecter';}}
+  try{const r=await fetchWithTimeout('/api/public/client/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,password})},12000);const j=await readApiPayload(r);PUBLIC_CLIENT_SESSION=j.session||null;window.publicShopClientId=j.client?.id||'';await cloudLoadPublicData();document.getElementById('clientLoginModal')?.remove();render();setTimeout(()=>openClientSpace(),0);}catch(e){alert(secureErrorMessage(e,'Téléphone ou mot de passe incorrect.'));}finally{GM_CLIENT_LOGIN_BUSY=false;if(btn?.isConnected){btn.disabled=false;btn.textContent='Se connecter';}}
 }
 async function savePublicClientRegister(){
   if(GM_CLIENT_REGISTER_BUSY)return;GM_CLIENT_REGISTER_BUSY=true;
@@ -6103,305 +6046,3 @@ if(window.MutationObserver){
   gmPasswordObserver.observe(document.documentElement,{childList:true,subtree:true});
 }
 
-
-
-/* ========================================================================
-   GLOBAL MARKET V5.6 — SUIVI CLIENT, PAIEMENTS, MESSAGERIE & À PROPOS
-   ======================================================================== */
-function gm56OrderCancelled(o){return String(o?.validationStatus||o?.delivery||'').toLowerCase().includes('annul')}
-function gm56OrderPaidConfirmed(o){return String(o?.paymentStatus||'').toLowerCase().includes('confirm')}
-function gm56OrderDelivered(o){return String(o?.deliveryStatus||o?.delivery||'').toLowerCase().includes('livr')&&!String(o?.deliveryStatus||'').toLowerCase().includes('cours')}
-function gm56OrderValidated(o){return String(o?.validationStatus||'').toLowerCase().includes('valid')&&!gm56OrderCancelled(o)}
-function gm56OrderPaymentSubmitted(o){return Boolean(String(o?.transactionId||o?.paymentRef||'').trim())||String(o?.paymentStatus||'').toLowerCase().includes('déclar')}
-function orderMainStatus(o){
-  if(gm56OrderCancelled(o))return 'Commande annulée';
-  if(gm56OrderDelivered(o))return 'Livrée';
-  if(gm56OrderPaidConfirmed(o))return 'Livraison en cours';
-  if(gm56OrderValidated(o))return gm56OrderPaymentSubmitted(o)?'Paiement en vérification':'Commande validée';
-  return 'En attente';
-}
-function gm56OrderItemsSummary(o){
-  return normalizeOrderItems(o).map(x=>`${esc(x.item||'Article')} × ${Number(x.qty||1)}`).join('<br>')||'Aucun article';
-}
-function gm56OrderClientAction(o){
-  if(gm56OrderCancelled(o))return `<span class="gm56OrderState cancelled">Commande annulée</span>`;
-  if(gm56OrderDelivered(o))return `<span class="gm56OrderState delivered">Livrée</span>`;
-  if(gm56OrderPaidConfirmed(o))return `<span class="gm56OrderState shipping">Livraison en cours</span>`;
-  if(gm56OrderValidated(o)){
-    if(gm56OrderPaymentSubmitted(o))return `<span class="gm56OrderState verifying">Paiement en vérification</span>`;
-    return `<button class="gm56PayOrderBtn" onclick="openClientOrderPayment('${esc(o.id)}')">Régler ma commande</button>`;
-  }
-  return `<span class="gm56OrderState waiting">En attente</span>`;
-}
-function gm56ClientOrderControls(o){
-  const paid=gm56OrderPaidConfirmed(o),cancelled=gm56OrderCancelled(o);
-  const cancel=!paid&&!cancelled?`<button class="gm56CancelOrderBtn" onclick="cancelClientMarketplaceOrder('${esc(o.id)}')">Annuler</button>`:'';
-  const del=!paid&&cancelled?`<button class="gm56DeleteOrderBtn" onclick="deleteMarketplaceOrder('${esc(o.id)}',false)">Supprimer</button>`:'';
-  return `<div class="gm56OrderRowControls"><button class="btn2" onclick="openMarketplaceOrderPopup('${esc(o.id)}',false)">Détails</button>${cancel}${del}</div>`;
-}
-function gm56ClientOrdersMarkup(){
-  const d=seed(),client=currentGlobalClient();if(!client)return '<p class="notice">Connexion client requise.</p>';
-  const companyMap=new Map((d.companies||[]).map(c=>[c.id,c]));
-  const orders=(d.orders||[]).filter(o=>o.clientId===client.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
-  if(!orders.length)return '<div class="gm56EmptyState"><span>🛒</span><b>Aucune commande pour le moment.</b><p>Vos commandes apparaîtront ici après validation du panier.</p></div>';
-  const groups=new Map();
-  orders.forEach(o=>{const cid=String(o.companyId||'');if(!groups.has(cid))groups.set(cid,[]);groups.get(cid).push(o)});
-  return [...groups.entries()].map(([cid,rows])=>{
-    const shop=rows[0]?.shopName||companyMap.get(cid)?.name||'Boutique';
-    const body=rows.map(o=>`<tr><td><button class="orderLinkBtn" onclick="openMarketplaceOrderPopup('${esc(o.id)}',false)">#${esc(o.id)}</button><small class="gmCheckoutRef">${esc(o.checkoutId||'')}</small></td><td>${new Date(o.date||Date.now()).toLocaleString('fr-FR')}</td><td>${gm56OrderItemsSummary(o)}</td><td><small>${esc(o.deliveryCity||'-')}${o.deliveryNeighborhood?' · '+esc(o.deliveryNeighborhood):''}</small></td><td><b>${money(orderTotal(o))}</b></td><td>${gm56OrderClientAction(o)}</td><td>${gm56ClientOrderControls(o)}</td></tr>`).join('');
-    return `<section class="gm56ClientShopGroup"><div class="gm56ClientShopHead">${officialShopIcon('bag')}<div><b>${esc(shop)}</b><small>${rows.length} commande(s) / lot(s)</small></div></div><div class="clientOrdersScroll"><table class="mkOrdersTable gm56ClientOrdersTable"><tr><th>Commande</th><th>Date</th><th>Produits / services</th><th>Livraison</th><th>Total</th><th>Statut / paiement</th><th>Actions</th></tr>${body}</table></div></section>`;
-  }).join('');
-}
-function gm56ClientAccountMarkup(){
-  const c=currentGlobalClient();if(!c)return '';
-  return `<div class="gm56ClientAccountGrid"><section><h3>Informations du client</h3><label>Nom complet<input id="gm56ClientName" value="${esc(c.name||'')}"></label><label>Identifiant / téléphone<input id="gm56ClientPhone" value="${esc(c.phone||'')}"></label><label>Email<input id="gm56ClientEmail" type="email" value="${esc(c.email||'')}"></label><p class="gm56AccountMeta">Compte créé le ${new Date(c.createdAt||Date.now()).toLocaleDateString('fr-FR')}</p></section><section><h3>Sécurité du compte</h3><label>Mot de passe actuel<input id="gm56ClientCurrentPass" type="password" autocomplete="current-password" placeholder="Requis si vous changez l'identifiant ou le mot de passe"></label><label>Nouveau mot de passe<input id="gm56ClientNewPass" type="password" autocomplete="new-password" placeholder="Laisser vide pour conserver le mot de passe"></label><small>Le mot de passe doit contenir au moins 8 caractères, une majuscule, une minuscule, un chiffre et un caractère spécial.</small><button class="gmHomePrimaryAuth" onclick="saveGlobalClientAccount()">Enregistrer mes modifications</button></section></div>`;
-}
-function gm56ClientMessagesMarkup(){
-  const d=seed(),client=currentGlobalClient();if(!client)return '';
-  const companies=(d.companies||[]).filter(c=>hasPlanFeature(c,'public_shop'));
-  const map=new Map(companies.map(c=>[c.id,c]));
-  const msgs=(d.marketMessages||[]).filter(m=>m.clientId===client.id&&!m.clientDeleted).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
-  const rows=msgs.map(m=>`<tr><td><input type="checkbox" class="gm56ClientMsgCheck" value="${esc(m.id)}"></td><td>${esc(map.get(m.companyId)?.name||'Boutique')}</td><td><span class="gm56MsgFrom ${m.senderType==='admin'?'admin':'client'}">${m.senderType==='admin'?'Boutique':'Vous'}</span></td><td>${esc(m.body||'')}</td><td>${new Date(m.createdAt||Date.now()).toLocaleString('fr-FR')}</td><td><button class="btn2" onclick="gm56OpenClientMessageComposer('${esc(m.companyId)}')">Répondre</button></td></tr>`).join('')||'<tr><td colspan="6">Aucun message.</td></tr>';
-  return `<section class="gm56ClientMessageComposer"><div><h3>Nouveau message</h3><p>Écrivez directement à une boutique GLOBAL MARKET.</p></div><label>Boutique<select id="gm56ClientMessageCompany">${companies.map(c=>`<option value="${esc(c.id)}">${esc(c.name||'Boutique')}</option>`).join('')}</select></label><label>Message<textarea id="gm56ClientMessageText" maxlength="3000" placeholder="Votre demande..."></textarea></label><button class="gmHomePrimaryAuth" onclick="gm56SendClientMessage()">Envoyer le message</button></section><div class="gm56MessageToolbar"><label><input type="checkbox" onchange="document.querySelectorAll('.gm56ClientMsgCheck').forEach(x=>x.checked=this.checked)"> Tout sélectionner</label><button class="gm56DeleteOrderBtn" onclick="gm56DeleteClientMessages()">Supprimer la sélection</button></div><div class="clientOrdersScroll"><table class="mkOrdersTable"><tr><th></th><th>Boutique</th><th>De</th><th>Message</th><th>Date</th><th>Action</th></tr>${rows}</table></div>`;
-}
-function gm56RenderClientSpaceTab(tab='orders'){
-  const body=document.getElementById('gm56ClientSpaceBody');if(!body)return;
-  document.querySelectorAll('.gm56ClientSpaceTabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
-  body.innerHTML=tab==='account'?gm56ClientAccountMarkup():tab==='messages'?gm56ClientMessagesMarkup():gm56ClientOrdersMarkup();
-  gmEnhancePasswordFields(body);
-}
-function openClientSpace(tab='orders'){
-  if(!['orders','account','messages'].includes(tab))tab='orders';
-  document.getElementById('clientSpaceModal')?.remove();
-  const client=currentGlobalClient();if(!client)return openGlobalClientAuth('login');
-  document.body.insertAdjacentHTML('beforeend',`<div class="marketPayModalBackdrop" id="clientSpaceModal"><div class="marketPayModal clientSpaceBox gmGlobalClientSpace gm56ClientSpace"><button class="marketPayClose" onclick="document.getElementById('clientSpaceModal')?.remove()">×</button><div class="gmClientSpaceHead"><div><span class="gmHomeModalKicker">ESPACE CLIENT GLOBAL MARKET</span><h2>${esc(client.name||'Client')}</h2><p>${esc(client.phone||'')} ${client.email?'— '+esc(client.email):''}</p></div></div><div class="gm56ClientSpaceTabs"><button data-tab="orders" onclick="gm56RenderClientSpaceTab('orders')">Mes commandes</button><button data-tab="account" onclick="gm56RenderClientSpaceTab('account')">Mon compte</button><button data-tab="messages" onclick="gm56RenderClientSpaceTab('messages')">Message</button></div><div id="gm56ClientSpaceBody"></div><div class="marketPayActions"><button class="btn2" onclick="document.getElementById('clientSpaceModal')?.remove()">Fermer</button></div></div></div>`);
-  gm56RenderClientSpaceTab(tab);
-}
-async function saveGlobalClientAccount(){
-  const payload={name:($('#gm56ClientName')?.value||'').trim(),phone:($('#gm56ClientPhone')?.value||'').trim(),email:($('#gm56ClientEmail')?.value||'').trim(),currentPassword:($('#gm56ClientCurrentPass')?.value||''),newPassword:($('#gm56ClientNewPass')?.value||'')};
-  try{const j=await securePublicPost('/api/public/client/profile',payload);if(j.session)PUBLIC_CLIENT_SESSION=j.session;await cloudLoadPublicData();alert('Votre compte client a été mis à jour.');openClientSpace('account');render();}catch(e){alert(secureErrorMessage(e,'Modification du compte impossible.'))}
-}
-async function cancelClientMarketplaceOrder(orderId){
-  if(!(await g3Confirm('Annuler cette commande ? Après annulation, vous pourrez la supprimer de votre liste.','Annuler la commande')))return;
-  try{await securePublicPost('/api/public/order/cancel',{orderId});await cloudLoadPublicData();openClientSpace('orders');}catch(e){alert(secureErrorMessage(e,'Annulation impossible.'))}
-}
-async function deleteMarketplaceOrder(orderId,isAdmin){
-  if(isAdmin){
-    if(!(await g3Confirm('Retirer cette commande de la liste administrateur ?','Suppression commande')))return;
-    const d=seed(),o=(d.orders||[]).find(x=>String(x.id)===String(orderId));if(!o)return alert('Commande introuvable.');o.adminDeleted=true;save(d);await cloudSaveNow(d).catch(()=>{});document.getElementById('marketOrderDetailsModal')?.remove();showMarketplacePage();return;
-  }
-  if(!(await g3Confirm('Supprimer définitivement cette commande annulée ? Elle disparaîtra aussi de la liste de la boutique.','Suppression définitive')))return;
-  try{await securePublicPost('/api/public/order/delete',{orderId});await cloudLoadPublicData();document.getElementById('marketOrderDetailsModal')?.remove();openClientSpace('orders');}catch(e){alert(secureErrorMessage(e,'Suppression impossible.'))}
-}
-function openClientOrderPayment(orderId){
-  document.getElementById('gm56ClientPaymentModal')?.remove();
-  const d=seed(),o=(d.orders||[]).find(x=>String(x.id)===String(orderId)&&x.clientId===currentGlobalClient()?.id);if(!o)return alert('Commande introuvable.');
-  const c=(d.companies||[]).find(x=>x.id===o.companyId)||{};const enabled=gm56OrderValidated(o)&&!gm56OrderCancelled(o)&&!gm56OrderPaidConfirmed(o);
-  document.body.insertAdjacentHTML('beforeend',`<div class="marketPayModalBackdrop" id="gm56ClientPaymentModal"><div class="marketPayModal gm56ClientPaymentBox"><button class="marketPayClose" onclick="document.getElementById('gm56ClientPaymentModal')?.remove()">×</button><span class="gmHomeModalKicker">RÈGLEMENT DE COMMANDE</span><h2>#${esc(o.id)}</h2><p>Boutique : <b>${esc(o.shopName||c.name||'Boutique')}</b><br>Total : <b>${money(orderTotal(o))}</b></p><div class="gm56PaymentChoiceBtns"><button ${enabled?'':'disabled'} onclick="selectClientOrderPayment('${esc(o.id)}','WAVE')">Régler avec Wave</button><button ${enabled?'':'disabled'} onclick="selectClientOrderPayment('${esc(o.id)}','USDT TRC20')">Régler avec USDT TRC20</button></div>${enabled?'':'<p class="notice">Ces moyens de paiement s’activent après validation de la commande par l’administrateur de la boutique.</p>'}<div id="gm56PaymentQrZone" class="gm56PaymentQrZone"><p>Choisissez votre moyen de paiement.</p></div><input type="hidden" id="gm56PaymentMethod"><label>ID de la transaction<input id="gm56PaymentTransaction" placeholder="Saisissez l’identifiant de la transaction"></label><div class="marketPayActions"><button id="gm56IPaidBtn" onclick="submitClientOrderPayment('${esc(o.id)}')" ${enabled?'':'disabled'}>J’ai payé</button><button class="btn2" onclick="document.getElementById('gm56ClientPaymentModal')?.remove()">Fermer</button></div></div></div>`);
-}
-function selectClientOrderPayment(orderId,method){
-  const d=seed(),o=(d.orders||[]).find(x=>String(x.id)===String(orderId)),c=(d.companies||[]).find(x=>x.id===o?.companyId)||{};if(!o)return;
-  const zone=$('#gm56PaymentQrZone'),input=$('#gm56PaymentMethod');if(input)input.value=method;
-  let payload='',label='';
-  if(method==='WAVE'){
-    const link=buildWavePaymentLink(c.marketWaveBusinessLink,orderTotal(o));if(!link){zone.innerHTML='<p class="notice">Le lien Wave n’est pas encore configuré par cette boutique.</p>';return}payload=link;label=`Wave · ${money(orderTotal(o))}`;
-  }else{
-    if(!c.marketUsdtTrc20){zone.innerHTML='<p class="notice">Le paiement USDT TRC20 n’est pas encore configuré par cette boutique.</p>';return}payload=`USDT TRC20 | ${c.marketUsdtTrc20} | Commande ${o.id} | Total ${orderTotal(o)} FCFA`;label='USDT TRC20';
-  }
-  const qr='https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=8&data='+encodeURIComponent(payload);
-  zone.innerHTML=`<div class="gm56QrCard"><img src="${qr}" alt="QR Code ${esc(method)}"><b>${esc(label)}</b><small>Scannez le QR Code pour effectuer le règlement auprès de la boutique.</small>${method==='WAVE'?`<a href="${esc(payload)}" target="_blank" rel="noopener">Ouvrir le paiement Wave</a>`:`<code>${esc(c.marketUsdtTrc20)}</code>`}</div>`;
-}
-async function submitClientOrderPayment(orderId){
-  const method=($('#gm56PaymentMethod')?.value||'').trim(),transactionId=($('#gm56PaymentTransaction')?.value||'').trim();if(!method)return alert('Choisissez un moyen de paiement.');if(!transactionId)return alert('Renseignez l’ID de la transaction.');
-  const btn=$('#gm56IPaidBtn');if(btn){btn.disabled=true;btn.textContent='Envoi…'}
-  try{await securePublicPost('/api/public/order/payment',{orderId,method,transactionId});await cloudLoadPublicData();document.getElementById('gm56ClientPaymentModal')?.remove();alert('Paiement déclaré. La boutique doit maintenant confirmer la transaction.');openClientSpace('orders');}catch(e){alert(secureErrorMessage(e,'Déclaration de paiement impossible.'));if(btn){btn.disabled=false;btn.textContent='J’ai payé'}}
-}
-function gm56OpenClientMessageComposer(companyId){gm56RenderClientSpaceTab('messages');setTimeout(()=>{const s=$('#gm56ClientMessageCompany');if(s)s.value=companyId;$('#gm56ClientMessageText')?.focus()},20)}
-async function gm56SendClientMessage(){
-  const companyId=$('#gm56ClientMessageCompany')?.value||'',message=($('#gm56ClientMessageText')?.value||'').trim();if(!companyId||!message)return alert('Choisissez la boutique et saisissez votre message.');
-  try{const r=await fetchWithTimeout('/api/public/message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({companyId,message})},12000);await readApiPayload(r);await cloudLoadPublicData();gm56RenderClientSpaceTab('messages');alert('Message envoyé à la boutique.');}catch(e){alert(secureErrorMessage(e,'Envoi du message impossible.'))}
-}
-async function gm56DeleteClientMessages(){
-  const ids=[...document.querySelectorAll('.gm56ClientMsgCheck:checked')].map(x=>x.value);if(!ids.length)return alert('Sélectionnez au moins un message.');if(!(await g3Confirm('Supprimer les messages sélectionnés de votre espace client ?','Suppression messages')))return;
-  try{await securePublicPost('/api/public/message/delete',{ids});await cloudLoadPublicData();gm56RenderClientSpaceTab('messages');}catch(e){alert(secureErrorMessage(e,'Suppression impossible.'))}
-}
-
-const GM56_BASE_OPEN_CLIENT_AUTH=openGlobalClientAuth;
-openGlobalClientAuth=function(mode='login'){
-  GM56_BASE_OPEN_CLIENT_AUTH(mode);
-  if(mode!=='register'){
-    const card=document.querySelector('#clientLoginModal .gmClientAuthCard');if(card&&!card.querySelector('.gm56ClientForgotBtn')){
-      const btn=document.createElement('button');btn.type='button';btn.className='gmHomeTextBtn gm56ClientForgotBtn';btn.textContent='Mot de passe oublié ?';btn.onclick=()=>{document.getElementById('clientLoginModal')?.remove();openClientForgotPassword()};card.appendChild(btn);
-    }
-  }
-};
-function openClientForgotPassword(){
-  document.getElementById('gm56ClientForgotModal')?.remove();
-  document.body.insertAdjacentHTML('beforeend',`<div class="gmHomeAuthBackdrop" id="gm56ClientForgotModal"><section class="gmHomeAuthCard gm56ClientForgotCard"><button class="gmHomeAuthClose" onclick="document.getElementById('gm56ClientForgotModal')?.remove()">×</button><span class="gmHomeModalKicker">COMPTE CLIENT</span><h2>Mot de passe oublié</h2><p>Votre demande sera transmise au Super Admin GLOBAL MARKET pour réinitialisation.</p><label>Identifiant / téléphone<input id="gm56ResetClientPhone" placeholder="Votre téléphone de connexion"></label><label>Motif<textarea id="gm56ResetClientReason" placeholder="Mot de passe oublié"></textarea></label><button class="gmHomePrimaryAuth" onclick="submitClientForgotPassword()">Envoyer la demande</button></section></div>`);
-}
-async function submitClientForgotPassword(){
-  const phone=($('#gm56ResetClientPhone')?.value||'').trim(),reason=($('#gm56ResetClientReason')?.value||'Mot de passe oublié').trim();if(!phone)return alert('Saisissez votre identifiant / téléphone.');
-  try{const r=await fetchWithTimeout('/api/public/client/request-reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,reason})},10000);const j=await readApiPayload(r);document.getElementById('gm56ClientForgotModal')?.remove();alert(j.message||'Demande transmise.');}catch(e){alert(secureErrorMessage(e,'Demande impossible.'))}
-}
-const GM56_BASE_OPEN_FORGOT=openForgotPasswordPopup;
-openForgotPasswordPopup=function(){
-  GM56_BASE_OPEN_FORGOT();
-  const modal=document.getElementById('forgotPasswordModal');const p=modal?.querySelector('.modalCard > p.sub');if(p)p.textContent='Administrateur réinitialisé par Globalmarket et Caisse réinitialisé par votre Administrateur';
-  modal?.querySelectorAll('.reportFilters,.marketSearch,.mkCatalogTop,.filterBar,.searchBar').forEach(x=>x.remove());
-};
-function superPasswordResetRequestsBox(){
-  const d=seed();const rows=(d.passwordResetRequests||[]).filter(r=>['admin','client'].includes(r.role)).slice().sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
-  return `<div class="superTableWrap"><table class="superTable"><thead><tr><th>Date</th><th>Compte / entreprise</th><th>Utilisateur</th><th>Profil</th><th>Contact</th><th>Motif</th><th>Statut</th><th>Action</th></tr></thead><tbody>${rows.map(r=>{const c=(d.companies||[]).find(x=>x.id===r.companyId);const action=r.status==='pending'?(r.role==='client'?`<button class="detailsBtn" onclick="resetClientPasswordRequestBySuper('${esc(r.id)}')">Générer mot de passe</button>`:`<button class="detailsBtn" onclick="resetPasswordRequestBySuper('${esc(r.id)}')">Générer mot de passe</button>`):'<span class="statusPill active">traité</span>';return `<tr><td>${new Date(r.createdAt||Date.now()).toLocaleString('fr-FR')}</td><td>${r.role==='client'?'Compte client GLOBAL MARKET':esc(c?.name||'-')}</td><td><b>${esc(r.userName||r.email||'-')}</b><br><small>${esc(r.email||'')}</small></td><td>${r.role==='client'?'Client':esc(r.role||'')}</td><td>${esc(r.phone||'')}</td><td>${esc(r.reason||'')}</td><td>${esc(r.status||'')}</td><td>${action}</td></tr>`}).join('')||'<tr><td colspan="8">Aucune demande de réinitialisation.</td></tr>'}</tbody></table></div>`;
-}
-async function resetClientPasswordRequestBySuper(rid){
-  const r=(seed().passwordResetRequests||[]).find(x=>x.id===rid&&x.role==='client');if(!r)return alert('Demande client introuvable.');
-  try{const j=await secureEmployeePost('/api/client/reset-password',{clientId:r.userId,requestId:rid});await cloudLoadData();alert('Mot de passe temporaire du client :\n\n'+j.temporaryPassword+'\n\nCommuniquez-le au client de manière sécurisée.');renderSuper();}catch(e){alert(secureErrorMessage(e,'Réinitialisation du compte client impossible.'))}
-}
-
-function gm56MarketplaceMessagesPanel(){
-  const {d,company}=current();const msgs=(d.marketMessages||[]).filter(m=>m.companyId===company.id&&!m.adminDeleted).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
-  const rows=msgs.map(m=>`<tr><td><input type="checkbox" class="gm56AdminMsgCheck" value="${esc(m.id)}"></td><td><b>${esc(m.clientName||'Client')}</b><small>${esc(m.clientPhone||'')} ${m.clientEmail?'· '+esc(m.clientEmail):''}</small></td><td><span class="gm56MsgFrom ${m.senderType==='admin'?'admin':'client'}">${m.senderType==='admin'?'Boutique':'Client'}</span></td><td>${esc(m.body||'')}</td><td>${new Date(m.createdAt||Date.now()).toLocaleString('fr-FR')}</td><td><button class="btn2" onclick="openAdminMessageReply('${esc(m.id)}')">Répondre</button></td></tr>`).join('')||'<tr><td colspan="6">Aucun message reçu.</td></tr>';
-  return `<div class="mkPanel mkAdminSinglePage gm56MessagesPanel"><div class="mkPanelHead"><div><h2>Messages clients</h2><p class="sub">Consultez et répondez aux demandes reçues depuis votre boutique publique et les comptes clients.</p></div></div><div class="gm56MessageToolbar"><label><input type="checkbox" onchange="document.querySelectorAll('.gm56AdminMsgCheck').forEach(x=>x.checked=this.checked)"> Tout sélectionner</label><button class="danger" onclick="gm56DeleteAdminMessages()">Supprimer la sélection</button></div><div class="clientOrdersScroll"><table class="mkOrdersTable"><tr><th></th><th>Client</th><th>De</th><th>Message</th><th>Date</th><th>Action</th></tr>${rows}</table></div></div>`;
-}
-const GM56_BASE_SHOW_MARKETPLACE=showMarketplacePage;
-showMarketplacePage=function(){
-  GM56_BASE_SHOW_MARKETPLACE();
-  const active=window.marketplaceAdminSection||'stock';
-  const nav=document.querySelector('.mkSectionButtons');if(nav&&!nav.querySelector('.gm56MessagesTab'))nav.insertAdjacentHTML('beforeend',`<button class="gm56MessagesTab ${active==='messages'?'active':''}" onclick="showMarketplaceAdminPage('messages')">Messages</button>`);
-  const hero=document.querySelector('.mkHeroBtns');if(hero&&!hero.querySelector('.gm56MessagesHeroBtn'))hero.insertAdjacentHTML('beforeend','<button class="gm56MessagesHeroBtn" onclick="showMarketplaceAdminPage(\'messages\')">Messages clients</button>');
-  if(active==='messages'){
-    const wrap=document.querySelector('.mkSinglePageWrap');if(wrap)wrap.innerHTML=gm56MarketplaceMessagesPanel();const title=document.querySelector('.mkPageTitle h2');if(title)title.textContent='Messages clients';
-  }
-};
-function openAdminMessageReply(messageId){
-  document.getElementById('gm56AdminReplyModal')?.remove();const {d,company}=current();const m=(d.marketMessages||[]).find(x=>x.id===messageId&&x.companyId===company.id);if(!m)return alert('Message introuvable.');
-  document.body.insertAdjacentHTML('beforeend',`<div class="marketPayModalBackdrop" id="gm56AdminReplyModal"><div class="marketPayModal"><button class="marketPayClose" onclick="document.getElementById('gm56AdminReplyModal')?.remove()">×</button><h2>Répondre à ${esc(m.clientName||'Client')}</h2><div class="gm56OriginalMessage">${esc(m.body||'')}</div><label>Votre réponse<textarea id="gm56AdminReplyText" maxlength="3000" placeholder="Saisissez votre réponse..."></textarea></label><div class="marketPayActions"><button onclick="sendAdminMessageReply('${esc(m.id)}')">Envoyer</button><button class="btn2" onclick="document.getElementById('gm56AdminReplyModal')?.remove()">Fermer</button></div></div></div>`);
-}
-async function sendAdminMessageReply(messageId){
-  const {d,company,user}=current(),src=(d.marketMessages||[]).find(x=>x.id===messageId&&x.companyId===company.id),text=($('#gm56AdminReplyText')?.value||'').trim();if(!src||!text)return alert('Réponse obligatoire.');
-  d.marketMessages=d.marketMessages||[];d.marketMessages.push({id:id('msg'),companyId:company.id,clientId:src.clientId||'',clientName:src.clientName||'',clientPhone:src.clientPhone||'',clientEmail:src.clientEmail||'',senderType:'admin',senderName:user?.name||company.name||'Boutique',body:text,createdAt:new Date().toISOString(),adminDeleted:false,clientDeleted:false,readByAdmin:true,readByClient:false});save(d);try{await cloudSaveNow(d)}catch(e){}document.getElementById('gm56AdminReplyModal')?.remove();showMarketplaceAdminPage('messages');
-}
-async function gm56DeleteAdminMessages(){
-  const ids=new Set([...document.querySelectorAll('.gm56AdminMsgCheck:checked')].map(x=>x.value));if(!ids.size)return alert('Sélectionnez au moins un message.');if(!(await g3Confirm('Supprimer les messages sélectionnés de votre espace boutique ?','Suppression messages')))return;
-  const {d,company}=current();(d.marketMessages||[]).forEach(m=>{if(m.companyId===company.id&&ids.has(String(m.id))){m.adminDeleted=true;m.adminDeletedAt=new Date().toISOString()}});save(d);await cloudSaveNow(d).catch(()=>{});showMarketplaceAdminPage('messages');
-}
-
-function openPublicContactForm(companyId){
-  document.getElementById('gm56PublicContactModal')?.remove();const d=seed(),c=(d.companies||[]).find(x=>x.id===companyId),client=currentGlobalClient();if(!c)return alert('Boutique introuvable.');
-  document.body.insertAdjacentHTML('beforeend',`<div class="marketPayModalBackdrop" id="gm56PublicContactModal"><div class="marketPayModal gm56ContactBox"><button class="marketPayClose" onclick="document.getElementById('gm56PublicContactModal')?.remove()">×</button><span class="gmHomeModalKicker">CONTACTER LA BOUTIQUE</span><h2>${esc(c.name||'Boutique')}</h2><p>Envoyez votre demande directement à l’administrateur de cette boutique.</p>${client?'':`<label>Nom<input id="gm56ContactName" placeholder="Votre nom"></label><label>Téléphone<input id="gm56ContactPhone" placeholder="Votre contact"></label><label>Email<input id="gm56ContactEmail" type="email" placeholder="Facultatif"></label>`}<label>Message<textarea id="gm56ContactText" maxlength="3000" placeholder="Votre message..."></textarea></label><div class="marketPayActions"><button onclick="submitPublicContactMessage('${esc(c.id)}')">Envoyer</button><button class="btn2" onclick="document.getElementById('gm56PublicContactModal')?.remove()">Fermer</button></div>${client?'':'<small>Connectez-vous à un compte client pour retrouver les réponses directement dans votre espace Message.</small>'}</div></div>`);
-}
-async function submitPublicContactMessage(companyId){
-  const payload={companyId,message:($('#gm56ContactText')?.value||'').trim(),name:($('#gm56ContactName')?.value||'').trim(),phone:($('#gm56ContactPhone')?.value||'').trim(),email:($('#gm56ContactEmail')?.value||'').trim()};if(!payload.message)return alert('Saisissez votre message.');
-  try{const r=await fetchWithTimeout('/api/public/message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)},12000);await readApiPayload(r);document.getElementById('gm56PublicContactModal')?.remove();if(PUBLIC_CLIENT_SESSION?.clientId)await cloudLoadPublicData();alert('Votre message a été envoyé à la boutique.');}catch(e){alert(secureErrorMessage(e,'Envoi impossible.'))}
-}
-const GM56_BASE_RENDER_PUBLIC_SHOP=renderPublicShop;
-renderPublicShop=function(slug){
-  GM56_BASE_RENDER_PUBLIC_SHOP(slug);
-  const d=seed(),decoded=decodeURIComponent(slug||''),c=(d.companies||[]).find(x=>slugify(x.name)===decoded||x.shopSlug===decoded);const btn=document.querySelector('.officialHeaderCart');
-  if(c&&btn){btn.onclick=()=>openPublicContactForm(c.id);btn.classList.add('gm56ContactUsBtn');btn.innerHTML=`<span>${officialShopIcon('support')}</span><span><small>Besoin d’aide ?</small><b>Contactez-nous</b></span>`;}
-};
-
-function openMarketplaceOrderPopup(orderId,isAdmin){
-  document.getElementById('marketOrderDetailsModal')?.remove();const d=seed(),o=(d.orders||[]).find(x=>String(x.id)===String(orderId));if(!o)return alert('Commande introuvable.');const items=normalizeOrderItems(o),company=(d.companies||[]).find(c=>c.id===o.companyId)||{};
-  const rows=items.map((it,i)=>`<tr><td>${i+1}</td><td>${esc(it.item||'Article')}</td><td>${esc(it.category||'-')}</td><td>${esc(it.type||'-')}</td><td>${Number(it.qty||1)}</td><td>${money(it.unit||0)}</td><td><b>${money(it.total||0)}</b></td></tr>`).join('');
-  let workflow='';
-  if(isAdmin){
-    if(gm56OrderCancelled(o))workflow=`<div class="gm56AdminWorkflow cancelled"><b>Commande annulée</b><p>${esc(o.afterSaleStatus||'Commande annulée')}</p></div>`;
-    else if(gm56OrderDelivered(o))workflow=`<div class="gm56AdminWorkflow delivered"><b>Commande livrée</b><p>Le paiement et la livraison sont confirmés.</p></div>`;
-    else if(gm56OrderPaidConfirmed(o))workflow=`<div class="gm56AdminWorkflow shipping"><b>Paiement confirmé</b><p>La livraison est en cours.</p><button onclick="gm56AdminConfirmDelivery('${esc(o.id)}')">Confirmer la livraison</button></div>`;
-    else if(gm56OrderPaymentSubmitted(o)&&gm56OrderValidated(o))workflow=`<div class="gm56AdminWorkflow paycheck"><b>Paiement déclaré par le client</b><p>Moyen : ${esc(o.paymentMethod||'-')}<br>ID transaction : <strong>${esc(o.transactionId||o.paymentRef||'-')}</strong>${o.clientPaymentSubmittedAt?'<br>Déclaré le '+new Date(o.clientPaymentSubmittedAt).toLocaleString('fr-FR'):''}</p><button onclick="gm56AdminConfirmPayment('${esc(o.id)}')">Confirmer le paiement</button><button class="danger" onclick="gm56AdminSetOrderValidation('${esc(o.id)}','Annuler')">Annuler la commande</button></div>`;
-    else if(gm56OrderValidated(o))workflow=`<div class="gm56AdminWorkflow validated"><b>Commande validée</b><p>En attente du règlement par le client.</p><button class="danger" onclick="gm56AdminSetOrderValidation('${esc(o.id)}','Annuler')">Annuler la commande</button></div>`;
-    else workflow=`<div class="gm56AdminWorkflow waiting"><b>Commande en attente</b><p>Validez la commande pour activer les moyens de paiement du client.</p><button onclick="gm56AdminSetOrderValidation('${esc(o.id)}','Validée')">Valider la commande</button><button class="danger" onclick="gm56AdminSetOrderValidation('${esc(o.id)}','Annuler')">Annuler la commande</button></div>`;
-  }else workflow=`<div class="gm56ClientStatusBlock">${gm56OrderClientAction(o)}${gm56ClientOrderControls(o)}</div>`;
-  const paymentInfo=`<div class="gm56OrderInfoGrid"><div><span>Boutique</span><b>${esc(o.shopName||company.name||'Boutique')}</b></div><div><span>Client</span><b>${esc(o.client||'-')}</b><small>${esc(o.clientPhone||'')}</small></div><div><span>Livraison</span><b>${esc(o.deliveryCity||'-')}</b><small>${esc(o.deliveryNeighborhood||'')} ${o.deliveryAddressDetail?'· '+esc(o.deliveryAddressDetail):''}</small></div><div><span>Paiement</span><b>${esc(o.paymentMethod||'Non réglé')}</b><small>${esc(o.paymentStatus||'En attente')}</small></div></div>`;
-  document.body.insertAdjacentHTML('beforeend',`<div class="marketPayModalBackdrop" id="marketOrderDetailsModal"><div class="marketPayModal orderDetailsBox gm56OrderDetails"><button class="marketPayClose" onclick="document.getElementById('marketOrderDetailsModal')?.remove()">×</button><span class="gmHomeModalKicker">COMMANDE MARKETPLACE</span><h2>#${esc(o.id)}</h2>${paymentInfo}<div class="clientOrdersScroll"><table class="mkOrdersTable"><tr><th>N°</th><th>Produit / Service</th><th>Catégorie</th><th>Type</th><th>Qté</th><th>PU</th><th>Total</th></tr>${rows}</table></div><div class="orderFinancialSummary"><div><span>Sous-total</span><b>${money(Number(o.subtotal??(orderTotal(o)-Number(o.deliveryFee||0))))}</b></div><div><span>Frais d’expédition</span><b>${money(Number(o.deliveryFee||0))}</b></div><div class="total"><span>Total lot</span><b>${money(orderTotal(o))}</b></div></div>${workflow}<div class="marketPayActions"><button class="btn2" onclick="document.getElementById('marketOrderDetailsModal')?.remove()">Fermer</button></div></div></div>`);
-}
-async function gm56PersistOrderAdmin(d,o){save(d);try{await cloudSaveNow(d)}catch(e){console.error(e)}document.getElementById('marketOrderDetailsModal')?.remove();showMarketplaceAdminPage('orders')}
-async function gm56AdminSetOrderValidation(orderId,status){
-  const d=seed(),o=(d.orders||[]).find(x=>x.id===orderId);if(!o)return;
-  if(status==='Annuler'){
-    if(gm56OrderPaidConfirmed(o))return alert('Le paiement étant déjà confirmé, cette commande ne peut plus être annulée ici.');restoreMarketplaceOrderStock(d,o);removeMarketplaceOrderFromReport(d,o);o.validationStatus='Annuler';o.deliveryStatus='Aucune action';o.afterSaleStatus='Annulée par la boutique';o.delivery='Commande annulée';o.cancelledAt=new Date().toISOString();o.cancelledBy='admin';
-  }else{o.validationStatus='Validée';o.paymentStatus=gm56OrderPaymentSubmitted(o)?(o.paymentStatus||'Paiement déclaré par le client'):'En attente de paiement';o.deliveryStatus='En attente de paiement';o.delivery='Commande validée';}
-  await gm56PersistOrderAdmin(d,o);
-}
-async function gm56AdminConfirmPayment(orderId){
-  const d=seed(),o=(d.orders||[]).find(x=>x.id===orderId);if(!o)return;if(!gm56OrderPaymentSubmitted(o))return alert('Aucune transaction n’a encore été déclarée par le client.');o.paymentStatus='Paiement confirmé';o.paymentConfirmedAt=new Date().toISOString();o.deliveryStatus='En cours de livraison';o.delivery='En cours de livraison';o.validationStatus='Validée';addMarketplaceOrderToReport(d,o);await gm56PersistOrderAdmin(d,o);
-}
-async function gm56AdminConfirmDelivery(orderId){
-  const d=seed(),o=(d.orders||[]).find(x=>x.id===orderId);if(!o)return;if(!gm56OrderPaidConfirmed(o))return alert('Confirmez d’abord le paiement.');o.deliveryStatus='Livrée';o.delivery='Livrée';o.deliveredAt=new Date().toISOString();await gm56PersistOrderAdmin(d,o);
-}
-
-const GM56_BASE_RENDER_GLOBAL_SHOP=renderGlobalShop;
-renderGlobalShop=function(){
-  GM56_BASE_RENDER_GLOBAL_SHOP();
-  document.querySelector('.gmHomeHero')?.remove();
-  document.querySelector('.gm56AboutLaunch')?.remove();
-  const nav=document.querySelector('.gmUniversalNav');if(nav&&!nav.querySelector('.gm56AboutNav'))nav.insertAdjacentHTML('beforeend','<button type="button" class="gm56AboutNav" onclick="openGlobalAboutPage()">À propos</button>');
-};
-function openGlobalAboutPage(){
-  app.innerHTML=`<main class="gm56AboutPage gm561AboutPage">
-    ${globalUniversalHeader('about')}
-    <section class="gm561AboutHero">
-      <div class="gm561AboutHeroCopy"><span class="gm561Eyebrow">À PROPOS DE GLOBAL MARKET</span><h1>Gérez votre activité.<br><em>Vendez en ligne.</em><br>Restez proche de vos clients.</h1><p>GLOBAL MARKET réunit la gestion commerciale d’une entreprise et une marketplace multi-boutiques dans une seule plateforme claire, professionnelle et accessible.</p><div class="gm561AboutHeroActions"><button class="gm561Primary" onclick="openGlobalBusinessAuth('register')">Créer ma boutique</button><button class="gm561Secondary" onclick="goGlobalMarketHome()">Voir le marketplace</button></div><div class="gm561TrustRow"><span>✓ Gestion centralisée</span><span>✓ Boutique publique</span><span>✓ Commandes & paiements</span><span>✓ Messagerie client</span></div></div>
-      <div class="gm561AboutHeroVisual"><div class="gm561VisualFrame"><img src="assets/global-market-hero.png" alt="Présentation de la plateforme GLOBAL MARKET"><div class="gm561VisualBadge top"><b>Marketplace</b><small>Produits & services</small></div><div class="gm561VisualBadge bottom"><b>Gestion complète</b><small>Stocks · ventes · clients</small></div></div></div>
-    </section>
-    <section class="gm561AboutBand"><article><b>01</b><span>Une seule plateforme</span><small>Gestion et vente en ligne réunies.</small></article><article><b>02</b><span>Multi-boutiques</span><small>Chaque vendeur gère son activité indépendamment.</small></article><article><b>03</b><span>Suivi client</span><small>Commandes, paiements, livraison et messages.</small></article><article><b>04</b><span>Accessible partout</span><small>Ordinateur, tablette et téléphone.</small></article></section>
-    <section class="gm561AboutSection gm561AboutPresentation"><div class="gm561SectionHead"><span>PRÉSENTATION</span><h2>GLOBAL MARKET, bien plus qu’une simple boutique en ligne</h2><p>La plateforme accompagne l’entreprise de l’enregistrement d’un article jusqu’à la vente, au paiement, à la livraison et au suivi du client.</p></div><div class="gm561FeatureGrid"><article><i>▦</i><h3>Gestion commerciale</h3><p>Stocks, ventes, encaissements, clients, rapports et indicateurs dans un espace unique.</p></article><article><i>🛍</i><h3>Boutique en ligne</h3><p>Catalogue public professionnel pour présenter et vendre vos produits et services.</p></article><article><i>⌁</i><h3>Commandes organisées</h3><p>Les commandes sont regroupées par boutique et suivies jusqu’à la livraison.</p></article><article><i>◈</i><h3>Paiements configurables</h3><p>Wave et USDT TRC20 avec QR Code et identification de transaction.</p></article><article><i>✉</i><h3>Messagerie intégrée</h3><p>Clients et vendeurs peuvent échanger directement depuis leurs espaces.</p></article><article><i>⌂</i><h3>Livraison personnalisée</h3><p>Villes, quartiers, moyens d’expédition et frais configurés par chaque boutique.</p></article></div></section>
-    <section class="gm561Mission"><div class="gm561MissionLead"><span>NOTRE MISSION</span><h2>Digitaliser le commerce local sans le compliquer.</h2><p>GLOBAL MARKET veut donner aux commerçants, entreprises et prestataires un outil concret pour mieux gérer, mieux vendre et construire une relation durable avec leurs clients.</p></div><div class="gm561MissionPoints"><article><b>Visibilité</b><p>Permettre aux boutiques d’être découvertes au-delà de leur emplacement physique.</p></article><article><b>Confiance</b><p>Rendre le parcours de commande, de paiement et de livraison plus lisible.</p></article><article><b>Performance</b><p>Donner au responsable des données utiles pour piloter son activité au quotidien.</p></article></div></section>
-    <section class="gm561AboutSection gm561UsersSection"><div class="gm561SectionHead"><span>POUR QUI ?</span><h2>Une solution pensée pour tout l’écosystème commercial</h2></div><div class="gm561UsersGrid"><article><div>🏪</div><h3>Commerçants & boutiques</h3><p>Gérez les produits, les stocks et les commandes depuis un espace professionnel.</p></article><article><div>🧰</div><h3>Prestataires de services</h3><p>Présentez vos prestations, vos tarifs et recevez les demandes de vos clients.</p></article><article><div>🏢</div><h3>Entreprises</h3><p>Centralisez les opérations, utilisateurs, ventes, rapports et paramètres.</p></article><article><div>🛒</div><h3>Clients</h3><p>Achetez auprès de plusieurs boutiques, suivez vos commandes et échangez avec les vendeurs.</p></article></div></section>
-    <section class="gm561AboutGuide"><div class="gm561GuideTitle"><span>GUIDE D’UTILISATION</span><h2>Créer votre boutique en 5 étapes</h2><p>Un parcours simple pour publier vos premières offres sur GLOBAL MARKET.</p></div><div class="gm561GuideFlow"><article><b>1</b><div><h3>Créer ma boutique</h3><p>Depuis l’accueil, choisissez « Créer ma boutique ou se connecter » puis lancez l’inscription.</p></div></article><article><b>2</b><div><h3>Renseigner l’entreprise</h3><p>Complétez l’identité, le responsable, les contacts et vos identifiants sécurisés.</p></div></article><article><b>3</b><div><h3>Ajouter les produits et services</h3><p>Enregistrez vos offres dans le stock général et activez leur visibilité Marketplace.</p></div></article><article><b>4</b><div><h3>Configurer vente & livraison</h3><p>Définissez les moyens de paiement, villes, quartiers, expéditions et frais.</p></div></article><article><b>5</b><div><h3>Partager votre boutique</h3><p>Diffusez le lien public et recevez commandes, paiements et messages dans votre espace.</p></div></article></div></section>
-    <section class="gm561AboutCta"><div>${globalMarketBrandMark()}</div><div><span>PRÊT À COMMENCER ?</span><h2>Donnez une vitrine digitale professionnelle à votre activité.</h2><p>Créez votre boutique GLOBAL MARKET et gérez votre commerce depuis un seul espace.</p></div><button onclick="openGlobalBusinessAuth('register')">Créer ma boutique</button></section>
-    <footer class="gmHomeFooter gm561AboutFooter"><div>${globalMarketBrandMark()}<span><b>GLOBAL MARKET</b><small>Produits & services en toute confiance</small></span></div><nav class="gmHomeLegalLinks" aria-label="Informations légales"><button type="button" onclick="openLegalPopup('cgu')">Conditions générales d'utilisation</button><button type="button" onclick="openLegalPopup('privacy')">Notre politique de confidentialité</button></nav><p>© 2026 MEGA SERVICES SARL U</p></footer>
-  </main>`;initFlexibleHorizontalMenu();
-}
-
-function gm56NotifyPopup(message,buttonLabel,handler,tone='info'){
-  const box=document.createElement('div');box.className=`gm56LiveNotify ${tone}`;box.innerHTML=`<button class="gm56NotifyClose" aria-label="Fermer">×</button><b>${esc(message)}</b><button class="gm56NotifyAction">${esc(buttonLabel)}</button>`;box.querySelector('.gm56NotifyClose').onclick=()=>box.remove();box.querySelector('.gm56NotifyAction').onclick=()=>{box.remove();handler&&handler()};document.body.appendChild(box);setTimeout(()=>box.remove(),18000);
-}
-let GM56_NOTIFY_CONTEXT='',GM56_NOTIFY_ORDERS=new Map(),GM56_NOTIFY_MESSAGES=new Set(),GM56_NOTIFY_TIMER=null,GM56_NOTIFY_POLLING=false;
-function gm56NotificationContext(){if(CLOUD_SESSION?.userId)return `emp:${CLOUD_SESSION.userId}:${CLOUD_SESSION.companyId||''}`;if(PUBLIC_CLIENT_SESSION?.clientId)return `client:${PUBLIC_CLIENT_SESSION.clientId}`;return 'guest'}
-function gm56PrimeNotifications(){
-  const key=gm56NotificationContext();GM56_NOTIFY_CONTEXT=key;GM56_NOTIFY_ORDERS=new Map();GM56_NOTIFY_MESSAGES=new Set();const d=seed();
-  if(key.startsWith('emp:')){const cid=CLOUD_SESSION?.companyId;(d.orders||[]).filter(o=>o.companyId===cid).forEach(o=>GM56_NOTIFY_ORDERS.set(o.id,orderMainStatus(o)));(d.marketMessages||[]).filter(m=>m.companyId===cid&&m.senderType==='client').forEach(m=>GM56_NOTIFY_MESSAGES.add(m.id));}
-  else if(key.startsWith('client:')){const client=currentGlobalClient();(d.orders||[]).filter(o=>o.clientId===client?.id).forEach(o=>GM56_NOTIFY_ORDERS.set(o.id,orderMainStatus(o)));(d.marketMessages||[]).filter(m=>m.clientId===client?.id&&m.senderType==='admin').forEach(m=>GM56_NOTIFY_MESSAGES.add(m.id));}
-}
-async function gm56PollNotifications(){
-  const ctx=gm56NotificationContext();if(ctx==='guest'||document.hidden||CLOUD_SAVE_PENDING||GM56_NOTIFY_POLLING)return;if(ctx!==GM56_NOTIFY_CONTEXT){gm56PrimeNotifications();return}
-  GM56_NOTIFY_POLLING=true;
-  try{if(CLOUD_SESSION)await cloudLoadData();else await cloudLoadPublicData();const d=seed();
-    if(ctx.startsWith('emp:')){const cid=CLOUD_SESSION?.companyId;for(const o of (d.orders||[]).filter(x=>x.companyId===cid)){if(!GM56_NOTIFY_ORDERS.has(o.id)){gm56NotifyPopup('Vous avez une nouvelle commande','Voir la commande',()=>showMarketplaceAdminPage('orders'),'order')}GM56_NOTIFY_ORDERS.set(o.id,orderMainStatus(o))}for(const m of (d.marketMessages||[]).filter(x=>x.companyId===cid&&x.senderType==='client')){if(!GM56_NOTIFY_MESSAGES.has(m.id))gm56NotifyPopup('Vous avez un nouveau message','Voir le message',()=>showMarketplaceAdminPage('messages'),'message');GM56_NOTIFY_MESSAGES.add(m.id)}}
-    else{const client=currentGlobalClient();for(const o of (d.orders||[]).filter(x=>x.clientId===client?.id)){const now=orderMainStatus(o),old=GM56_NOTIFY_ORDERS.get(o.id);if(old&&old!==now)gm56NotifyPopup(`Commande est ${now.toLowerCase()}`,'Voir la commande',()=>openClientSpace('orders'),'order');GM56_NOTIFY_ORDERS.set(o.id,now)}for(const m of (d.marketMessages||[]).filter(x=>x.clientId===client?.id&&x.senderType==='admin')){if(!GM56_NOTIFY_MESSAGES.has(m.id))gm56NotifyPopup('Vous avez un nouveau message','Voir le message',()=>openClientSpace('messages'),'message');GM56_NOTIFY_MESSAGES.add(m.id)}}
-  }catch(e){console.warn('Notifications GLOBAL MARKET non actualisées',e)}finally{GM56_NOTIFY_POLLING=false}
-}
-let GM_V6_WS=null,GM_V6_WS_RETRY=0,GM_V6_WS_TIMER=null;
-function gmV6MergeRealtimeEvent(evt){if(evt?.order){const arr=CLOUD_DATA.orders||(CLOUD_DATA.orders=[]),i=arr.findIndex(x=>x.id===evt.order.id);if(i>=0)arr[i]={...arr[i],...evt.order};else arr.unshift(evt.order)}if(evt?.message){const arr=CLOUD_DATA.marketMessages||(CLOUD_DATA.marketMessages=[]),i=arr.findIndex(x=>x.id===evt.message.id);if(i>=0)arr[i]={...arr[i],...evt.message};else arr.unshift(evt.message)}}
-function gmV6HandleRealtime(evt){gmV6MergeRealtimeEvent(evt);if(evt.type==='order'){if(CLOUD_SESSION)gm56NotifyPopup(evt.action==='new'?'Vous avez une nouvelle commande':`Commande mise à jour : ${orderMainStatus(evt.order||{}).toLowerCase()}`,'Voir la commande',()=>showMarketplaceAdminPage('orders'),'order');else if(PUBLIC_CLIENT_SESSION?.clientId)gm56NotifyPopup(`Commande est ${orderMainStatus(evt.order||{}).toLowerCase()}`,'Voir la commande',()=>openClientSpace('orders'),'order')}if(evt.type==='message'){gm56NotifyPopup('Vous avez un nouveau message','Voir le message',()=>CLOUD_SESSION?showMarketplaceAdminPage('messages'):openClientSpace('messages'),'message')}}
-let GM_V6_REALTIME_AVAILABLE=null;let GM_V6_REALTIME_STATUS_IN_FLIGHT=null;
-async function gmV6RealtimeAvailable(){if(GM_V6_REALTIME_AVAILABLE!==null)return GM_V6_REALTIME_AVAILABLE;if(GM_V6_REALTIME_STATUS_IN_FLIGHT)return GM_V6_REALTIME_STATUS_IN_FLIGHT;GM_V6_REALTIME_STATUS_IN_FLIGHT=(async()=>{try{const r=await fetch('/api/v6/realtime-status',{cache:'no-store'});const j=await r.json();GM_V6_REALTIME_AVAILABLE=Boolean(j?.available)}catch{GM_V6_REALTIME_AVAILABLE=false}finally{GM_V6_REALTIME_STATUS_IN_FLIGHT=null}return GM_V6_REALTIME_AVAILABLE})();return GM_V6_REALTIME_STATUS_IN_FLIGHT;}
-async function gmV6ConnectRealtime(){if(GM_V6_WS_TIMER){clearTimeout(GM_V6_WS_TIMER);GM_V6_WS_TIMER=null}if(!CLOUD_SESSION&&!PUBLIC_CLIENT_SESSION?.clientId)return;if(!(await gmV6RealtimeAvailable())){console.info('[GLOBAL MARKET V6.0.1] Temps réel externe non lié : secours léger activé.');return}try{GM_V6_WS?.close();const proto=location.protocol==='https:'?'wss:':'ws:';GM_V6_WS=new WebSocket(`${proto}//${location.host}/api/v6/realtime`);GM_V6_WS.onopen=()=>{GM_V6_WS_RETRY=0;console.info('[GLOBAL MARKET V6] Temps réel connecté')};GM_V6_WS.onmessage=e=>{try{gmV6HandleRealtime(JSON.parse(e.data))}catch(err){console.warn(err)}};GM_V6_WS.onclose=()=>{const delay=Math.min(30000,1000*Math.pow(1.8,Math.min(GM_V6_WS_RETRY++,7)));GM_V6_WS_TIMER=setTimeout(gmV6ConnectRealtime,delay)};GM_V6_WS.onerror=()=>{try{GM_V6_WS.close()}catch{}}}catch(e){GM_V6_WS_TIMER=setTimeout(gmV6ConnectRealtime,5000)}}
-function gm56StartNotifications(){if(GM56_NOTIFY_TIMER)clearInterval(GM56_NOTIFY_TIMER);setTimeout(()=>{gm56PrimeNotifications();gmV6ConnectRealtime()},900);GM56_NOTIFY_TIMER=setInterval(()=>{if(!GM_V6_WS||GM_V6_WS.readyState!==WebSocket.OPEN)gm56PollNotifications()},600000)}
-gm56StartNotifications();
-
-
-/* === GLOBAL MARKET V6.0 : chargements ciblés supplémentaires === */
-let GM_V6_ADMIN_MARKET_REFRESH=null;
-async function gmV6RefreshAdminMarketplace(){
-  if(!CLOUD_SESSION||CLOUD_SESSION.role==='superadmin')return;
-  if(GM_V6_ADMIN_MARKET_REFRESH)return GM_V6_ADMIN_MARKET_REFRESH;
-  GM_V6_ADMIN_MARKET_REFRESH=(async()=>{try{const j=await fetchApiJsonWithRetry('/api/v6/admin/marketplace-snapshot',{cache:'no-store'},9000,2);if(Array.isArray(j.orders))CLOUD_DATA.orders=j.orders;if(Array.isArray(j.messages))CLOUD_DATA.marketMessages=j.messages;if(Array.isArray(j.items)){const keep=(CLOUD_DATA.items||[]).filter(i=>i.companyId!==CLOUD_SESSION.companyId);CLOUD_DATA.items=[...keep,...j.items]}if(Array.isArray(j.marketClients))CLOUD_DATA.marketClients=j.marketClients;return j}catch(e){console.warn('[GLOBAL MARKET V6] Snapshot marketplace différé',e);return null}finally{GM_V6_ADMIN_MARKET_REFRESH=null}})();
-  return GM_V6_ADMIN_MARKET_REFRESH;
-}
-const GM_V6_BASE_SHOW_MARKETPLACE_ADMIN=showMarketplaceAdminPage;
-showMarketplaceAdminPage=function(type){window.marketplaceAdminSection=type||'stock';if((type==='orders'||type==='messages')&&CLOUD_SESSION){gmV6RefreshAdminMarketplace().finally(()=>showMarketplacePage());return;}return GM_V6_BASE_SHOW_MARKETPLACE_ADMIN(type)};
-
-const GM_V6_SHOP_CATALOG_LOADED=new Set();
-const GM_V6_BASE_RENDER_PUBLIC_SHOP=renderPublicShop;
-renderPublicShop=function(slug){
-  const d=seed(),decoded=decodeURIComponent(slug||''),company=(d.companies||[]).find(x=>slugify(x.name)===decoded||x.shopSlug===decoded);
-  if(company&&!GM_V6_SHOP_CATALOG_LOADED.has(company.id)){
-    GM_V6_SHOP_CATALOG_LOADED.add(company.id);
-    fetchApiJsonWithRetry('/api/v6/catalog?companyId='+encodeURIComponent(company.id)+'&page=1&pageSize=48',{cache:'no-store'},9000,2).then(j=>{for(const it of j.items||[])GM_V6_CATALOG_CACHE.set(it.id,it);CLOUD_DATA.items=[...GM_V6_CATALOG_CACHE.values()];GM_V6_BASE_RENDER_PUBLIC_SHOP(slug)}).catch(()=>{GM_V6_SHOP_CATALOG_LOADED.delete(company.id);GM_V6_BASE_RENDER_PUBLIC_SHOP(slug)});
-    app.innerHTML=globalUniversalHeader('shop')+'<div class="gmV6LoadingShop"><div class="gmV6Spinner"></div><h2>Ouverture de la boutique…</h2><p>Chargement ciblé du catalogue.</p></div>';return;
-  }
-  return GM_V6_BASE_RENDER_PUBLIC_SHOP(slug);
-};
