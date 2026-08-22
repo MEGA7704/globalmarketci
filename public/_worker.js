@@ -355,6 +355,7 @@ function defaultState() {
     orders: [],
     clients: [],
     marketClients: [],
+    marketMessages: [],
     passwordResetRequests: [],
     app: { name: APP_NAME, storageVersion: 3, initializedAt: new Date().toISOString() }
   };
@@ -367,7 +368,7 @@ function dateOnlyPlusDays(startValue, days) {
 
 function normalizeState(value) {
   const data = value && typeof value === 'object' ? value : {};
-  for (const key of ['companies', 'users', 'items', 'sales', 'payments', 'orders', 'clients', 'marketClients', 'passwordResetRequests']) {
+  for (const key of ['companies', 'users', 'items', 'sales', 'payments', 'orders', 'clients', 'marketClients', 'marketMessages', 'passwordResetRequests']) {
     if (!Array.isArray(data[key])) data[key] = [];
   }
   if (!data.app || typeof data.app !== 'object') data.app = {};
@@ -993,7 +994,7 @@ function cleanClone(value) {
 }
 
 const COMPANY_ARRAY_KEYS = [
-  'items', 'sales', 'orders', 'clients', 'marketClients', 'stockEntries', 'stockOutputs',
+  'items', 'sales', 'orders', 'clients', 'marketClients', 'marketMessages', 'stockEntries', 'stockOutputs',
   'stockMovements', 'caisseLogs', 'passwordResetRequests', 'payments'
 ];
 const COMPANY_OBJECT_KEYS = ['categories', 'monthlyObligations', 'obligations', 'cartClearedAt', 'cartValidatedAt'];
@@ -1158,7 +1159,7 @@ async function writePatchStatements(env, statements) {
 function allowedDeltaArrayKeys(role) {
   if (role === 'superadmin' || role === 'system') return new Set(['companies', 'users', ...COMPANY_ARRAY_KEYS]);
   if (role === 'caisse') return new Set(['items', 'sales', 'orders', 'stockEntries', 'stockOutputs', 'stockMovements', 'caisseLogs']);
-  return new Set(['companies', 'items', 'sales', 'orders', 'clients', 'marketClients', 'stockEntries', 'stockOutputs', 'stockMovements', 'caisseLogs']);
+  return new Set(['companies', 'items', 'sales', 'orders', 'clients', 'marketClients', 'marketMessages', 'stockEntries', 'stockOutputs', 'stockMovements', 'caisseLogs']);
 }
 
 async function persistStateDelta(env, delta, actor) {
@@ -1527,6 +1528,7 @@ async function publicLoadPayload(request, env) {
     items: state.items.map(publicItem),
     marketClients: [],
     orders: [],
+    marketMessages: [],
     clientDeletedOrders: {},
     app: state.app || {}
   };
@@ -1534,6 +1536,7 @@ async function publicLoadPayload(request, env) {
     const clientAuth = await getClientSession(request, env, false);
     payload.marketClients = [cleanClone(clientAuth.client)];
     payload.orders = state.orders.filter(o => o.clientId === clientAuth.client.id).map(cleanClone);
+    payload.marketMessages = (state.marketMessages || []).filter(m => m.clientId === clientAuth.client.id && !m.clientDeleted).map(cleanClone);
     payload.clientDeletedOrders[clientAuth.client.id] = (state.clientDeletedOrders || {})[clientAuth.client.id] || [];
     payload.clientSession = publicClientSessionView(clientAuth.session);
   } catch {
@@ -2020,15 +2023,204 @@ async function handlePublicOrder(request, env) {
   return json({ success: true, checkoutId, orders: createdOrders.map(cleanClone), grandTotal }, { status: 201 });
 }
 
+async function handlePublicOrderCancel(request, env) {
+  const ctx = await getClientSession(request, env, true);
+  const body = await readJson(request, 20_000);
+  const order = ctx.state.orders.find(o => o.id === body.orderId && o.clientId === ctx.client.id);
+  if (!order) throw new HttpError(404, 'Commande introuvable.', 'ORDER_NOT_FOUND');
+  if (String(order.paymentStatus || '').toLowerCase().includes('confirm')) {
+    throw new HttpError(409, 'Une commande dont le paiement a été confirmé ne peut plus être annulée.', 'ORDER_PAYMENT_CONFIRMED');
+  }
+  if (String(order.validationStatus || '').toLowerCase().includes('annul')) return json({ success: true, order: cleanClone(order) });
+  const changedItems = [];
+  if (!order.stockRestored) {
+    for (const line of Array.isArray(order.items) ? order.items : []) {
+      const item = ctx.state.items.find(i => i.id === line.itemId && i.companyId === order.companyId);
+      if (item && String(line.type || '').toLowerCase() === 'produit' && item.stockType !== 'unlimited') {
+        item.stock = Number(item.stock || 0) + Number(line.qty || 0);
+        changedItems.push(item);
+      }
+    }
+    order.stockRestored = true;
+  }
+  order.validationStatus = 'Annuler';
+  order.deliveryStatus = 'Aucune action';
+  order.afterSaleStatus = 'Annulée par le client';
+  order.delivery = 'Commande annulée';
+  order.clientCancelled = true;
+  order.cancelledAt = new Date().toISOString();
+  order.cancelledBy = 'client';
+  order.marketplaceReported = false;
+  await persistStateDelta(env, { arrays: {
+    items: { upserts: changedItems, deletes: [] },
+    orders: { upserts: [order], deletes: [] }
+  } }, { role: 'system', companyId: order.companyId });
+  return json({ success: true, order: cleanClone(order) });
+}
+
 async function handlePublicOrderDelete(request, env) {
   const ctx = await getClientSession(request, env, true);
   const body = await readJson(request, 20_000);
   const order = ctx.state.orders.find(o => o.id === body.orderId && o.clientId === ctx.client.id);
   if (!order) throw new HttpError(404, 'Commande introuvable.', 'ORDER_NOT_FOUND');
-  order.clientDeletedIds = order.clientDeletedIds || [];
-  if (!order.clientDeletedIds.includes(ctx.client.id)) order.clientDeletedIds.push(ctx.client.id);
-  await persistStateDelta(env, { arrays: { orders: { upserts: [order], deletes: [] } } }, { role: 'system', companyId: order.companyId });
+  if (String(order.paymentStatus || '').toLowerCase().includes('confirm')) {
+    throw new HttpError(409, 'Une commande payée et confirmée ne peut plus être supprimée.', 'ORDER_PAYMENT_CONFIRMED');
+  }
+  if (!String(order.validationStatus || '').toLowerCase().includes('annul')) {
+    throw new HttpError(409, 'Annulez d’abord la commande avant de la supprimer.', 'ORDER_NOT_CANCELLED');
+  }
+  await persistStateDelta(env, { arrays: { orders: { upserts: [], deletes: [{ id: order.id, companyId: order.companyId }] } } }, { role: 'system', companyId: order.companyId });
   return json({ success: true });
+}
+
+async function handlePublicOrderPayment(request, env) {
+  const ctx = await getClientSession(request, env, true);
+  const body = await readJson(request, 30_000);
+  const order = ctx.state.orders.find(o => o.id === body.orderId && o.clientId === ctx.client.id);
+  if (!order) throw new HttpError(404, 'Commande introuvable.', 'ORDER_NOT_FOUND');
+  const validation = String(order.validationStatus || '').toLowerCase();
+  if (!validation.includes('valid')) throw new HttpError(409, 'Le paiement est disponible uniquement après validation de la commande par la boutique.', 'ORDER_NOT_VALIDATED');
+  if (validation.includes('annul')) throw new HttpError(409, 'Cette commande est annulée.', 'ORDER_CANCELLED');
+  if (String(order.paymentStatus || '').toLowerCase().includes('confirm')) throw new HttpError(409, 'Le paiement de cette commande est déjà confirmé.', 'PAYMENT_ALREADY_CONFIRMED');
+  const method = String(body.method || '').trim().toUpperCase();
+  if (!['WAVE', 'USDT TRC20', 'USDTTRC20'].includes(method)) throw new HttpError(400, 'Moyen de paiement invalide.', 'INVALID_PAYMENT_METHOD');
+  const transactionId = String(body.transactionId || '').trim().slice(0, 200);
+  if (!transactionId) throw new HttpError(400, 'ID de la transaction obligatoire.', 'TRANSACTION_ID_REQUIRED');
+  order.paymentMethod = method.startsWith('USDT') ? 'USDT TRC20' : 'WAVE';
+  order.transactionId = transactionId;
+  order.paymentRef = transactionId;
+  order.paymentProofType = 'transaction_id';
+  order.paymentStatus = 'Paiement déclaré par le client';
+  order.clientPaymentSubmittedAt = new Date().toISOString();
+  await persistStateDelta(env, { arrays: { orders: { upserts: [order], deletes: [] } } }, { role: 'system', companyId: order.companyId });
+  return json({ success: true, order: cleanClone(order) });
+}
+
+async function handlePublicClientProfileUpdate(request, env) {
+  const ctx = await getClientSession(request, env, true);
+  const body = await readJson(request, 50_000);
+  const client = ctx.client;
+  const oldPhone = normalizePhone(client.phone);
+  const newName = String(body.name ?? client.name ?? '').trim().slice(0, 160);
+  const newPhone = normalizePhone(body.phone ?? client.phone);
+  const newEmail = normalizeIdentifier(body.email ?? client.email);
+  const currentPassword = String(body.currentPassword || '');
+  const newPasswordRaw = String(body.newPassword || '');
+  if (!newName || !newPhone) throw new HttpError(400, 'Nom et identifiant / téléphone obligatoires.', 'MISSING_FIELDS');
+  const changingPhone = newPhone !== oldPhone;
+  const changingPassword = Boolean(newPasswordRaw);
+  if (changingPhone || changingPassword) {
+    if (!currentPassword || !(await verifyCredential(ctx.auth, currentPassword))) throw new HttpError(401, 'Mot de passe actuel incorrect.', 'CURRENT_PASSWORD_INVALID');
+  }
+  if (changingPhone) {
+    const existingId = await env.GLOBAL_MARKET_KV.get(globalClientIndexKey(newPhone));
+    if (existingId && existingId !== client.id) throw new HttpError(409, 'Cet identifiant / téléphone est déjà utilisé.', 'PHONE_EXISTS');
+    if ((ctx.state.marketClients || []).some(c => c.id !== client.id && normalizePhone(c.phone) === newPhone)) throw new HttpError(409, 'Cet identifiant / téléphone est déjà utilisé.', 'PHONE_EXISTS');
+  }
+  client.name = newName;
+  client.phone = newPhone;
+  client.email = newEmail;
+  client.updatedAt = new Date().toISOString();
+  let newAuth = ctx.auth;
+  if (changingPhone || changingPassword) {
+    const passwordToWrite = changingPassword ? validatePassword(newPasswordRaw, 'client') : currentPassword;
+    newAuth = await writeClientCredential(env, client, passwordToWrite);
+  }
+  await persistStateDelta(env, { arrays: { marketClients: { upserts: [client], deletes: [] } } }, { role: 'system', companyId: GLOBAL_CLIENT_SCOPE });
+  if (changingPhone || changingPassword) {
+    await env.GLOBAL_MARKET_KV.delete(`client-session:${ctx.sid}`);
+    const created = await createClientSession(env, client, newAuth);
+    return json({ success: true, client: cleanClone(client), session: publicClientSessionView(created.session) }, { headers: { 'Set-Cookie': setCookie(CLIENT_SESSION_COOKIE, created.sid, CLIENT_SESSION_TTL) } });
+  }
+  return json({ success: true, client: cleanClone(client), session: publicClientSessionView(ctx.session) });
+}
+
+async function handlePublicClientResetRequest(request, env) {
+  assertSameOrigin(request);
+  const body = await readJson(request, 30_000);
+  const phone = normalizePhone(body.phone || body.identifier);
+  const ip = requestIp(request);
+  const key = `rate:client-reset-request:${await rateKeyHash(`${ip}:${phone}`)}`;
+  const rec = await getRateRecord(env, key);
+  if (rec.resetAt > Date.now() && rec.count >= 3) throw new HttpError(429, 'Trop de demandes. Réessayez plus tard.', 'RATE_LIMITED');
+  const state = await loadState(env, '*');
+  const client = (state.marketClients || []).find(c => normalizePhone(c.phone) === phone);
+  if (client) {
+    state.passwordResetRequests = state.passwordResetRequests || [];
+    let req = state.passwordResetRequests.find(r => r.role === 'client' && r.userId === client.id && r.status === 'pending');
+    if (!req) {
+      req = {
+        id: `rst_${crypto.randomUUID()}`, companyId: GLOBAL_CLIENT_SCOPE, userId: client.id,
+        userName: client.name || '', email: client.email || '', role: 'client', phone: client.phone || phone,
+        reason: String(body.reason || 'Mot de passe oublié').slice(0, 300), status: 'pending', createdAt: new Date().toISOString()
+      };
+      await persistStateDelta(env, { arrays: { passwordResetRequests: { upserts: [req], deletes: [] } } }, { role: 'system', companyId: GLOBAL_CLIENT_SCOPE });
+    }
+  }
+  await env.GLOBAL_MARKET_KV.put(key, JSON.stringify({ count: (rec.count || 0) + 1, resetAt: Date.now() + 3600000 }), { expirationTtl: 3600 });
+  return json({ success: true, message: 'Si le compte existe, la demande de réinitialisation a été transmise au Super Admin GLOBAL MARKET.' });
+}
+
+async function handleSuperResetClientPassword(request, env) {
+  const ctx = await getEmployeeSession(request, env, true);
+  requireRole(ctx.user, ['superadmin']);
+  const body = await readJson(request, 30_000);
+  const client = (ctx.state.marketClients || []).find(c => c.id === body.clientId);
+  if (!client) throw new HttpError(404, 'Compte client introuvable.', 'CLIENT_NOT_FOUND');
+  const tempPassword = generateTempPassword();
+  await writeClientCredential(env, client, tempPassword);
+  const reset = (ctx.state.passwordResetRequests || []).find(r => r.id === body.requestId && r.role === 'client' && r.userId === client.id);
+  if (reset) {
+    reset.status = 'done'; reset.doneAt = new Date().toISOString(); reset.doneBy = ctx.user.id;
+  }
+  await persistStateDelta(env, { arrays: {
+    marketClients: { upserts: [client], deletes: [] },
+    passwordResetRequests: { upserts: reset ? [reset] : [], deletes: [] }
+  } }, { role: 'system', companyId: GLOBAL_CLIENT_SCOPE });
+  return json({ success: true, temporaryPassword: tempPassword });
+}
+
+async function handlePublicMessageSend(request, env) {
+  assertSameOrigin(request);
+  const body = await readJson(request, 50_000);
+  const state = await loadState(env, '*');
+  const companyId = String(body.companyId || '').trim();
+  const company = state.companies.find(c => c.id === companyId);
+  if (!company) throw new HttpError(404, 'Boutique introuvable.', 'COMPANY_NOT_FOUND');
+  const text = String(body.message || '').trim().slice(0, 3000);
+  if (!text) throw new HttpError(400, 'Message obligatoire.', 'MESSAGE_REQUIRED');
+  let client = null;
+  try { client = (await getClientSession(request, env, false)).client; } catch {}
+  const message = {
+    id: `msg_${crypto.randomUUID()}`, companyId, clientId: client?.id || '',
+    clientName: client?.name || String(body.name || 'Visiteur').trim().slice(0, 160),
+    clientPhone: client?.phone || normalizePhone(body.phone), clientEmail: client?.email || normalizeIdentifier(body.email),
+    senderType: 'client', senderName: client?.name || String(body.name || 'Visiteur').trim().slice(0, 160),
+    body: text, createdAt: new Date().toISOString(), adminDeleted: false, clientDeleted: false, readByAdmin: false, readByClient: true
+  };
+  await persistStateDelta(env, { arrays: { marketMessages: { upserts: [message], deletes: [] } } }, { role: 'system', companyId });
+  return json({ success: true, message: cleanClone(message) }, { status: 201 });
+}
+
+async function handlePublicMessageDelete(request, env) {
+  const ctx = await getClientSession(request, env, true);
+  const body = await readJson(request, 50_000);
+  const ids = new Set((Array.isArray(body.ids) ? body.ids : [body.id]).map(String).filter(Boolean).slice(0, 200));
+  const changed = [];
+  for (const msg of ctx.state.marketMessages || []) {
+    if (ids.has(String(msg.id)) && msg.clientId === ctx.client.id) {
+      msg.clientDeleted = true; msg.clientDeletedAt = new Date().toISOString(); changed.push(msg);
+    }
+  }
+  const byCompany = new Map();
+  for (const msg of changed) {
+    if (!byCompany.has(msg.companyId)) byCompany.set(msg.companyId, []);
+    byCompany.get(msg.companyId).push(msg);
+  }
+  for (const [companyId, rows] of byCompany) {
+    await persistStateDelta(env, { arrays: { marketMessages: { upserts: rows, deletes: [] } } }, { role: 'system', companyId });
+  }
+  return json({ success: true, count: changed.length });
 }
 
 async function handleApi(request, env, executionCtx) {
@@ -2114,13 +2306,20 @@ async function handleApi(request, env, executionCtx) {
     if (url.pathname === '/api/public/load' && request.method === 'GET') return json(await publicLoadPayload(request, env));
     if (url.pathname === '/api/public/client/register' && request.method === 'POST') return await handlePublicClientRegister(request, env);
     if (url.pathname === '/api/public/client/login' && request.method === 'POST') return await handlePublicClientLogin(request, env);
+    if (url.pathname === '/api/public/client/profile' && request.method === 'POST') return await handlePublicClientProfileUpdate(request, env);
+    if (url.pathname === '/api/public/client/request-reset' && request.method === 'POST') return await handlePublicClientResetRequest(request, env);
+    if (url.pathname === '/api/client/reset-password' && request.method === 'POST') return await handleSuperResetClientPassword(request, env);
     if (url.pathname === '/api/public/client/session' && request.method === 'DELETE') {
       const sid = getCookie(request, CLIENT_SESSION_COOKIE);
       if (sid) await env.GLOBAL_MARKET_KV.delete(`client-session:${sid}`);
       return json({ success: true }, { headers: { 'Set-Cookie': setCookie(CLIENT_SESSION_COOKIE, '', 0) } });
     }
     if (url.pathname === '/api/public/order' && request.method === 'POST') return await handlePublicOrder(request, env);
+    if (url.pathname === '/api/public/order/payment' && request.method === 'POST') return await handlePublicOrderPayment(request, env);
+    if (url.pathname === '/api/public/order/cancel' && request.method === 'POST') return await handlePublicOrderCancel(request, env);
     if (url.pathname === '/api/public/order/delete' && request.method === 'POST') return await handlePublicOrderDelete(request, env);
+    if (url.pathname === '/api/public/message' && request.method === 'POST') return await handlePublicMessageSend(request, env);
+    if (url.pathname === '/api/public/message/delete' && request.method === 'POST') return await handlePublicMessageDelete(request, env);
 
     throw new HttpError(404, `API introuvable : ${url.pathname}`, 'NOT_FOUND');
   } catch (error) {

@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "5.5.1",
+  "version": "5.6.0",
   "private": true,
-  "description": "GLOBAL MARKET - panier en 3 sections horizontales, frais d’expédition automatiques par moyen et minimum de 10 000 FCFA sur le total général de chaque commande hors ville.",
+  "description": "GLOBAL MARKET - espace client avancé, suivi et paiement des commandes par boutique, messagerie client/boutique, notifications, récupération de compte et page À propos.",
   "type": "module",
   "engines": {
     "node": ">=20"
