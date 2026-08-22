@@ -50,7 +50,7 @@ if (!worker.includes("url.pathname === '/api/save-delta'") || !worker.includes('
   console.error('[validate] Sauvegarde incrémentielle D1 anti-503 V4.2 incomplète.');
   process.exit(1);
 }
-if (!worker.includes("saveMode: 'incremental-d1-delta-v7'") || !worker.includes('deleted_companies')) {
+if (!worker.includes("saveMode: 'incremental-d1-delta-v8'") || !worker.includes('deleted_companies')) {
   console.error('[validate] Mode de stockage incrémentiel ou suppression logique sécurisée absent.');
   process.exit(1);
 }

@@ -20,6 +20,10 @@ const GLOBAL_CLIENT_SCOPE = '__global_clients__';
 const LEGACY_CREDENTIAL_MIGRATION_KEY = 'security:credentials:migrated:v4';
 let dbReadyPromise = null;
 let legacyMigrationChecked = false;
+let publicStateCache = null;
+let publicStateCacheAt = 0;
+let publicStateLoadPromise = null;
+let d1WriteQueue = Promise.resolve();
 const AUTH_INIT_KEY = 'security:superadmin:initialized:v2';
 const SUPER_ADMIN_ID = 'superadmin_global_market';
 const SENSITIVE_FIELDS = new Set([
@@ -85,8 +89,8 @@ function errorResponse(error) {
   }
   console.error(error);
   const message = String(error?.message || error || '');
-  if (/overload|too many|rate.?limit|quota|temporar|network connection lost|SQLITE_BUSY|database is locked|busy|locked/i.test(message)) {
-    return json({ success: false, error: 'Le stockage cloud est temporairement très sollicité. La requête peut être relancée automatiquement.', code: 'STORAGE_BUSY' }, { status: 429, headers: { 'Retry-After': '2' } });
+  if (/overload|too many requests|rate.?limit|quota exceeded|temporar(?:y|ily)|network connection lost|SQLITE_BUSY|database is locked|\bbusy\b|\blocked\b/i.test(message)) {
+    return json({ success: false, error: 'Le stockage cloud est temporairement occupé. La requête sera réessayée après un court délai.', code: 'STORAGE_BUSY' }, { status: 503, headers: { 'Retry-After': '3' } });
   }
   if (/too big|too large|SQLITE_TOOBIG|maximum.*size|memory/i.test(message)) {
     return json({ success: false, error: 'Les données à enregistrer sont trop volumineuses. Réduisez les images ou captures.', code: 'STORAGE_TOO_LARGE' }, { status: 413 });
@@ -260,84 +264,43 @@ async function verifyCredential(record, password) {
   return constantTimeEqual(candidate, record.hash);
 }
 
+function dbSchemaStatements(env) {
+  return [
+    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS state_meta (company_id TEXT PRIMARY KEY, chunk_count INTEGER NOT NULL, size_bytes INTEGER NOT NULL, updated_at TEXT NOT NULL)`),
+    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS state_chunks (company_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (company_id, chunk_index))`),
+    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS global_state_meta_v2 (document_id TEXT PRIMARY KEY, revision TEXT NOT NULL, chunk_count INTEGER NOT NULL, size_bytes INTEGER NOT NULL, updated_at TEXT NOT NULL)`),
+    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS global_state_chunks_v2 (document_id TEXT NOT NULL, revision TEXT NOT NULL, chunk_index INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (document_id, revision, chunk_index))`),
+    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS company_state_meta (company_id TEXT PRIMARY KEY, revision TEXT NOT NULL, chunk_count INTEGER NOT NULL, size_bytes INTEGER NOT NULL, updated_at TEXT NOT NULL)`),
+    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS company_state_chunks (company_id TEXT NOT NULL, revision TEXT NOT NULL, chunk_index INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (company_id, chunk_index))`),
+    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS company_state_patches (company_id TEXT NOT NULL, section TEXT NOT NULL, record_id TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, data TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (company_id, section, record_id))`),
+    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS deleted_companies (company_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL)`),
+    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS backups (id INTEGER PRIMARY KEY AUTOINCREMENT, company_id TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL)`),
+    env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS security_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, actor_id TEXT, company_id TEXT, detail TEXT, ip_hash TEXT, created_at TEXT NOT NULL)`),
+    env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_global_state_chunks_v2_current ON global_state_chunks_v2(document_id, revision, chunk_index)'),
+    env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_company_state_chunks_current ON company_state_chunks(company_id, revision, chunk_index)'),
+    env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_company_state_patches_scope ON company_state_patches(company_id, section, record_id)'),
+    env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_backups_company_id ON backups(company_id, id DESC)'),
+    env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events(created_at DESC)')
+  ];
+}
+
 async function ensureDB(env) {
   needBindings(env);
   if (!dbReadyPromise) {
-    dbReadyPromise = env.GLOBAL_MARKET_D1.batch([
-      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS state_meta (
-        company_id TEXT PRIMARY KEY,
-        chunk_count INTEGER NOT NULL,
-        size_bytes INTEGER NOT NULL,
-        updated_at TEXT NOT NULL
-      )`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS state_chunks (
-        company_id TEXT NOT NULL,
-        chunk_index INTEGER NOT NULL,
-        data TEXT NOT NULL,
-        PRIMARY KEY (company_id, chunk_index)
-      )`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS global_state_meta_v2 (
-        document_id TEXT PRIMARY KEY,
-        revision TEXT NOT NULL,
-        chunk_count INTEGER NOT NULL,
-        size_bytes INTEGER NOT NULL,
-        updated_at TEXT NOT NULL
-      )`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS global_state_chunks_v2 (
-        document_id TEXT NOT NULL,
-        revision TEXT NOT NULL,
-        chunk_index INTEGER NOT NULL,
-        data TEXT NOT NULL,
-        PRIMARY KEY (document_id, revision, chunk_index)
-      )`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS company_state_meta (
-        company_id TEXT PRIMARY KEY,
-        revision TEXT NOT NULL,
-        chunk_count INTEGER NOT NULL,
-        size_bytes INTEGER NOT NULL,
-        updated_at TEXT NOT NULL
-      )`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS company_state_chunks (
-        company_id TEXT NOT NULL,
-        revision TEXT NOT NULL,
-        chunk_index INTEGER NOT NULL,
-        data TEXT NOT NULL,
-        PRIMARY KEY (company_id, revision, chunk_index)
-      )`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS company_state_patches (
-        company_id TEXT NOT NULL,
-        section TEXT NOT NULL,
-        record_id TEXT NOT NULL,
-        deleted INTEGER NOT NULL DEFAULT 0,
-        data TEXT,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (company_id, section, record_id)
-      )`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS deleted_companies (
-        company_id TEXT PRIMARY KEY,
-        deleted_at TEXT NOT NULL
-      )`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS backups (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        company_id TEXT NOT NULL,
-        data TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      )`),
-      env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS security_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_type TEXT NOT NULL,
-        actor_id TEXT,
-        company_id TEXT,
-        detail TEXT,
-        ip_hash TEXT,
-        created_at TEXT NOT NULL
-      )`),
-      env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_global_state_chunks_v2_current ON global_state_chunks_v2(document_id, revision, chunk_index)'),
-      env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_company_state_chunks_current ON company_state_chunks(company_id, revision, chunk_index)'),
-      env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_company_state_patches_scope ON company_state_patches(company_id, section, record_id)'),
-      env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_backups_company_id ON backups(company_id, id DESC)'),
-      env.GLOBAL_MARKET_D1.prepare('CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events(created_at DESC)')
-    ]).catch(error => {
+    dbReadyPromise = (async () => {
+      // Évite les verrous D1 au démarrage : lecture de contrôle d'abord,
+      // création du schéma uniquement si les tables n'existent réellement pas.
+      try {
+        await env.GLOBAL_MARKET_D1.prepare('SELECT document_id FROM global_state_meta_v2 LIMIT 1').first();
+        await env.GLOBAL_MARKET_D1.prepare('SELECT company_id FROM company_state_patches LIMIT 1').first();
+        return true;
+      } catch (error) {
+        const message = String(error?.message || error || '');
+        if (!/no such table|does not exist|missing table/i.test(message)) throw error;
+        await env.GLOBAL_MARKET_D1.batch(dbSchemaStatements(env));
+        return true;
+      }
+    })().catch(error => {
       dbReadyPromise = null;
       throw error;
     });
@@ -487,7 +450,7 @@ async function runD1Batches(db, statements, batchSize = COMPANY_BATCH_SIZE) {
   for (let index = 0; index < statements.length; index += batchSize) {
     const batch = statements.slice(index, index + batchSize);
     let lastError = null;
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
       try {
         await db.batch(batch);
         lastError = null;
@@ -495,13 +458,20 @@ async function runD1Batches(db, statements, batchSize = COMPANY_BATCH_SIZE) {
       } catch (error) {
         lastError = error;
         const message = String(error?.message || error || '');
-        const temporary = /SQLITE_BUSY|database is locked|\bbusy\b|\blocked\b|overload|temporar|too many|rate.?limit/i.test(message);
-        if (!temporary || attempt === 4) throw error;
-        await new Promise(resolve => setTimeout(resolve, [80, 180, 420, 900, 1600][attempt]));
+        const temporary = /SQLITE_BUSY|database is locked|\bbusy\b|\blocked\b|overload|temporar(?:y|ily)|too many requests|rate.?limit/i.test(message);
+        if (!temporary || attempt === 5) throw error;
+        const delays = [120, 300, 700, 1400, 2800, 5200];
+        await new Promise(resolve => setTimeout(resolve, delays[attempt] + Math.floor(Math.random() * 180)));
       }
     }
     if (lastError) throw lastError;
   }
+}
+
+function enqueueD1Write(task) {
+  const run = d1WriteQueue.then(task, task);
+  d1WriteQueue = run.catch(() => undefined);
+  return run;
 }
 
 async function writeGlobalStateV2(env, raw) {
@@ -965,7 +935,7 @@ async function createClientSession(env, client, auth) {
   return { sid, session };
 }
 
-async function getClientSession(request, env, requireCsrf = false) {
+async function getClientSession(request, env, requireCsrf = false, suppliedState = null) {
   const sid = getCookie(request, CLIENT_SESSION_COOKIE);
   if (!sid) throw new HttpError(401, 'Connexion client requise.', 'CLIENT_UNAUTHENTICATED');
   const session = await env.GLOBAL_MARKET_KV.get(`client-session:${sid}`, 'json');
@@ -980,7 +950,7 @@ async function getClientSession(request, env, requireCsrf = false) {
   }
   // Le compte client GLOBAL MARKET n'appartient plus à une boutique particulière.
   // On charge donc l'état global afin de retrouver le même client et ses commandes multi-boutiques.
-  const state = await loadState(env, '*');
+  const state = suppliedState || await loadState(env, '*');
   const client = state.marketClients.find(c => c.id === session.clientId);
   const auth = client ? await getClientAuth(env, client.id) : null;
   if (!client || !auth || Number(auth.version) !== Number(session.authVersion)) {
@@ -1167,9 +1137,14 @@ async function markCompanyDeleted(env, companyId) {
 
 async function writePatchStatements(env, statements) {
   if (!statements.length) return { patchCount: 0, storage: 'd1-delta' };
-  await runD1Batches(env.GLOBAL_MARKET_D1, statements, 6);
-  return { patchCount: statements.length, storage: 'd1-delta' };
+  const result = await enqueueD1Write(async () => {
+    await runD1Batches(env.GLOBAL_MARKET_D1, statements, 4);
+    return { patchCount: statements.length, storage: 'd1-delta' };
+  });
+  invalidatePublicStateCache();
+  return result;
 }
+
 
 function allowedDeltaArrayKeys(role) {
   if (role === 'superadmin' || role === 'system') return new Set(['companies', 'users', ...COMPANY_ARRAY_KEYS]);
@@ -1536,8 +1511,26 @@ function publicItem(item) {
   return Object.fromEntries(allowed.map(k => [k, item[k]]));
 }
 
+async function loadPublicStateCached(env) {
+  const now = Date.now();
+  if (publicStateCache && now - publicStateCacheAt < 3500) return cleanClone(publicStateCache);
+  if (!publicStateLoadPromise) {
+    publicStateLoadPromise = loadState(env, '*').then(state => {
+      publicStateCache = cleanClone(state);
+      publicStateCacheAt = Date.now();
+      return publicStateCache;
+    }).finally(() => { publicStateLoadPromise = null; });
+  }
+  return cleanClone(await publicStateLoadPromise);
+}
+
+function invalidatePublicStateCache() {
+  publicStateCache = null;
+  publicStateCacheAt = 0;
+}
+
 async function publicLoadPayload(request, env) {
-  const state = await loadState(env, '*');
+  const state = await loadPublicStateCached(env);
   const payload = {
     companies: state.companies.map(publicCompany),
     items: state.items.map(publicItem),
@@ -1548,7 +1541,7 @@ async function publicLoadPayload(request, env) {
     app: state.app || {}
   };
   try {
-    const clientAuth = await getClientSession(request, env, false);
+    const clientAuth = await getClientSession(request, env, false, state);
     payload.marketClients = [cleanClone(clientAuth.client)];
     payload.orders = state.orders.filter(o => o.clientId === clientAuth.client.id).map(cleanClone);
     payload.marketMessages = (state.marketMessages || []).filter(m => m.clientId === clientAuth.client.id && !m.clientDeleted).map(cleanClone);
@@ -2254,7 +2247,7 @@ async function handleApi(request, env, executionCtx) {
         setupRequired: !auth?.hash,
         superAdminEmailConfigured: Boolean(configuredSuperAdminIdentifier(env)),
         superAdminPasswordSecretConfigured: Boolean(String(env.SUPER_ADMIN_INITIAL_PASSWORD || '')),
-        saveMode: 'incremental-d1-delta-v7',
+        saveMode: 'incremental-d1-delta-v8',
         time: new Date().toISOString()
       });
     }
