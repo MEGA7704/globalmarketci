@@ -2680,7 +2680,7 @@ async function v6DeleteCompanyCascade(env,companyId){
 }
 
 async function v6MigrateLegacy(env){
-  await ensureDB(env); const existing=await v6MetaGet(env,V6_MIGRATION_META_KEY); if(existing===V6_SCHEMA_VERSION)return {already:true};
+  await ensureDB(env); const existing=await v6MetaGet(env,V6_MIGRATION_META_KEY); if(existing===V6_SCHEMA_VERSION){const recovery=await v603RecoverLegacyCatalogIfNeeded(env);return {already:true,recovery};}
   await v6MetaSet(env,'migration_status','running');
   const legacy=await loadStateLegacy(env,'*');
   const ordered=['companies','users','marketClients','clients','items','sales','orders','payments','marketMessages','passwordResetRequests','stockEntries','stockOutputs','stockMovements','caisseLogs'];
@@ -2739,10 +2739,42 @@ const V6_PUBLIC_CATALOG_CACHE_SECONDS=20;
 const V6_PUBLIC_COMPANY_CACHE_SECONDS=45;
 async function v6CacheJsonGet(key){try{const r=await caches.default.match(new Request(key));return r?await r.json():null}catch{return null}}
 async function v6CacheJsonPut(key,value,ttl,executionCtx){try{const r=json(value,{headers:{'Cache-Control':`public, max-age=${ttl}`}});const task=caches.default.put(new Request(key),r);if(executionCtx?.waitUntil)executionCtx.waitUntil(task);else await task}catch{}}
+let V603_CATALOG_RECOVERY_PROMISE=null,V603_CATALOG_RECOVERY_AT=0,V603_CATALOG_RECOVERY_RESULT=null;
+async function v603LegacyCatalogData(request,env){
+  const legacy=await loadStateLegacy(env,'*'),url=new URL(request.url),p=v6CatalogParams(url),all=Array.isArray(legacy.items)?legacy.items:[],companies=Array.isArray(legacy.companies)?legacy.companies:[],cmap=new Map(companies.map(c=>[String(c.id||''),c]));
+  let rows=all.filter(i=>{const c=cmap.get(String(i.companyId||''));return c&&!i.marketplaceHidden&&!(isBoutiqueItem(i)&&i.stockType!=='unlimited'&&Number(i.stock||0)<=0)});
+  if(p.q)rows=rows.filter(i=>v6SearchText(i).includes(p.q));if(p.category)rows=rows.filter(i=>String(i.cat||i.category||'')===p.category);if(p.companyId)rows=rows.filter(i=>String(i.companyId||'')===p.companyId);
+  if(p.type==='product')rows=rows.filter(i=>!['service','services','prestation'].includes(String(i.type||'').toLowerCase()));if(p.type==='service')rows=rows.filter(i=>['service','services','prestation'].includes(String(i.type||'').toLowerCase()));
+  if(p.sort==='priceAsc')rows.sort((a,b)=>Number(a.sell||0)-Number(b.sell||0));else if(p.sort==='priceDesc')rows.sort((a,b)=>Number(b.sell||0)-Number(a.sell||0));else if(p.sort==='name')rows.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'fr'));else rows.sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||'')));
+  const total=rows.length,pages=Math.max(1,Math.ceil(total/p.pageSize)),page=Math.min(p.page,pages),items=rows.slice((page-1)*p.pageSize,page*p.pageSize).map(publicItem),categories=[...new Set(rows.map(i=>String(i.cat||i.category||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'));
+  const companyIds=new Set(items.map(i=>String(i.companyId||'')));return {items,companies:companies.filter(c=>companyIds.has(String(c.id||''))).map(publicCompany),pagination:{page,pageSize:p.pageSize,total,pages},categories,legacyFallback:true};
+}
+async function v603RecoverLegacyCatalogIfNeeded(env){
+  const now=Date.now();if(V603_CATALOG_RECOVERY_RESULT&&now-V603_CATALOG_RECOVERY_AT<300000)return V603_CATALOG_RECOVERY_RESULT;if(V603_CATALOG_RECOVERY_PROMISE)return V603_CATALOG_RECOVERY_PROMISE;
+  V603_CATALOG_RECOVERY_PROMISE=(async()=>{
+    await ensureDB(env);const counts=await env.GLOBAL_MARKET_D1.prepare(`SELECT (SELECT COUNT(*) FROM gm_items) AS items,(SELECT COUNT(*) FROM gm_companies) AS companies`).first();
+    if(Number(counts?.items||0)>0&&Number(counts?.companies||0)>0)return {recovered:false,reason:'relational-catalog-present',items:Number(counts.items||0),companies:Number(counts.companies||0)};
+    const legacy=await loadStateLegacy(env,'*'),legacyItems=Array.isArray(legacy.items)?legacy.items.filter(x=>x?.id&&x?.companyId):[],legacyCompanies=Array.isArray(legacy.companies)?legacy.companies.filter(x=>x?.id):[];
+    if(!legacyItems.length||!legacyCompanies.length)return {recovered:false,reason:'no-legacy-catalog',items:legacyItems.length,companies:legacyCompanies.length};
+    const neededCompanyIds=new Set(legacyItems.map(x=>String(x.companyId||'')));let statements=[];
+    for(const company of legacyCompanies.filter(c=>neededCompanyIds.has(String(c.id||''))))statements.push(...await v6UpsertStatements(env,'companies',company));
+    for(const item of legacyItems)statements.push(...await v6UpsertStatements(env,'items',item));
+    if(statements.length)await runD1Batches(env.GLOBAL_MARKET_D1,statements,20);
+    await v6MetaSet(env,'catalog_recovery_v603',JSON.stringify({at:v6Now(),items:legacyItems.length,companies:neededCompanyIds.size}));invalidatePublicStateCache();
+    return {recovered:true,reason:'legacy-backfill',items:legacyItems.length,companies:neededCompanyIds.size};
+  })().catch(error=>({recovered:false,reason:'recovery-error',error:String(error?.message||error||'')})).finally(()=>{V603_CATALOG_RECOVERY_PROMISE=null});
+  const result=await V603_CATALOG_RECOVERY_PROMISE;V603_CATALOG_RECOVERY_RESULT=result;V603_CATALOG_RECOVERY_AT=Date.now();return result;
+}
 async function v6CatalogQueryCached(request,env,executionCtx){
-  const url=new URL(request.url),p=v6CatalogParams(url),key=`https://cache.global-market.internal/catalog?page=${p.page}&pageSize=${p.pageSize}&q=${encodeURIComponent(p.q)}&category=${encodeURIComponent(p.category)}&type=${encodeURIComponent(p.type)}&sort=${encodeURIComponent(p.sort)}&companyId=${encodeURIComponent(p.companyId)}`;
-  const cached=await v6CacheJsonGet(key);if(cached)return {...cached,edgeCached:true};
-  const data=await v6CatalogQuery(request,env);await v6CacheJsonPut(key,data,V6_PUBLIC_CATALOG_CACHE_SECONDS,executionCtx);return data;
+  const url=new URL(request.url),p=v6CatalogParams(url),key=`https://cache.global-market.internal/catalog-v603?page=${p.page}&pageSize=${p.pageSize}&q=${encodeURIComponent(p.q)}&category=${encodeURIComponent(p.category)}&type=${encodeURIComponent(p.type)}&sort=${encodeURIComponent(p.sort)}&companyId=${encodeURIComponent(p.companyId)}`;
+  const cached=await v6CacheJsonGet(key);if(cached&&Array.isArray(cached.items)&&cached.items.length)return {...cached,edgeCached:true};
+  let data=await v6CatalogQuery(request,env);
+  if(!Array.isArray(data.items)||!data.items.length){
+    const recovery=await v603RecoverLegacyCatalogIfNeeded(env);
+    if(recovery.recovered)data=await v6CatalogQuery(request,env);
+    if(!Array.isArray(data.items)||!data.items.length){try{const legacy=await v603LegacyCatalogData(request,env);if(Array.isArray(legacy.items)&&legacy.items.length)data={...legacy,recovery};}catch(error){console.warn('[V6.0.3] Catalogue legacy de secours indisponible',error?.message||error)}}
+  }
+  await v6CacheJsonPut(key,data,V6_PUBLIC_CATALOG_CACHE_SECONDS,executionCtx);return data;
 }
 async function v6PublicCompaniesCached(request,env,executionCtx){
   const key='https://cache.global-market.internal/companies-public-v6',cached=await v6CacheJsonGet(key);if(cached?.companies)return cached.companies;
@@ -2841,6 +2873,8 @@ async function handleApi(request, env, executionCtx) {
       ]);
       return json({
         ok: Boolean(d1Probe?.ok), app: APP_NAME, kv: true, d1: Boolean(d1Probe?.ok),
+        relationalCatalog: await env.GLOBAL_MARKET_D1.prepare(`SELECT (SELECT COUNT(*) FROM gm_items) AS items,(SELECT COUNT(*) FROM gm_companies) AS companies`).first(),
+        catalogRecovery: await v6MetaGet(env,'catalog_recovery_v603'),
         securityInitialized: Boolean(auth?.hash),
         setupRequired: !auth?.hash,
         superAdminEmailConfigured: Boolean(configuredSuperAdminIdentifier(env)),

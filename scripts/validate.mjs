@@ -19,4 +19,4 @@ if(!wrFull.durable_objects?.bindings?.some(x=>x.name==='REALTIME_HUB'&&x.script_
 if(!rt.includes('acceptWebSocket')||!rt.includes('getWebSockets')||!rt.includes('serializeAttachment'))fail('WebSocket Hibernation incomplet');
 if(!rtwr.migrations?.some(x=>x.new_sqlite_classes?.includes('RealtimeHub')))fail('Migration Durable Object absente');
 const routes=JSON.parse(fs.readFileSync('public/_routes.json','utf8'));if(!routes.include?.includes('/api/*'))fail('Routes Pages API invalides');
-console.log('[validate V6.0.2] OK — Pages déployable sans R2 ni Worker temps réel préexistants; D1 relationnel actif, R2 et WebSocket restent activables ensuite.');
+console.log('[validate V6.0.3] OK — Pages déployable sans R2 ni Worker temps réel préexistants; D1 relationnel actif, R2 et WebSocket restent activables ensuite.');

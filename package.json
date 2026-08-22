@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "6.0.2",
+  "version": "6.0.3",
   "private": true,
-  "description": "GLOBAL MARKET V6.0.2 - D1 relationnel; déploiement Pages sans dépendance R2/Realtime préalable; R2 et WebSocket activables après création des ressources.",
+  "description": "GLOBAL MARKET V6.0.3 - D1 relationnel avec récupération automatique du catalogue V5 et fallback anti-catalogue vide.",
   "type": "module",
   "engines": {
     "node": ">=20"
