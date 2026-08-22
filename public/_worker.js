@@ -85,8 +85,8 @@ function errorResponse(error) {
   }
   console.error(error);
   const message = String(error?.message || error || '');
-  if (/overload|too many|rate.?limit|quota|temporar|network connection lost/i.test(message)) {
-    return json({ success: false, error: 'Le stockage est momentanément occupé. La sauvegarde sera automatiquement réessayée.', code: 'STORAGE_BUSY' }, { status: 429 });
+  if (/overload|too many|rate.?limit|quota|temporar|network connection lost|SQLITE_BUSY|database is locked|busy|locked/i.test(message)) {
+    return json({ success: false, error: 'Le stockage cloud est temporairement très sollicité. La requête peut être relancée automatiquement.', code: 'STORAGE_BUSY' }, { status: 429, headers: { 'Retry-After': '2' } });
   }
   if (/too big|too large|SQLITE_TOOBIG|maximum.*size|memory/i.test(message)) {
     return json({ success: false, error: 'Les données à enregistrer sont trop volumineuses. Réduisez les images ou captures.', code: 'STORAGE_TOO_LARGE' }, { status: 413 });
@@ -485,7 +485,22 @@ async function writeD1State(env, companyId, raw) {
 
 async function runD1Batches(db, statements, batchSize = COMPANY_BATCH_SIZE) {
   for (let index = 0; index < statements.length; index += batchSize) {
-    await db.batch(statements.slice(index, index + batchSize));
+    const batch = statements.slice(index, index + batchSize);
+    let lastError = null;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        await db.batch(batch);
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        const message = String(error?.message || error || '');
+        const temporary = /SQLITE_BUSY|database is locked|\bbusy\b|\blocked\b|overload|temporar|too many|rate.?limit/i.test(message);
+        if (!temporary || attempt === 4) throw error;
+        await new Promise(resolve => setTimeout(resolve, [80, 180, 420, 900, 1600][attempt]));
+      }
+    }
+    if (lastError) throw lastError;
   }
 }
 
