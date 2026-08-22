@@ -19,15 +19,10 @@
   "vars": {
     "APP_NAME": "GLOBAL MARKET",
     "SUPER_ADMIN_PASSWORD_VERSION": "2026-07-26-reset-1",
-    "V6_ARCHITECTURE": "D1_RELATIONAL_WEBSOCKET_OPTIONAL",
-    "REALTIME_BINDING_MODE": "OPTIONAL_AFTER_WORKER_DEPLOY"
+    "V6_ARCHITECTURE": "D1_RELATIONAL_WEBSOCKET_OPTIONAL_MEDIA",
+    "REALTIME_BINDING_MODE": "OPTIONAL_AFTER_WORKER_DEPLOY",
+    "MEDIA_BINDING_MODE": "OPTIONAL_AFTER_BUCKET_CREATE"
   },
-  "r2_buckets": [
-    {
-      "binding": "GLOBAL_MARKET_MEDIA",
-      "bucket_name": "global-market-media"
-    }
-  ],
   "durable_objects": {
     "bindings": [
       {

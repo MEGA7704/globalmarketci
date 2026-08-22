@@ -44,3 +44,8 @@ Commencez progressivement :
 - `npm run loadtest:v6 -- https://VOTRE-SITE.pages.dev 500 5000`
 
 Le script teste le catalogue paginé, mesure le débit et les latences p50/p95/p99. Ne lancez 1000 connexions concurrentes que sur votre propre environnement et après avoir vérifié les quotas de votre plan Cloudflare.
+
+
+## Note V6.0.2 — ordre des bindings
+
+Le premier déploiement Pages utilise `wrangler.json` sans R2 ni Durable Object externe. Créez ensuite `global-market-media` et `global-market-realtime`, puis activez les bindings optionnels. Cela évite les erreurs de publication `bucket not found` et `script not found`.

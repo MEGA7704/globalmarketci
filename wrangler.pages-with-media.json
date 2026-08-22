@@ -22,5 +22,11 @@
     "V6_ARCHITECTURE": "D1_RELATIONAL_OPTIONAL_MEDIA_WEBSOCKET",
     "REALTIME_BINDING_MODE": "OPTIONAL_AFTER_WORKER_DEPLOY",
     "MEDIA_BINDING_MODE": "OPTIONAL_AFTER_BUCKET_CREATE"
-  }
+  },
+  "r2_buckets": [
+    {
+      "binding": "GLOBAL_MARKET_MEDIA",
+      "bucket_name": "global-market-media"
+    }
+  ]
 }
