@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "5.6.2",
+  "version": "5.6.3",
   "private": true,
-  "description": "GLOBAL MARKET - correction renforcée stabilité Cloudflare D1, anti-saturation, chargements publics dédupliqués et notifications allégées.",
+  "description": "GLOBAL MARKET - fluidité cloud renforcée : lecture stale-while-revalidate, cache KV de secours, file d’écriture D1 résiliente et reprise automatique sans interruption.",
   "type": "module",
   "engines": {
     "node": ">=20"

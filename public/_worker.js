@@ -18,12 +18,21 @@ const PATCH_RECORD_MAX_BYTES = 1_250_000;
 const PATCH_GLOBAL_SCOPE = '__global__';
 const GLOBAL_CLIENT_SCOPE = '__global_clients__';
 const LEGACY_CREDENTIAL_MIGRATION_KEY = 'security:credentials:migrated:v4';
+const STATE_FALLBACK_PREFIX = 'cache:state:v563:';
+const PUBLIC_PAYLOAD_CACHE_KEY = 'cache:public-payload:v563';
+const CLIENT_PAYLOAD_CACHE_PREFIX = 'cache:client-payload:v563:';
+const PENDING_OPS_PREFIX = 'pending-ops:v563:';
+const FALLBACK_CACHE_TTL = 60 * 60 * 48;
+const FALLBACK_CACHE_MAX_BYTES = 18_000_000;
 let dbReadyPromise = null;
 let legacyMigrationChecked = false;
 let publicStateCache = null;
 let publicStateCacheAt = 0;
 let publicStateLoadPromise = null;
 let d1WriteQueue = Promise.resolve();
+const stateFallbackWriteAt = new Map();
+let publicPayloadCacheWriteAt = 0;
+const clientPayloadCacheWriteAt = new Map();
 const AUTH_INIT_KEY = 'security:superadmin:initialized:v2';
 const SUPER_ADMIN_ID = 'superadmin_global_market';
 const SENSITIVE_FIELDS = new Set([
@@ -96,6 +105,131 @@ function errorResponse(error) {
     return json({ success: false, error: 'Les données à enregistrer sont trop volumineuses. Réduisez les images ou captures.', code: 'STORAGE_TOO_LARGE' }, { status: 413 });
   }
   return json({ success: false, error: 'La sauvegarde n’a pas pu être terminée. Réessayez sans fermer la page.', code: 'STORAGE_WRITE_FAILED' }, { status: 500 });
+}
+
+function isTransientStorageError(error) {
+  if (!error) return false;
+  if (error instanceof HttpError && [408, 425, 429, 500, 502, 503, 504].includes(Number(error.status))) return true;
+  const message = String(error?.message || error || '');
+  return /overload|too many requests|rate.?limit|quota exceeded|temporar(?:y|ily)|network connection lost|SQLITE_BUSY|database is locked|\bbusy\b|\blocked\b/i.test(message);
+}
+
+async function withStorageRetry(task, attempts = 4) {
+  let lastError = null;
+  const delays = [90, 220, 520, 1050, 1800, 3000];
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try { return await task(); }
+    catch (error) {
+      lastError = error;
+      if (!isTransientStorageError(error) || attempt === attempts - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, delays[Math.min(attempt, delays.length - 1)] + Math.floor(Math.random() * 120)));
+    }
+  }
+  throw lastError;
+}
+
+function fallbackStateKey(companyId = '*') {
+  return `${STATE_FALLBACK_PREFIX}${encodeURIComponent(String(companyId || '*'))}`;
+}
+
+async function readStateFallback(env, companyId = '*') {
+  try {
+    const cached = await env.GLOBAL_MARKET_KV.get(fallbackStateKey(companyId), 'json');
+    if (!cached?.state) return null;
+    return normalizeState(cached.state);
+  } catch (error) {
+    console.warn('Cache de lecture indisponible', error?.message || error);
+    return null;
+  }
+}
+
+async function writeStateFallback(env, companyId, state) {
+  const key = fallbackStateKey(companyId);
+  const now = Date.now();
+  const last = Number(stateFallbackWriteAt.get(key) || 0);
+  if (now - last < 120000) return;
+  const cachedState = companyId === '*' ? cleanClone(state) : scopeState(state, { role: 'admin', companyId });
+  const raw = JSON.stringify({ cachedAt: new Date().toISOString(), state: cachedState });
+  if (new TextEncoder().encode(raw).byteLength > FALLBACK_CACHE_MAX_BYTES) return;
+  stateFallbackWriteAt.set(key, now);
+  try { await env.GLOBAL_MARKET_KV.put(key, raw, { expirationTtl: FALLBACK_CACHE_TTL }); }
+  catch (error) { console.warn('Cache de lecture non actualisé', error?.message || error); }
+}
+
+function pendingOpsPrefixFor(companyId) {
+  return `${PENDING_OPS_PREFIX}${encodeURIComponent(String(companyId || PATCH_GLOBAL_SCOPE))}:`;
+}
+
+async function queuePendingOperations(env, operations, actor) {
+  if (!operations?.length) return null;
+  const companyId = String(actor?.companyId || PATCH_GLOBAL_SCOPE);
+  const key = `${pendingOpsPrefixFor(companyId)}${Date.now().toString(36)}-${randomHex(6)}`;
+  await env.GLOBAL_MARKET_KV.put(key, JSON.stringify({ queuedAt: new Date().toISOString(), companyId, operations }), { expirationTtl: 60 * 60 * 24 * 7 });
+  return key;
+}
+
+function applyPendingOperationsToState(state, operations) {
+  for (const op of operations || []) {
+    const section = String(op?.section || '');
+    const recordId = String(op?.recordId || '');
+    if (!recordId) continue;
+    if (section.startsWith('array:')) applyArrayPatch(state, section.slice(6), recordId, Boolean(op.deleted), op.value ?? null);
+    else if (section.startsWith('object:')) applyObjectPatch(state, section.slice(7), recordId, Boolean(op.deleted), op.value ?? null);
+    else if (section.startsWith('value:')) {
+      const key = section.slice(6);
+      if (op.deleted) delete state[key]; else state[key] = op.value;
+    }
+  }
+  return normalizeState(state);
+}
+
+async function listPendingOperationEntries(env, companyId = '*') {
+  const prefixes = companyId === '*'
+    ? [PENDING_OPS_PREFIX]
+    : [...new Set([pendingOpsPrefixFor(companyId), pendingOpsPrefixFor(GLOBAL_CLIENT_SCOPE), pendingOpsPrefixFor(PATCH_GLOBAL_SCOPE)])];
+  const entries = [];
+  for (const prefix of prefixes) {
+    let cursor;
+    let pages = 0;
+    do {
+      const page = await env.GLOBAL_MARKET_KV.list({ prefix, cursor, limit: 100 });
+      for (const key of page.keys || []) {
+        const payload = await env.GLOBAL_MARKET_KV.get(key.name, 'json');
+        if (payload?.operations?.length) entries.push({ key: key.name, payload });
+      }
+      cursor = page.list_complete ? undefined : page.cursor;
+      pages += 1;
+    } while (cursor && pages < 4);
+  }
+  entries.sort((a, b) => String(a.payload.queuedAt || '').localeCompare(String(b.payload.queuedAt || '')));
+  return entries;
+}
+
+async function applyPendingOperationQueue(env, state, companyId = '*') {
+  try {
+    const entries = await listPendingOperationEntries(env, companyId);
+    for (const entry of entries) applyPendingOperationsToState(state, entry.payload.operations);
+    return { state: normalizeState(state), entries };
+  } catch (error) {
+    console.warn('File de secours non relue', error?.message || error);
+    return { state: normalizeState(state), entries: [] };
+  }
+}
+
+async function drainPendingOperationQueue(env, entries) {
+  for (const entry of (entries || []).slice(0, 12)) {
+    try {
+      const statements = (entry.payload.operations || []).map(op => env.GLOBAL_MARKET_D1.prepare(`INSERT INTO company_state_patches(company_id, section, record_id, deleted, data, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(company_id, section, record_id) DO UPDATE SET deleted=excluded.deleted, data=excluded.data, updated_at=excluded.updated_at`)
+        .bind(String(op.companyId || PATCH_GLOBAL_SCOPE), String(op.section || ''), String(op.recordId || ''), op.deleted ? 1 : 0, op.deleted ? null : patchJson(op.value), String(op.updatedAt || new Date().toISOString())));
+      await enqueueD1Write(async () => runD1Batches(env.GLOBAL_MARKET_D1, statements, 4));
+      await env.GLOBAL_MARKET_KV.delete(entry.key);
+    } catch (error) {
+      if (!isTransientStorageError(error)) console.warn('Échec de reprise de la file D1', error?.message || error);
+      break;
+    }
+  }
 }
 
 function needBindings(env) {
@@ -718,7 +852,7 @@ async function saveState(env, state) {
   return { state: normalized, d1, storage: 'd1-versioned' };
 }
 
-async function loadState(env, companyId = '*') {
+async function loadStatePrimary(env, companyId = '*') {
   await ensureDB(env);
   let state = await readGlobalStateV2(env);
   if (!state) {
@@ -730,13 +864,35 @@ async function loadState(env, companyId = '*') {
   }
   state = normalizeState(state);
   await ensureLegacyCredentialsMigrated(env, state);
-
-  // Les modifications courantes sont lues depuis de petits documents par entreprise.
-  // Un utilisateur normal ne charge que son entreprise, ce qui réduit fortement CPU et mémoire.
   const snapshots = await readCompanySnapshots(env, companyId === '*' ? null : companyId);
   for (const entry of snapshots) state = applyCompanySnapshot(state, entry.companyId, entry.state);
   state = await applyStoredStatePatches(env, state, companyId);
   state = await applyDeletedCompanies(env, state, companyId);
+  return normalizeState(state);
+}
+
+async function loadState(env, companyId = '*') {
+  let primaryState = null;
+  let lastError = null;
+  try {
+    primaryState = await withStorageRetry(() => loadStatePrimary(env, companyId), 4);
+  } catch (error) {
+    lastError = error;
+    if (!isTransientStorageError(error)) throw error;
+  }
+
+  let state = primaryState || await readStateFallback(env, companyId);
+  if (!state && companyId !== '*') state = await readStateFallback(env, '*');
+  if (!state) throw lastError || new HttpError(503, 'Le stockage cloud est temporairement indisponible.', 'STORAGE_BUSY', { 'Retry-After': '2' });
+
+  const pending = await applyPendingOperationQueue(env, state, companyId);
+  state = pending.state;
+
+  if (primaryState) {
+    await writeStateFallback(env, companyId, state);
+    // Reprise opportuniste non bloquante : la lecture reste prioritaire.
+    if (pending.entries.length) drainPendingOperationQueue(env, pending.entries).catch(error => console.warn('Reprise D1 différée', error?.message || error));
+  }
   return normalizeState(state);
 }
 
@@ -1163,14 +1319,17 @@ async function persistStateDelta(env, delta, actor) {
   const allowedArrays = allowedDeltaArrayKeys(role);
   const now = new Date().toISOString();
   const statements = [];
+  const operations = [];
   const upsertPatch = (companyId, section, recordId, value) => {
     const raw = patchJson(value);
+    operations.push({ companyId, section, recordId: String(recordId), deleted: false, value: cleanClone(value), updatedAt: now });
     statements.push(env.GLOBAL_MARKET_D1.prepare(`INSERT INTO company_state_patches(company_id, section, record_id, deleted, data, updated_at)
       VALUES (?, ?, ?, 0, ?, ?)
       ON CONFLICT(company_id, section, record_id) DO UPDATE SET deleted=0, data=excluded.data, updated_at=excluded.updated_at`
     ).bind(companyId, section, String(recordId), raw, now));
   };
   const deletePatch = (companyId, section, recordId) => {
+    operations.push({ companyId, section, recordId: String(recordId), deleted: true, value: null, updatedAt: now });
     statements.push(env.GLOBAL_MARKET_D1.prepare(`INSERT INTO company_state_patches(company_id, section, record_id, deleted, data, updated_at)
       VALUES (?, ?, ?, 1, NULL, ?)
       ON CONFLICT(company_id, section, record_id) DO UPDATE SET deleted=1, data=NULL, updated_at=excluded.updated_at`
@@ -1231,7 +1390,14 @@ async function persistStateDelta(env, delta, actor) {
   if (isSuper) {
     for (const [key, value] of Object.entries(delta.values || {})) upsertPatch(PATCH_GLOBAL_SCOPE, `value:${key}`, key, value);
   }
-  return writePatchStatements(env, statements);
+  try {
+    return await writePatchStatements(env, statements);
+  } catch (error) {
+    if (!isTransientStorageError(error)) throw error;
+    const queueKey = await queuePendingOperations(env, operations, { role, companyId: actorCompanyId || PATCH_GLOBAL_SCOPE });
+    invalidatePublicStateCache();
+    return { patchCount: operations.length, storage: 'kv-write-ahead-fallback', queued: true, queueKey };
+  }
 }
 
 
@@ -1529,8 +1695,46 @@ function invalidatePublicStateCache() {
   publicStateCacheAt = 0;
 }
 
+async function cachePublicPayload(env, payload, clientId = '') {
+  const base = { companies: payload.companies || [], items: payload.items || [], marketClients: [], orders: [], marketMessages: [], clientDeletedOrders: {}, app: payload.app || {}, clientSession: null };
+  const now = Date.now();
+  if (now - publicPayloadCacheWriteAt > 120000) {
+    const raw = JSON.stringify(base);
+    if (new TextEncoder().encode(raw).byteLength <= FALLBACK_CACHE_MAX_BYTES) {
+      publicPayloadCacheWriteAt = now;
+      try { await env.GLOBAL_MARKET_KV.put(PUBLIC_PAYLOAD_CACHE_KEY, raw, { expirationTtl: FALLBACK_CACHE_TTL }); } catch {}
+    }
+  }
+  if (clientId) {
+    const last = Number(clientPayloadCacheWriteAt.get(clientId) || 0);
+    if (now - last > 90000) {
+      const raw = JSON.stringify(payload);
+      if (new TextEncoder().encode(raw).byteLength <= FALLBACK_CACHE_MAX_BYTES) {
+        clientPayloadCacheWriteAt.set(clientId, now);
+        try { await env.GLOBAL_MARKET_KV.put(`${CLIENT_PAYLOAD_CACHE_PREFIX}${clientId}`, raw, { expirationTtl: FALLBACK_CACHE_TTL }); } catch {}
+      }
+    }
+  }
+}
+
 async function publicLoadPayload(request, env) {
-  const state = await loadPublicStateCached(env);
+  let state = null;
+  let loadError = null;
+  try { state = await loadPublicStateCached(env); }
+  catch (error) { loadError = error; if (!isTransientStorageError(error)) throw error; }
+
+  if (!state) {
+    const sid = getCookie(request, CLIENT_SESSION_COOKIE);
+    const session = sid ? await env.GLOBAL_MARKET_KV.get(`client-session:${sid}`, 'json') : null;
+    if (session?.clientId && Number(session.expiresAt || 0) > Date.now()) {
+      const clientCached = await env.GLOBAL_MARKET_KV.get(`${CLIENT_PAYLOAD_CACHE_PREFIX}${session.clientId}`, 'json');
+      if (clientCached) return clientCached;
+    }
+    const publicCached = await env.GLOBAL_MARKET_KV.get(PUBLIC_PAYLOAD_CACHE_KEY, 'json');
+    if (publicCached) return publicCached;
+    throw loadError || new HttpError(503, 'Catalogue momentanément indisponible.', 'STORAGE_BUSY', { 'Retry-After': '2' });
+  }
+
   const payload = {
     companies: state.companies.map(publicCompany),
     items: state.items.map(publicItem),
@@ -1540,8 +1744,10 @@ async function publicLoadPayload(request, env) {
     clientDeletedOrders: {},
     app: state.app || {}
   };
+  let clientId = '';
   try {
     const clientAuth = await getClientSession(request, env, false, state);
+    clientId = clientAuth.client.id;
     payload.marketClients = [cleanClone(clientAuth.client)];
     payload.orders = state.orders.filter(o => o.clientId === clientAuth.client.id).map(cleanClone);
     payload.marketMessages = (state.marketMessages || []).filter(m => m.clientId === clientAuth.client.id && !m.clientDeleted).map(cleanClone);
@@ -1550,6 +1756,7 @@ async function publicLoadPayload(request, env) {
   } catch {
     payload.clientSession = null;
   }
+  await cachePublicPayload(env, payload, clientId);
   return payload;
 }
 
