@@ -270,8 +270,8 @@ let CLOUD_SAVE_RETRY_DELAY=2500;
 let CLOUD_LAST_ACK_DATA=null;
 let CLOUD_DATA_READY=false;
 let CLOUD_BOOT_SEQUENCE=0;
-function defaultData(){return {companies:[],users:[],items:[],sales:[],payments:[],orders:[],clients:[],marketClients:[],marketMessages:[],passwordResetRequests:[]}}
-function normalizeData(d){d=d&&typeof d==='object'?d:{}; if(d.data&&typeof d.data==='object') d=d.data; const base=defaultData(); return Object.assign(base,d,{companies:Array.isArray(d.companies)?d.companies:[],users:Array.isArray(d.users)?d.users:[],items:Array.isArray(d.items)?d.items:[],sales:Array.isArray(d.sales)?d.sales:[],payments:Array.isArray(d.payments)?d.payments:[],orders:Array.isArray(d.orders)?d.orders:[],clients:Array.isArray(d.clients)?d.clients:[],marketClients:Array.isArray(d.marketClients)?d.marketClients:[],marketMessages:Array.isArray(d.marketMessages)?d.marketMessages:[],passwordResetRequests:Array.isArray(d.passwordResetRequests)?d.passwordResetRequests:[]})}
+function defaultData(){return {companies:[],users:[],items:[],sales:[],payments:[],orders:[],clients:[],marketClients:[],passwordResetRequests:[]}}
+function normalizeData(d){d=d&&typeof d==='object'?d:{}; if(d.data&&typeof d.data==='object') d=d.data; const base=defaultData(); return Object.assign(base,d,{companies:Array.isArray(d.companies)?d.companies:[],users:Array.isArray(d.users)?d.users:[],items:Array.isArray(d.items)?d.items:[],sales:Array.isArray(d.sales)?d.sales:[],payments:Array.isArray(d.payments)?d.payments:[],orders:Array.isArray(d.orders)?d.orders:[],clients:Array.isArray(d.clients)?d.clients:[],marketClients:Array.isArray(d.marketClients)?d.marketClients:[],passwordResetRequests:Array.isArray(d.passwordResetRequests)?d.passwordResetRequests:[]})}
 function rememberCloudCache(){/* Sécurité : aucune base complète n'est conservée dans localStorage. */}
 function readCloudCache(){return null}
 async function fetchWithTimeout(url,opts={},ms=6500){const c=new AbortController(); const t=setTimeout(()=>c.abort(),ms); try{return await fetch(url,{...opts,credentials:'same-origin',signal:c.signal});}finally{clearTimeout(t)}}
@@ -776,7 +776,7 @@ function businessUtilityModalsHtml(){return `<div id="registerModal" class="moda
   <div class="modalCard" role="dialog" aria-modal="true" aria-labelledby="forgotTitle">
     <button class="modalClose" aria-label="Fermer" onclick="closeForgotPasswordPopup()">×</button>
     <h2 id="forgotTitle">Mot de passe oublié</h2>
-    <p class="sub">Administrateur réinitialisé par Globalmarket et Caisse réinitialisé par votre Administrateur.</p>
+    <p class="sub">Cette demande est transmise à l’administrateur principal de votre entreprise. Le Super Admin n’est pas réinitialisable ici.</p>
     <div class="grid two">
       <label>Profil concerné<select id="fpRole"><option value="caisse">Caisse</option><option value="admin">Administrateur</option></select></label>
       <label>Email / Identifiant<input id="fpEmail" placeholder="votre email de connexion"></label>
@@ -852,8 +852,8 @@ function setRegisterLoading(active){
   const label=btn.querySelector('.gmRegisterButtonLabel');
   if(label)label.textContent=REGISTER_REQUEST_IN_PROGRESS?'CRÉATION EN COURS…':'CRÉER MON ENTREPRISE';
 }
-function openForgotPasswordPopup(){ensureBusinessUtilityModals();document.body.classList.add('gmForgotOpen');document.querySelector('#forgotPasswordModal')?.classList.remove('hidden')}
-function closeForgotPasswordPopup(){document.querySelector('#forgotPasswordModal')?.classList.add('hidden');document.body.classList.remove('gmForgotOpen')}
+function openForgotPasswordPopup(){ensureBusinessUtilityModals();document.querySelector('#forgotPasswordModal')?.classList.remove('hidden')}
+function closeForgotPasswordPopup(){document.querySelector('#forgotPasswordModal')?.classList.add('hidden')}
 function makeTempPassword(){const a=new Uint32Array(2);crypto.getRandomValues(a);return 'GG-'+a[0].toString(36).slice(0,5).toUpperCase()+'-'+String(100+(a[1]%900));}
 function requestPasswordReset(){
   const d=seed();
@@ -944,7 +944,7 @@ async function registerCompany(){
   await setObjectPassword(newUser,pass);d.users.push(newUser);save(d);await setSession({userId:uid});render();
 }
 function renderExpired(c,st){app.innerHTML=globalUniversalHeader('public',{restricted:true})+`<div class="wrap"><div class="card" style="max-width:720px;margin:80px auto;text-align:center"><div class="brand">GLOBAL MARKET</div><h1>Abonnement ${esc(st)}</h1><p class="sub">L’accès de l’entreprise <b>${esc(c?.name)}</b> est actuellement ${esc(st)}. Contactez MEGA SERVICES DIABO pour renouveler ou réactiver l’abonnement.</p><p><b>+225 0777041790</b><br>megaservicediabo@gmail.com</p><button onclick="logout()">Retour à l’accueil</button></div></div>`}
-function render(){const hash=location.hash||'#home';if(hash.startsWith('#boutique/'))return renderPublicShop(hash.split('/')[1]||'');if(hash==='#a-propos')return renderGlobalMarketAbout();if(hash==='#home'||hash==='#'||hash.startsWith('#boutique-global'))return renderGlobalShop();const {user,company}=current();if(!user){location.hash='#home';return renderGlobalShop()}if(user.role==='superadmin')return renderSuper();const st=statusCompany(company);if(['expired','blocked','suspended'].includes(st))return renderExpired(company,st);renderDash('home')}
+function render(){const hash=location.hash||'#home';if(hash.startsWith('#boutique/'))return renderPublicShop(hash.split('/')[1]||'');if(hash==='#home'||hash==='#'||hash.startsWith('#boutique-global'))return renderGlobalShop();const {user,company}=current();if(!user){location.hash='#home';return renderGlobalShop()}if(user.role==='superadmin')return renderSuper();const st=statusCompany(company);if(['expired','blocked','suspended'].includes(st))return renderExpired(company,st);renderDash('home')}
 
 
 function normalizePrintDocumentTitle(value=''){
@@ -1033,7 +1033,6 @@ function isEnterpriseAdmin(){const {user}=current(); return user && user.role===
 function isCaisse(){const {user}=current(); return user && user.role==='caisse'}
 function requireAdmin(msg='Accès réservé à l’administrateur entreprise.'){if(!isEnterpriseAdmin()){alert(msg); return false} return true}
 function goGlobalMarketHome(){location.hash='#home';renderGlobalShop()}
-function openGlobalMarketAbout(){location.hash='#a-propos';renderGlobalMarketAbout()}
 function menu(active){
   const {user}=current();
   const labels={home:'▦ Tableau de bord',vente:'☰ Ventes',rapports:'▣ Rapports',contrats:'▣ Clients',marketplace:'🛍 Marketplace',stocks:'📦 Stocks',mois:'📅 12 mois',param:'⚙ Paramètres'};
@@ -1060,7 +1059,7 @@ function globalUniversalHeader(active='public',options={}){
   const {user}=current();
   const restricted=Boolean(options.restricted);
   const client=!user?currentGlobalClient():null;
-  let nav=`<button type="button" class="${active==='public'?'active':''}" onclick="goGlobalMarketHome()">${officialShopIcon('home')}<span>Accueil</span></button><button type="button" class="${active==='about'?'active':''}" onclick="openGlobalMarketAbout()">${officialShopIcon('spark')}<span>À propos</span></button>`;
+  let nav=`<button type="button" class="${active==='public'?'active':''}" onclick="goGlobalMarketHome()">${officialShopIcon('home')}<span>Accueil</span></button>`;
   let actions='';
   if(user){
     if(!restricted){
@@ -3508,8 +3507,8 @@ function blockUser(uid){const d=seed(), u=d.users.find(x=>x.id===uid); if(u)u.st
 
 function superPasswordResetRequestsBox(){
   const d=seed();
-  const rows=(d.passwordResetRequests||[]).filter(r=>r.role==='admin'||r.role==='client').slice().sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
-  return `<div class="superTableWrap"><table class="superTable"><thead><tr><th>Date</th><th>Type de compte</th><th>Compte</th><th>Contact</th><th>Motif</th><th>Statut</th><th>Action</th></tr></thead><tbody>${rows.map(r=>{const isClient=r.role==='client';const c=!isClient?(d.companies||[]).find(x=>x.id===r.companyId):null;return `<tr><td>${new Date(r.createdAt).toLocaleString('fr-FR')}</td><td><span class="statusPill ${isClient?'trial':'active'}">${isClient?'Compte client':'Administrateur boutique'}</span></td><td><b>${esc(r.userName||r.email||r.phone||'Compte')}</b><br><small>${isClient?'GLOBAL MARKET':esc(c?.name||'-')}</small></td><td>${esc(r.phone||r.email||'-')}</td><td>${esc(r.reason||'')}</td><td>${esc(r.status||'')}</td><td>${r.status==='pending'?`<button class="detailsBtn" onclick="resetPasswordRequestBySuper('${r.id}')">Générer mot de passe</button>`:'<span class="statusPill active">traité</span>'}</td></tr>`}).join('')||'<tr><td colspan="7">Aucune demande de réinitialisation en attente.</td></tr>'}</tbody></table></div>`;
+  const rows=(d.passwordResetRequests||[]).filter(r=>r.role==='admin').slice().sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  return `<div class="superTableWrap"><table class="superTable"><thead><tr><th>Date</th><th>Entreprise</th><th>Administrateur</th><th>Contact</th><th>Motif</th><th>Statut</th><th>Action</th></tr></thead><tbody>${rows.map(r=>{const c=(d.companies||[]).find(x=>x.id===r.companyId); return `<tr><td>${new Date(r.createdAt).toLocaleString('fr-FR')}</td><td>${esc(c?.name||'-')}</td><td><b>${esc(r.userName||r.email)}</b><br><small>${esc(r.email||'')}</small></td><td>${esc(r.phone||'')}</td><td>${esc(r.reason||'')}</td><td>${esc(r.status||'')}</td><td>${r.status==='pending'?`<button class="detailsBtn" onclick="resetPasswordRequestBySuper('${r.id}')">Générer mot de passe</button>`:'<span class="statusPill active">traité</span>'}</td></tr>`}).join('')||'<tr><td colspan="7">Aucune demande administrateur en attente.</td></tr>'}</tbody></table></div>`;
 }
 async function resetPasswordRequestBySuper(rid){
   const {d,user}=current();
@@ -3534,7 +3533,7 @@ async function superResetAdminPassword(uid){
   alert('Mot de passe temporaire généré pour '+(u.name||u.email)+' :\n\n'+temp+'\n\nIl est chiffré et devra être changé à la prochaine connexion.');
   closeSuperModal(); showCompanyDetails(u.companyId);
 }
-function renderSuper(){const {d,user}=current(); const ca=d.sales.filter(isSaleValidated).reduce((a,b)=>a+b.total,0); const active=d.companies.filter(c=>statusCompany(c)==='active'||statusCompany(c)==='trial').length; const expired=d.companies.filter(c=>statusCompany(c)==='expired').length; app.innerHTML=globalUniversalHeader('super')+`<div class="superShell superUnifiedShell"><aside class="superSide"><div class="superBrand"><div class="superLogo">MS</div><div><h2>MEGA SERVICES</h2><p>Super Admin GLOBAL MARKET</p></div></div><div class="superMenu"><button class="active" onclick="renderSuper()">📊 Vue générale</button><button onclick="exportData()">📤 Exporter données</button><button class="danger" onclick="logout()">🚪 Déconnexion</button></div><div class="superNote">Gestion centrale des entreprises, abonnements, utilisateurs et chiffres déclarés.</div></aside><main class="superMain"><div class="superHero"><div><span class="superKicker">Administration centrale</span><h1>Gestion professionnelle des entreprises inscrites</h1><p>Suivi des abonnements, contrôle des statuts, chiffre d’affaires et actions rapides MEGA SERVICES.</p></div><button class="superExport" onclick="exportData()">📤 Exporter données</button></div><div class="superStats"><div class="superStat"><span>🏢</span><small>Entreprises</small><b>${d.companies.length}</b></div><div class="superStat"><span>✅</span><small>Actives</small><b>${active}</b></div><div class="superStat"><span>⏳</span><small>Expirées</small><b>${expired}</b></div><div class="superStat"><span>💰</span><small>CA déclaré</small><b>${money(ca)}</b></div></div><section class="superPanel"><div class="superPanelHead"><div><h2>Entreprises inscrites</h2><p>Liste simplifiée : cliquez sur <b>Voir détails</b> devant chaque entreprise pour ouvrir la fiche complète avec les actions.</p></div><span>${d.companies.length} entreprise(s)</span></div><div class="superTableWrap"><table class="superTable superCompanyList"><thead><tr><th>Entreprise</th><th>Responsable</th><th>Abonnement</th><th>CA déclaré</th><th>Actions</th></tr></thead><tbody>${d.companies.map(c=>{let s=d.sales.filter(x=>x.companyId===c.id&&isSaleValidated(x)).reduce((a,b)=>a+b.total,0), st=statusCompany(c); return `<tr><td><div class="companyNameLine"><button class="detailsBtn" onclick="showCompanyDetails('${c.id}')">Voir détails</button><strong>${esc(c.name)}</strong></div></td><td>${esc(c.owner)}</td><td><span class="statusPill ${st}">${st}</span><br><small>${esc(planDef(c).label)} — Fin : ${esc(c.subscriptionEnd)}</small></td><td><b>${money(s)}</b></td><td><div class="superCompanyActions"><button class="detailsBtn wide" onclick="showCompanyDetails('${c.id}')">Ouvrir la fiche</button><button class="danger companyDeleteBtn" data-delete-company="${c.id}" onclick="deleteCompanyAccount('${c.id}')">Supprimer le compte</button></div></td></tr>`}).join('')}</tbody></table></div></section><section class="superPanel"><div class="superPanelHead"><div><h2>Réinitialisation des mots de passe</h2><p>Le Super Admin GLOBAL MARKET traite les demandes de réinitialisation des comptes Administrateur et des comptes clients.</p></div></div>${superPasswordResetRequestsBox()}</section></main></div>`}
+function renderSuper(){const {d,user}=current(); const ca=d.sales.filter(isSaleValidated).reduce((a,b)=>a+b.total,0); const active=d.companies.filter(c=>statusCompany(c)==='active'||statusCompany(c)==='trial').length; const expired=d.companies.filter(c=>statusCompany(c)==='expired').length; app.innerHTML=globalUniversalHeader('super')+`<div class="superShell superUnifiedShell"><aside class="superSide"><div class="superBrand"><div class="superLogo">MS</div><div><h2>MEGA SERVICES</h2><p>Super Admin GLOBAL MARKET</p></div></div><div class="superMenu"><button class="active" onclick="renderSuper()">📊 Vue générale</button><button onclick="exportData()">📤 Exporter données</button><button class="danger" onclick="logout()">🚪 Déconnexion</button></div><div class="superNote">Gestion centrale des entreprises, abonnements, utilisateurs et chiffres déclarés.</div></aside><main class="superMain"><div class="superHero"><div><span class="superKicker">Administration centrale</span><h1>Gestion professionnelle des entreprises inscrites</h1><p>Suivi des abonnements, contrôle des statuts, chiffre d’affaires et actions rapides MEGA SERVICES.</p></div><button class="superExport" onclick="exportData()">📤 Exporter données</button></div><div class="superStats"><div class="superStat"><span>🏢</span><small>Entreprises</small><b>${d.companies.length}</b></div><div class="superStat"><span>✅</span><small>Actives</small><b>${active}</b></div><div class="superStat"><span>⏳</span><small>Expirées</small><b>${expired}</b></div><div class="superStat"><span>💰</span><small>CA déclaré</small><b>${money(ca)}</b></div></div><section class="superPanel"><div class="superPanelHead"><div><h2>Entreprises inscrites</h2><p>Liste simplifiée : cliquez sur <b>Voir détails</b> devant chaque entreprise pour ouvrir la fiche complète avec les actions.</p></div><span>${d.companies.length} entreprise(s)</span></div><div class="superTableWrap"><table class="superTable superCompanyList"><thead><tr><th>Entreprise</th><th>Responsable</th><th>Abonnement</th><th>CA déclaré</th><th>Actions</th></tr></thead><tbody>${d.companies.map(c=>{let s=d.sales.filter(x=>x.companyId===c.id&&isSaleValidated(x)).reduce((a,b)=>a+b.total,0), st=statusCompany(c); return `<tr><td><div class="companyNameLine"><button class="detailsBtn" onclick="showCompanyDetails('${c.id}')">Voir détails</button><strong>${esc(c.name)}</strong></div></td><td>${esc(c.owner)}</td><td><span class="statusPill ${st}">${st}</span><br><small>${esc(planDef(c).label)} — Fin : ${esc(c.subscriptionEnd)}</small></td><td><b>${money(s)}</b></td><td><div class="superCompanyActions"><button class="detailsBtn wide" onclick="showCompanyDetails('${c.id}')">Ouvrir la fiche</button><button class="danger companyDeleteBtn" data-delete-company="${c.id}" onclick="deleteCompanyAccount('${c.id}')">Supprimer le compte</button></div></td></tr>`}).join('')}</tbody></table></div></section><section class="superPanel"><div class="superPanelHead"><div><h2>Réinitialisation mots de passe Administrateur</h2><p>Règle de sécurité : seul le Super Admin GLOBAL MARKET peut réinitialiser un compte Administrateur d’entreprise.</p></div></div>${superPasswordResetRequestsBox()}</section></main></div>`}
 
 function showCompanyDetails(cid){const d=seed(), c=d.companies.find(x=>x.id===cid); if(!c)return; const us=d.users.filter(u=>u.companyId===c.id), sales=d.sales.filter(x=>x.companyId===c.id&&isSaleValidated(x)), pay=d.payments.filter(x=>x.companyId===c.id); const ca=sales.reduce((a,b)=>a+b.total,0), articles=sales.reduce((a,b)=>a+(Number(b.qty)||0),0), st=statusCompany(c); const old=document.querySelector('.superModalBackdrop'); if(old)old.remove(); const box=document.createElement('div'); box.className='superModalBackdrop'; box.innerHTML=`<div class="superCompanyModal"><button class="superClose" onclick="closeSuperModal()">×</button><div class="companyModalHead"><div><span class="superKicker">Fiche entreprise</span><h2>${esc(c.name)}</h2><p>Informations d’inscription, abonnement, utilisateurs, chiffre d’affaires et gestion des accès.</p></div><span class="statusPill ${st}">${st}</span></div><div class="companyDetailGrid"><div><small>Responsable</small><b>${esc(c.owner)}</b></div><div><small>Téléphone</small><b>${esc(c.phone)}</b></div><div><small>Email</small><b>${esc(c.email)}</b></div><div><small>Type de commerce</small><b>${esc(c.businessType)}</b></div><div><small>Plan</small><b>${esc(c.plan)}</b></div><div><small>Début abonnement</small><b>${esc(c.subscriptionStart||'-')}</b></div><div><small>Fin abonnement</small><b>${esc(c.subscriptionEnd||'-')}</b></div><div><small>Utilisateurs</small><b>${us.length}</b></div><div><small>Ventes réalisées</small><b>${sales.length}</b></div><div><small>Articles vendus</small><b>${articles}</b></div><div><small>Chiffre d’affaires</small><b>${money(ca)}</b></div><div><small>Paiements enregistrés</small><b>${pay.length}</b></div></div><h3>Utilisateurs du compte</h3><div class="miniList">${us.length?us.map(u=>`<div><b>${esc(u.name)}</b><span>${esc(u.role)} — ${esc(u.email)} — ${esc(u.status||'active')}${u.mustChangePassword?' — mot de passe temporaire':''}</span>${u.role==='admin'?`<button class="detailsBtn" onclick="superResetAdminPassword('${u.id}')">Réinitialiser admin</button>`:''}</div>`).join(''):'<em>Aucun utilisateur enregistré.</em>'}</div>${planActivationButtons(c.id,planCode(c))}<div class="superModalActions"><button onclick="renewCompany('${c.id}');closeSuperModal()">Renouveler</button><button class="soft" onclick="setCompanyStatus('${c.id}','suspended');closeSuperModal()">Suspendre</button><button class="danger" onclick="setCompanyStatus('${c.id}','blocked');closeSuperModal()">Bloquer</button><button class="ok" onclick="setCompanyStatus('${c.id}','active');closeSuperModal()">Activer</button><button class="danger companyDeleteBtn" data-delete-company="${c.id}" onclick="deleteCompanyAccount('${c.id}')">Supprimer définitivement le compte</button></div></div>`; document.body.appendChild(box)}
 function closeSuperModal(){const m=document.querySelector('.superModalBackdrop'); if(m)m.remove()}
@@ -3672,10 +3671,8 @@ function showMarketplacePage(){if(isCaisse()) return alert('Accès interdit : la
   const recentItems=visible.slice().reverse().slice(0,8);
   const totalStock=products.reduce((a,b)=>a+(b.stockType==='unlimited'?0:Number(b.stock||0)),0);
   const caOrders=orders.reduce((a,b)=>a+Number(b.total||0),0);
-  d.marketMessages=d.marketMessages||[];
-  const marketMessages=d.marketMessages.filter(m=>String(m.companyId)===String(cid)&&!m.deletedByAdmin).slice().sort((a,b)=>new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0));
   const active=window.marketplaceAdminSection||'stock';
-  const pageTitle=active==='preview'?'Aperçu boutique client':(active==='stock'?'Produits / services du stock général':(active==='recent'?'Produits récents':(active==='messages'?'Messages clients':'Commandes récentes')));
+  const pageTitle=active==='preview'?'Aperçu boutique client':(active==='stock'?'Produits / services du stock général':(active==='recent'?'Produits récents':'Commandes récentes'));
   let pageHtml='';
   if(active==='stock'){
     pageHtml=`<div class="mkPanel mkAdminSinglePage" id="marketFormPanel">
@@ -3694,8 +3691,6 @@ function showMarketplacePage(){if(isCaisse()) return alert('Accès interdit : la
       <div class="mkPanelHead"><h2>Produits récents</h2><a onclick="showMarketplaceAdminPage('stock')">Voir le stock général</a></div>
       <div class="mkRecentList mkRecentPageList">${recentItems.map(i=>marketRecentRow(i)).join('')||'<p class="notice">Aucun article visible. Rendez visibles les éléments du stock général.</p>'}</div>
     </div>`;
-  }else if(active==='messages'){
-    pageHtml=marketplaceAdminMessagesHtml(marketMessages,cid);
   }else{
     pageHtml=`<div class="mkPanel mkAdminSinglePage mkOrdersPanel">
       <div class="mkPanelHead"><h2>Commandes récentes</h2><a onclick="showMarketplaceAdminPage('stock')">Retour stock</a></div>
@@ -3708,7 +3703,7 @@ function showMarketplacePage(){if(isCaisse()) return alert('Accès interdit : la
         <div class="mkLogoRound">GG</div>
         <div><h1>Marketplace</h1></div>
       </div>
-      <div class="mkHeroBtns mkHeroBtnsHorizontal"><button onclick="openPublicShop()">Voir boutique publique</button><button class="payConfigBtn" onclick="openMarketplacePaymentConfig()">Configurer paiement</button><button class="deliveryConfigBtn" onclick="openMarketplaceDeliveryConfig()">Livraison & expédition</button><button class="clientReportBtn" onclick="openMarketplaceClientsReport()">Mes clients enregistrés</button><button class="marketMessagesTopBtn" onclick="showMarketplaceAdminPage('messages')">💬 Messages <span>${marketMessages.filter(m=>m.senderType==='client').length}</span></button><button class="darkBtn" onclick="shareText('${marketplaceUrl(company)}')">Partager le lien</button></div>
+      <div class="mkHeroBtns mkHeroBtnsHorizontal"><button onclick="openPublicShop()">Voir boutique publique</button><button class="payConfigBtn" onclick="openMarketplacePaymentConfig()">Configurer paiement</button><button class="deliveryConfigBtn" onclick="openMarketplaceDeliveryConfig()">Livraison & expédition</button><button class="clientReportBtn" onclick="openMarketplaceClientsReport()">Mes clients enregistrés</button><button class="darkBtn" onclick="shareText('${marketplaceUrl(company)}')">Partager le lien</button></div>
     </div>
 
     <div class="mkStatsRow">
@@ -3720,12 +3715,11 @@ function showMarketplacePage(){if(isCaisse()) return alert('Accès interdit : la
       <div><i>🧺</i><small>Stock général visible</small><b>${totalStock}</b><span>produits</span></div>
     </div>
 
-    <div class="mkSectionButtons mkSectionButtonsFive">
+    <div class="mkSectionButtons mkSectionButtonsFour">
       <button class="${active==='preview'?'active':''}" onclick="showMarketplaceAdminPage('preview')">Aperçu boutique client</button>
       <button class="${active==='stock'?'active':''}" onclick="showMarketplaceAdminPage('stock')">Produits / services du stock général</button>
       <button class="${active==='recent'?'active':''}" onclick="showMarketplaceAdminPage('recent')">Produits récents</button>
       <button class="${active==='orders'?'active':''}" onclick="showMarketplaceAdminPage('orders')">Commandes récentes</button>
-      <button class="${active==='messages'?'active':''}" onclick="showMarketplaceAdminPage('messages')">Messages clients</button>
     </div>
 
     <div class="mkPageTitle"><h2>${pageTitle}</h2></div>
@@ -4018,85 +4012,121 @@ function orderItemsCount(o){return normalizeOrderItems(o).reduce((a,x)=>a+Number
 function orderTotal(o){return Number(o?.total||normalizeOrderItems(o).reduce((a,x)=>a+Number(x.total||0),0)||0)}
 function orderMainStatus(o){return marketplaceValidationValue(o)==='Annuler'?(o?.afterSaleStatus||'Annuler'):(o?.deliveryStatus||o?.validationStatus||o?.delivery||'En attente de validation')}
 function isMarketplaceOrderCancelled(o){return marketplaceValidationValue(o)==='Annuler'||String(o?.validationStatus||o?.delivery||'').toLowerCase().includes('annul')||String(o?.afterSaleStatus||'').toLowerCase().includes('rembours');}
-function gmOrderPaymentConfirmed(o){
-  const v=String(o?.paymentStatus||'').toLowerCase();
-  return v.includes('confirm');
-}
-function gmOrderPaymentDeclared(o){
-  const v=String(o?.paymentStatus||'').toLowerCase();
-  return Boolean(o?.transactionId||o?.paymentRef)||v.includes('déclar')||v.includes('declare')||v.includes('envoy');
-}
-function gmOrderDelivered(o){return String(o?.deliveryStatus||o?.delivery||'').toLowerCase().includes('livr')&&!String(o?.deliveryStatus||'').toLowerCase().includes('cours')}
-function gmOrderValidated(o){return marketplaceValidationValue(o)==='Validée'}
-function gmOrderCancelled(o){return marketplaceValidationValue(o)==='Annuler'||Boolean(o?.clientCancelled)}
-function gmOrderCanClientDelete(o){return !gmOrderPaymentConfirmed(o)}
-function gmOrderClientStatusButton(o){
-  if(gmOrderCancelled(o)) return `<button type="button" class="gmOrderStateBtn gmOrderStateCancelled" disabled>Commande annulée</button>`;
-  if(gmOrderDelivered(o)) return `<button type="button" class="gmOrderStateBtn gmOrderStateDelivered" disabled>Livrée</button>`;
-  if(gmOrderPaymentConfirmed(o)) return `<button type="button" class="gmOrderStateBtn gmOrderStateShipping" disabled>Livraison en cours</button>`;
-  if(gmOrderPaymentDeclared(o)) return `<button type="button" class="gmOrderStateBtn gmOrderStatePaymentWait" disabled>Paiement en attente de confirmation</button>`;
-  if(gmOrderValidated(o)) return `<button type="button" class="gmOrderStateBtn gmOrderStatePay" onclick="openClientOrderPayment('${esc(o.id)}')">Régler ma commande</button>`;
-  return `<button type="button" class="gmOrderStateBtn gmOrderStateWaiting" disabled>En attente</button>`;
-}
 function openMarketplaceOrderPopup(orderId,isAdmin){
   document.getElementById('marketOrderDetailsModal')?.remove();
   const d=seed(); const o=(d.orders||[]).find(x=>String(x.id)===String(orderId));
   if(!o) return alert('Commande introuvable.');
   const items=normalizeOrderItems(o);
   const rows=items.map((it,i)=>`<tr><td>${i+1}</td><td>${esc(it.item||'Article')}</td><td>${esc(it.category||'-')}</td><td>${esc(it.type||'-')}</td><td>${Number(it.qty||1)}</td><td>${money(it.unit||0)}</td><td><b>${money(it.total||0)}</b></td></tr>`).join('');
-  const valState=marketplaceValidationValue(o);
-  const paymentConfirmed=gmOrderPaymentConfirmed(o);
-  const paymentDeclared=gmOrderPaymentDeclared(o);
-  const deliveryValue=gmOrderDelivered(o)?'Livrée':(paymentConfirmed?'En cours de livraison':'En attente');
-  const transactionInfo=o.transactionId||o.paymentRef||'';
-  const paymentInfo=`<div class="gmAdminPaymentInfo"><div><span>Moyen de paiement</span><b>${esc(o.paymentMethod||'Non choisi')}</b></div><div><span>ID transaction</span><b>${esc(transactionInfo||'Non transmis')}</b></div><div><span>État paiement</span><b>${esc(o.paymentStatus||'Non payé')}</b></div></div>`;
-  const statusAdmin=isAdmin?`<div class="orderStatusGrid statusSelectColor gmOrderAdminStatus"><label>Validation de la commande<select id="orderValidationStatus" onchange="toggleMarketplaceActionField()"><option value="En attente de validation" ${valState==='En attente de validation'?'selected':''}>En attente de validation</option><option value="Validée" ${valState==='Validée'?'selected':''}>Validée — autoriser le paiement</option><option value="Annuler" ${valState==='Annuler'?'selected':''}>Annuler la commande</option></select></label><label>Confirmation du paiement<select id="orderPaymentStatus" onchange="toggleMarketplaceActionField()" ${valState!=='Validée'?'disabled':''}><option value="Non payé" ${!paymentDeclared&&!paymentConfirmed?'selected':''}>Non payé</option><option value="Paiement déclaré par le client" ${paymentDeclared&&!paymentConfirmed?'selected':''}>Paiement déclaré par le client</option><option value="Paiement confirmé" ${paymentConfirmed?'selected':''}>Paiement confirmé</option></select></label><label>Livraison<select id="orderDeliveryStatus" ${paymentConfirmed?'':'disabled'}><option value="En cours de livraison" ${deliveryValue==='En cours de livraison'?'selected':''}>En cours de livraison</option><option value="Livrée" ${deliveryValue==='Livrée'?'selected':''}>Livrée</option></select></label></div>${paymentInfo}<div class="marketPayActions"><button onclick="saveMarketplaceOrderStatus('${esc(o.id)}')">Enregistrer les détails</button><button class="btn2" onclick="document.getElementById('marketOrderDetailsModal')?.remove()">Fermer</button></div>`:`${paymentInfo}<div class="orderStatusRead"><p><b>Validation :</b> ${esc(marketplaceValidationValue(o))}</p><p><b>Paiement :</b> ${esc(o.paymentStatus||'Non payé')}</p><p><b>Livraison :</b> ${esc(o.deliveryStatus||'En attente')}</p></div><div class="marketPayActions"><button onclick="document.getElementById('marketOrderDetailsModal')?.remove()">Fermer</button></div>`;
-  const proof=transactionInfo?('Identifiant transaction : '+transactionInfo):'Aucun identifiant de transaction transmis';
+  const valState=marketplaceValidationValue(o); const autoDelivery=marketplaceDeliveryByValidation(valState);
+  const statusAdmin=isAdmin?`<div class="orderStatusGrid statusSelectColor"><label>Validation<select id="orderValidationStatus" onchange="toggleMarketplaceActionField()"><option value="En attente de validation" ${valState==='En attente de validation'?'selected':''}>En attente de validation</option><option value="Validée" ${valState==='Validée'?'selected':''}>Validée</option><option value="Terminer" ${valState==='Terminer'?'selected':''}>Terminer</option><option value="Annuler" ${valState==='Annuler'?'selected':''}>Annuler</option></select></label><label>Livraison<select id="orderDeliveryStatus" disabled><option ${autoDelivery==='Aucune action'?'selected':''}>Aucune action</option><option ${autoDelivery==='En cours de livraison'?'selected':''}>En cours de livraison</option><option ${autoDelivery==='Livrée'?'selected':''}>Livrée</option></select></label><label id="orderRefundActionBox" style="display:${valState==='Annuler'?'block':'none'}">Action<select id="orderAfterSaleStatus"><option value="En cours de remboursement" ${o.afterSaleStatus==='En cours de remboursement'?'selected':''}>En cours de remboursement</option><option value="Rembourser" ${o.afterSaleStatus==='Rembourser'||o.afterSaleStatus==='Remboursée'?'selected':''}>Rembourser</option></select></label></div><div class="marketPayActions"><button onclick="saveMarketplaceOrderStatus('${esc(o.id)}')">Enregistrer les détails</button><button class="btn2" onclick="document.getElementById('marketOrderDetailsModal')?.remove()">Fermer</button></div>`:`<div class="orderStatusRead"><p><b>Validation :</b> ${esc(marketplaceValidationValue(o))}</p><p><b>Livraison :</b> ${esc(o.deliveryStatus||marketplaceDeliveryByValidation(marketplaceValidationValue(o)))}</p><p><b>Action :</b> ${esc(o.afterSaleStatus||'Aucune action')}</p></div><div class="marketPayActions"><button onclick="document.getElementById('marketOrderDetailsModal')?.remove()">Fermer</button></div>`;
+  const proof=o.paymentMethod==='PAIEMENT À LA LIVRAISON'?'Paiement prévu à la livraison':('Identifiant transaction : '+(o.transactionId||o.paymentRef||'-'));
   const proofLink=o.paymentProofType==='capture'&&o.paymentCaptureData?`<a class="paymentCaptureLink" href="${o.paymentCaptureData}" target="_blank" download="${esc(o.paymentCaptureName||'capture-paiement.png')}">📎 Ouvrir / télécharger la capture de paiement</a>`:(o.paymentProofType==='capture'?'<span class="paymentCaptureMissing">Capture indiquée, mais aucun fichier lisible enregistré.</span>':'');
-  const html=`<div class="marketPayModalBackdrop" id="marketOrderDetailsModal"><div class="marketPayModal orderDetailsBox ${isAdmin?'adminOrderDetails':'clientOrderDetails'}"><button class="marketPayClose" onclick="document.getElementById('marketOrderDetailsModal')?.remove()">×</button><h2>Détails commande #${esc(o.id)}</h2><p><b>Client :</b> ${esc(o.client||'Client')} — ${esc(o.clientPhone||'')}${o.clientEmail?' — '+esc(o.clientEmail):''}<br><b>Date :</b> ${new Date(o.date).toLocaleString('fr-FR')}<br><b>Livraison :</b> ${esc(o.deliveryCity||'-')}${o.shippingMethod?' — '+esc(o.shippingMethod):''}${o.deliveryNeighborhood?'<br><b>Quartier :</b> '+esc(o.deliveryNeighborhood):''}${o.deliveryAddressDetail?'<br><b>Détail adresse :</b> '+esc(o.deliveryAddressDetail):''}<br><b>Paiement :</b> ${esc(o.paymentMethod||'Non choisi')} — ${esc(proof)}</p>${proofLink?`<div class="paymentProofLinkBox">${proofLink}</div>`:''}<div class="clientOrdersScroll"><table class="mkOrdersTable orderDetailsLines"><tr><th>N°</th><th>Produit / Service</th><th>Catégorie</th><th>Type</th><th>Qté</th><th>PU</th><th>Total</th></tr>${rows}</table></div><div class="orderFinancialSummary"><div><span>Sous-total</span><b>${money(Number(o.subtotal??(orderTotal(o)-Number(o.deliveryFee||0))))}</b></div><div><span>Frais d’expédition${o.shippingMethod?' — '+esc(o.shippingMethod):' ('+deliveryRateLabel(Number(o.deliveryFeeRate||0))+')'}</span><b>${money(Number(o.deliveryFee||0))}</b></div><div class="total"><span>Total lot</span><b>${money(orderTotal(o))}</b></div></div><h3>Suivi de la commande</h3>${statusAdmin}</div></div>`;
+  const html=`<div class="marketPayModalBackdrop" id="marketOrderDetailsModal"><div class="marketPayModal orderDetailsBox ${isAdmin?'adminOrderDetails':'clientOrderDetails'}"><button class="marketPayClose" onclick="document.getElementById('marketOrderDetailsModal')?.remove()">×</button><h2>Détails commande #${esc(o.id)}</h2><p><b>Client :</b> ${esc(o.client||'Client')} — ${esc(o.clientPhone||'')}${o.clientEmail?' — '+esc(o.clientEmail):''}<br><b>Date :</b> ${new Date(o.date).toLocaleString('fr-FR')}<br><b>Livraison :</b> ${esc(o.deliveryCity||'-')}${o.shippingMethod?' — '+esc(o.shippingMethod):''}${o.deliveryNeighborhood?'<br><b>Quartier :</b> '+esc(o.deliveryNeighborhood):''}${o.deliveryAddressDetail?'<br><b>Détail adresse :</b> '+esc(o.deliveryAddressDetail):''}<br><b>Paiement :</b> ${esc(o.paymentMethod||'-')} — ${esc(proof)}</p>${proofLink?`<div class="paymentProofLinkBox">${proofLink}</div>`:''}<div class="clientOrdersScroll"><table class="mkOrdersTable orderDetailsLines"><tr><th>N°</th><th>Produit / Service</th><th>Catégorie</th><th>Type</th><th>Qté</th><th>PU</th><th>Total</th></tr>${rows}</table></div><div class="orderFinancialSummary"><div><span>Sous-total</span><b>${money(Number(o.subtotal??(orderTotal(o)-Number(o.deliveryFee||0))))}</b></div><div><span>Frais d’expédition${o.shippingMethod?' — '+esc(o.shippingMethod):' ('+deliveryRateLabel(Number(o.deliveryFeeRate||0))+')'}</span><b>${money(Number(o.deliveryFee||0))}</b></div><div class="total"><span>Total lot</span><b>${money(orderTotal(o))}</b></div></div><h3>Détails remplis par l’administrateur Marketplace</h3>${statusAdmin}</div></div>`;
   document.body.insertAdjacentHTML('beforeend',html);
 }
 
+
 function marketplaceValidationValue(o){
   const v=String(o?.validationStatus||'En attente de validation').trim().toLowerCase();
+  if(v.includes('termin')) return 'Terminer';
   if(v.includes('annul')) return 'Annuler';
   if(v.includes('valid')) return 'Validée';
   return 'En attente de validation';
 }
 function marketplaceDeliveryByValidation(v){
-  return String(v||'').toLowerCase().includes('annul')?'Commande annulée':'En attente';
+  v=String(v||'').toLowerCase();
+  if(v.includes('valid')) return 'En cours de livraison';
+  if(v.includes('termin')) return 'Livrée';
+  return 'Aucune action';
 }
 function toggleMarketplaceActionField(){
-  const validation=$('#orderValidationStatus')?.value||'En attente de validation';
-  const pay=$('#orderPaymentStatus');
-  if(pay) pay.disabled=validation!=='Validée';
-  const delivery=$('#orderDeliveryStatus');
-  if(delivery) delivery.disabled=validation!=='Validée'||String(pay?.value||'').toLowerCase()!=='paiement confirmé';
+  const v=$('#orderValidationStatus')?.value||'En attente de validation';
+  const livraison=marketplaceDeliveryByValidation(v);
+  const del=$('#orderDeliveryStatus'); if(del) del.value=livraison;
+  const box=$('#orderRefundActionBox'); if(box) box.style.display=(v==='Annuler')?'block':'none';
+}
+async function deleteMarketplaceOrder(orderId,isAdmin){
+  if(!(await g3Confirm('Supprimer cette commande seulement de cette liste ?','Suppression commande'))) return;
+  const d=seed(); const o=(d.orders||[]).find(x=>String(x.id)===String(orderId));
+  if(!o) return alert('Commande introuvable.');
+  if(isAdmin){
+    // Suppression indépendante côté administrateur : la commande disparaît seulement de « Commandes récentes ».
+    o.adminDeleted=true;
+  }else{
+    // Suppression indépendante et persistante côté client : la commande reste dans les rapports admin,
+    // mais elle ne réapparaît plus dans l’espace client après déconnexion/reconnexion.
+    const client=getPublicClient(o.companyId);
+    const cid=client?.id||o.clientId||'';
+    o.clientDeletedIds=o.clientDeletedIds||[];
+    if(cid && !o.clientDeletedIds.includes(cid)) o.clientDeletedIds.push(cid);
+    const savedClient=(d.marketClients||[]).find(c=>c.id===cid);
+    if(savedClient){
+      savedClient.deletedOrderIds=savedClient.deletedOrderIds||[];
+      if(!savedClient.deletedOrderIds.includes(o.id)) savedClient.deletedOrderIds.push(o.id);
+    }
+    d.clientDeletedOrders=d.clientDeletedOrders||{};
+    if(cid){
+      d.clientDeletedOrders[cid]=d.clientDeletedOrders[cid]||[];
+      if(!d.clientDeletedOrders[cid].includes(o.id)) d.clientDeletedOrders[cid].push(o.id);
+    }
+  }
+  save(d);
+  cloudSaveNow(CLOUD_DATA).catch(e=>console.error('Sauvegarde immédiate suppression commande',e));
+  document.getElementById('marketOrderDetailsModal')?.remove();
+  if(isAdmin) showMarketplacePage(); else { document.getElementById('clientSpaceModal')?.remove(); openClientSpace(o.companyId); }
+}
+
+function restoreMarketplaceOrderStock(d,o){
+  if(!o || o.stockRestored) return;
+  normalizeOrderItems(o).forEach(line=>{
+    const it=(d.items||[]).find(x=>x.id===line.itemId&&x.companyId===o.companyId);
+    if(it && isBoutiqueItem(it) && it.stockType!=='unlimited') it.stock=Number(it.stock||0)+Number(line.qty||0);
+  });
+  o.stockRestored=true;
+}
+function removeMarketplaceOrderFromReport(d,o){
+  if(!o) return;
+  d.sales=(d.sales||[]).filter(s=>!(s.marketplaceOrderId===o.id));
+  o.marketplaceReported=false;
+  o.reportSaleIds=[];
+}
+function addMarketplaceOrderToReport(d,o){
+  if(!o || o.marketplaceReported) return;
+  d.sales=d.sales||[];
+  const ids=[];
+  normalizeOrderItems(o).forEach(line=>{
+    const qty=Number(line.qty||1), unit=Number(line.unit||0), total=Number(line.total||unit*qty);
+    const it=(d.items||[]).find(x=>x.id===line.itemId&&x.companyId===o.companyId);
+    const product=isBoutiqueItem(it||{type:line.type});
+    const charges=product?Number(it?.buy||0)*qty:total*(Number(it?.charge||0)/100);
+    const sid=id('mkp');
+    d.sales.push({
+      id:sid,companyId:o.companyId,userId:'marketplace',client:o.client||'Client boutique',
+      name:line.item||'Commande Marketplace',qty,unit,total,serviceFee:0,charges,profit:total-charges,
+      date:o.date||new Date().toISOString(),docSecureLink:secureDocLink(sid),docQr:true,
+      clientType:'marketplace',itemCode:it?.code||'',itemId:line.itemId||'',category:line.category||it?.cat||'',
+      saleKind:product?'boutique':'service',note:'Vente Marketplace validée — commande '+(o.id||''),
+      source:'marketplace',marketplaceOrderId:o.id
+    });
+    ids.push(sid);
+  });
+  o.marketplaceReported=true;
+  o.reportSaleIds=ids;
 }
 function saveMarketplaceOrderStatus(orderId){
   const d=seed(); const o=(d.orders||[]).find(x=>String(x.id)===String(orderId)); if(!o) return alert('Commande introuvable.');
   const validation=$('#orderValidationStatus')?.value||'En attente de validation';
-  const paymentStatus=$('#orderPaymentStatus')?.value||o.paymentStatus||'Non payé';
-  if(paymentStatus==='Paiement confirmé' && !String(o.transactionId||o.paymentRef||'').trim()) return alert('Impossible de confirmer le paiement : aucun ID de transaction n’a été transmis par le client.');
   o.validationStatus=validation;
+  o.deliveryStatus=marketplaceDeliveryByValidation(validation);
+  o.afterSaleStatus=validation==='Annuler'?($('#orderAfterSaleStatus')?.value||'En cours de remboursement'):'';
   if(validation==='Annuler'){
-    o.paymentStatus=gmOrderPaymentConfirmed(o)?o.paymentStatus:'Commande annulée';
-    o.deliveryStatus='Commande annulée';
-    o.afterSaleStatus='Commande annulée';
     restoreMarketplaceOrderStock(d,o);
     removeMarketplaceOrderFromReport(d,o);
+  }else if(validation==='Validée'||validation==='Terminer'){
+    addMarketplaceOrderToReport(d,o);
   }else{
-    o.afterSaleStatus='';
-    o.paymentStatus=paymentStatus;
-    if(String(paymentStatus).toLowerCase()==='paiement confirmé'){
-      o.paymentConfirmedAt=o.paymentConfirmedAt||new Date().toISOString();
-      o.deliveryStatus=$('#orderDeliveryStatus')?.value||o.deliveryStatus||'En cours de livraison';
-      if(!['En cours de livraison','Livrée'].includes(o.deliveryStatus))o.deliveryStatus='En cours de livraison';
-      addMarketplaceOrderToReport(d,o);
-    }else{
-      o.deliveryStatus=validation==='Validée'?'En attente de paiement':'En attente de validation';
-      removeMarketplaceOrderFromReport(d,o);
-    }
+    removeMarketplaceOrderFromReport(d,o);
   }
   o.delivery=orderMainStatus(o);
   save(d); alert('Détails de la commande enregistrés.'); document.getElementById('marketOrderDetailsModal')?.remove(); showMarketplacePage();
@@ -4161,7 +4191,7 @@ async function fakeCustomerOrder(iid){const {d,company}=current(); const it=(d.i
 async function updateOrderStatus(oid){const {d,company}=current(); const o=(d.orders||[]).find(x=>x.id===oid&&x.companyId===company.id); if(!o) return; const st=await g3Prompt('Statut livraison :',o.delivery||'Commande reçue','Statut livraison'); if(st){o.delivery=st; save(d); showMarketplacePage();}}
 
 
-const GLOBAL_MARKET_HOME_PAGE_SIZE=16;
+const GLOBAL_MARKET_HOME_PAGE_SIZE=12;
 function globalMarketBrandMark(){return `<span class="gmHomeLogoMark" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28"/><path d="M15 21h6l5 22h22l4-15H25M29 50a3 3 0 1 0 0 .1M45 50a3 3 0 1 0 0 .1M21 13c6 5 16 6 23 1M18 37c9 3 21 3 31 0M32 8c-7 7-10 15-9 24M32 8c7 7 10 15 9 24"/></svg></span>`}
 function globalMarketCardHtml(i,company={}){
   const desc=String(i.marketplaceDesc||i.detail||i.desc||'Produit ou service proposé sur GLOBAL MARKET.');
@@ -4194,7 +4224,7 @@ function openGlobalMarketItemPopup(companyId,itemId){
   const visual=item.photo?`<img src="${esc(item.photo)}" alt="${esc(item.name||'Produit ou service')}">`:`<div class="gmItemDetailFallback">${mkProductVisual(item)}</div>`;
   const slug=encodeURIComponent(company.shopSlug||slugify(company.name||''));
   const extra=[item.code?`<div><span>Code</span><b>${esc(item.code)}</b></div>`:'',`<div><span>Catégorie</span><b>${esc(category)}</b></div>`,`<div><span>Type</span><b>${product?'Produit':'Service'}</b></div>`,`<div><span>Disponibilité</span><b>${esc(stock)}</b></div>`].join('');
-  document.body.insertAdjacentHTML('beforeend',`<div class="gmHomeAuthBackdrop" id="gmMarketItemDetailsModal" onclick="if(event.target.id==='gmMarketItemDetailsModal')this.remove()"><section class="gmHomeAuthCard gmItemDetailCard"><button class="gmHomeAuthClose gmItemDetailClose" aria-label="Fermer" onclick="document.getElementById('gmMarketItemDetailsModal')?.remove()"><span aria-hidden="true">×</span><span>Fermer</span></button><div class="gmItemDetailMedia">${visual}<span class="gmHomeNewBadge">NOUVEAU</span></div><div class="gmItemDetailBody"><span class="gmHomeModalKicker">${product?'PRODUIT':'SERVICE'} GLOBAL MARKET</span><h2>${esc(item.name||'Produit / service')}</h2><button type="button" class="gmItemDetailShop" onclick="document.getElementById('gmMarketItemDetailsModal')?.remove();location.hash='#boutique/${slug}';render()">${officialShopIcon('bag')} ${esc(company.name||'Boutique partenaire')}</button><p>${esc(description)}</p><div class="gmItemDetailMeta">${extra}</div><div class="gmItemDetailPrice"><span>Prix</span><strong>${money(price)}</strong></div><div class="gmItemDetailActions"><button type="button" class="gmHomeGhostBtn" onclick="document.getElementById('gmMarketItemDetailsModal')?.remove();location.hash='#boutique/${slug}';render()">Voir la boutique</button><button type="button" class="gmHomeCartBtn" onclick="addGlobalMarketItemToCart('${esc(companyId)}','${esc(itemId)}')">${officialShopIcon('cart')} Ajouter au panier</button></div></div></section></div>`);
+  document.body.insertAdjacentHTML('beforeend',`<div class="gmHomeAuthBackdrop" id="gmMarketItemDetailsModal" onclick="if(event.target.id==='gmMarketItemDetailsModal')this.remove()"><section class="gmHomeAuthCard gmItemDetailCard"><button class="gmHomeAuthClose" aria-label="Fermer" onclick="document.getElementById('gmMarketItemDetailsModal')?.remove()">×</button><div class="gmItemDetailMedia">${visual}<span class="gmHomeNewBadge">NOUVEAU</span></div><div class="gmItemDetailBody"><span class="gmHomeModalKicker">${product?'PRODUIT':'SERVICE'} GLOBAL MARKET</span><h2>${esc(item.name||'Produit / service')}</h2><button type="button" class="gmItemDetailShop" onclick="document.getElementById('gmMarketItemDetailsModal')?.remove();location.hash='#boutique/${slug}';render()">${officialShopIcon('bag')} ${esc(company.name||'Boutique partenaire')}</button><p>${esc(description)}</p><div class="gmItemDetailMeta">${extra}</div><div class="gmItemDetailPrice"><span>Prix</span><strong>${money(price)}</strong></div><div class="gmItemDetailActions"><button type="button" class="gmHomeGhostBtn" onclick="document.getElementById('gmMarketItemDetailsModal')?.remove();location.hash='#boutique/${slug}';render()">Voir la boutique</button><button type="button" class="gmHomeCartBtn" onclick="addGlobalMarketItemToCart('${esc(companyId)}','${esc(itemId)}')">${officialShopIcon('cart')} Ajouter au panier</button></div></div></section></div>`);
 }
 function globalPublicCompanyOptions(selected=''){
   const companies=(seed().companies||[]).filter(c=>hasPlanFeature(c,'public_shop'));
@@ -4209,27 +4239,21 @@ function renderGlobalShop(){
   const cats=[...new Set(displayItems.map(i=>String(i.cat||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'));
   const cards=displayItems.map(i=>globalMarketCardHtml(i,companyMap.get(i.companyId)||{})).join('');
   const emptyCopy=realItems.length?'<b>Aucun résultat</b><span>Modifiez votre recherche ou vos filtres.</span>':'<b>Aucun produit ou service publié pour le moment.</b><span>Les offres apparaîtront ici dès leur publication par les boutiques GLOBAL MARKET.</span>';
-  app.innerHTML=`<main class="gmHomePage gmHomePageNoHero">
+  app.innerHTML=`<main class="gmHomePage">
     ${globalUniversalHeader('public')}
-    <section class="gmHomeFilters gmHomeFiltersTop" id="gmHomeCatalogTop"><label>${officialShopIcon('menu')}<select id="globalShopCat" onchange="filterGlobalShop(true)"><option value="">Toutes les catégories</option>${cats.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></label><label><select id="globalShopType" onchange="filterGlobalShop(true)"><option value="">Tous les types</option><option value="product">Produits</option><option value="service">Services</option></select></label><form onsubmit="event.preventDefault();filterGlobalShop(true)"><input id="globalShopSearch" type="search" placeholder="Rechercher un produit, un service ou une entreprise..." oninput="filterGlobalShop(true)"><button type="submit">${officialShopIcon('search')}</button></form><label class="gmHomeSort"><span>Trier par</span><select id="globalShopSort" onchange="filterGlobalShop(true)"><option value="recent">Les plus récents</option><option value="priceAsc">Prix croissant</option><option value="priceDesc">Prix décroissant</option><option value="name">Nom A–Z</option></select></label></section>
-    <section class="gmHomeCatalogSection"><div class="gmHomeCatalogHead"><div><h2>Produits & services disponibles</h2><p>Découvrez les offres publiées par les boutiques et entreprises partenaires.</p></div><span id="gmHomeResultCount"></span></div><div id="gmHomeCatalogGrid" class="gmHomeCatalogGrid gmHomeCatalogGridFour">${cards}</div><div id="gmHomeEmpty" class="gmHomeEmpty" hidden>${emptyCopy}</div><nav id="gmHomePagination" class="gmHomePagination" aria-label="Pagination du catalogue"></nav></section>
+
+    <section class="gmHomeHero">
+      <div class="gmHomeHeroCopy"><span class="gmHomeEyebrow">GLOBAL MARKET · MARKETPLACE PROFESSIONNELLE</span><h1>Votre marketplace moderne<br>pour acheter, vendre et<br>développer vos <em>produits et services</em></h1><p>GLOBAL MARKET connecte clients, commerçants, prestataires de services et entreprises sur une plateforme fiable, sécurisée et performante.</p><p class="gmHomeHeroStrong">Tout ce dont votre entreprise a besoin, au même endroit.</p><div class="gmHomeBenefits"><div>${officialShopIcon('shield')}<span><b>Paiement</b><small>100% sécurisé</small></span></div><div>${officialShopIcon('truck')}<span><b>Livraison rapide</b><small>partout</small></span></div><div>${officialShopIcon('spark')}<span><b>Satisfaction & qualité</b><small>de service</small></span></div></div><button type="button" class="gmHomeCta" onclick="openGlobalBusinessAuth('register')">Proposer vos produits et services ${officialShopIcon('arrow')}</button></div>
+      <div class="gmHomeHeroVisual"><img src="assets/global-market-hero.png" alt="GLOBAL MARKET sur ordinateur, smartphone et supports de livraison"><div class="gmHomeHeroGlow"></div></div>
+    </section>
+
+    <section class="gmHomeFilters" id="gmHomeCatalogTop"><label>${officialShopIcon('menu')}<select id="globalShopCat" onchange="filterGlobalShop(true)"><option value="">Toutes les catégories</option>${cats.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></label><label><select id="globalShopType" onchange="filterGlobalShop(true)"><option value="">Tous les types</option><option value="product">Produits</option><option value="service">Services</option></select></label><form onsubmit="event.preventDefault();filterGlobalShop(true)"><input id="globalShopSearch" type="search" placeholder="Rechercher un produit, un service ou une entreprise..." oninput="filterGlobalShop(true)"><button type="submit">${officialShopIcon('search')}</button></form><label class="gmHomeSort"><span>Trier par</span><select id="globalShopSort" onchange="filterGlobalShop(true)"><option value="recent">Les plus récents</option><option value="priceAsc">Prix croissant</option><option value="priceDesc">Prix décroissant</option><option value="name">Nom A–Z</option></select></label></section>
+
+    <section class="gmHomeCatalogSection"><div class="gmHomeCatalogHead"><div><h2>Produits & services disponibles</h2><p>Découvrez les offres publiées par les boutiques et entreprises partenaires.</p></div><span id="gmHomeResultCount"></span></div><div id="gmHomeCatalogGrid" class="gmHomeCatalogGrid">${cards}</div><div id="gmHomeEmpty" class="gmHomeEmpty" hidden>${emptyCopy}</div><nav id="gmHomePagination" class="gmHomePagination" aria-label="Pagination du catalogue"></nav></section>
     <footer class="gmHomeFooter"><div>${globalMarketBrandMark()}<span><b>GLOBAL MARKET</b><small>Produits & services en toute confiance</small></span></div><nav class="gmHomeLegalLinks" aria-label="Informations légales"><button type="button" onclick="openLegalPopup('cgu')">Conditions générales d'utilisation</button><button type="button" onclick="openLegalPopup('privacy')">Notre politique de confidentialité</button></nav><p>Marketplace multi-entreprises · © 2026 MEGA SERVICES SARL U</p></footer>
   </main>`;
   window.globalMarketPage=1;
   requestAnimationFrame(()=>{filterGlobalShop(false);refreshGlobalMarketCartBadge();initFlexibleHorizontalMenu()});
-}
-
-function renderGlobalMarketAbout(){
-  app.innerHTML=`<main class="gmAboutPage gmHomePage">
-    ${globalUniversalHeader('about')}
-    <section class="gmAboutHero"><div class="gmAboutHeroText"><span class="gmAboutKicker">À PROPOS DE GLOBAL MARKET</span><h1>Gestion complète + boutique en ligne sur une seule plateforme professionnelle</h1><p>GLOBAL MARKET aide les entreprises, vendeurs, boutiques, commerçants et prestataires à gérer leurs activités, vendre en ligne et suivre leurs commandes dans un espace fiable, moderne et pratique.</p><div class="gmAboutHeroActions"><button type="button" class="gmHomeCta" onclick="openGlobalBusinessAuth('register')">Créer ma boutique ${officialShopIcon('arrow')}</button><button type="button" class="gmAboutGhostBtn" onclick="goGlobalMarketHome()">Voir les produits</button></div></div><div class="gmAboutHeroStats"><article><span>${officialShopIcon('bag')}</span><b>Gestion complète</b><small>Produits, services, ventes, rapports et boutique officielle.</small></article><article><span>${officialShopIcon('cart')}</span><b>Boutique en ligne</b><small>Publication des articles, panier client et commandes multi-boutiques.</small></article><article><span>${officialShopIcon('shield')}</span><b>Expérience fiable</b><small>Suivi des commandes, paiement clair et présentation professionnelle.</small></article></div></section>
-    <section class="gmAboutSection"><div class="gmAboutSectionHead"><span>1</span><div><h2>Présentation de GLOBAL MARKET</h2><p>Une solution professionnelle pour la gestion complète et la boutique en ligne.</p></div></div><div class="gmAboutGridTwo"><article class="gmAboutCard"><div class="gmAboutIcon">${officialShopIcon('computer')}</div><h3>Gestion complète</h3><p>GLOBAL MARKET centralise la gestion des produits, services, ventes, commandes, clients, rapports, stocks et opérations internes d’une entreprise dans une interface claire et structurée.</p></article><article class="gmAboutCard"><div class="gmAboutIcon">${officialShopIcon('phone')}</div><h3>Boutique en ligne</h3><p>Chaque entreprise peut créer sa boutique, publier ses offres, recevoir des commandes clients, suivre les statuts de livraison et développer sa visibilité sur le web.</p></article></div></section>
-    <section class="gmAboutSection gmAboutAccentSection"><div class="gmAboutSectionHead"><span>2</span><div><h2>Mission de GLOBAL MARKET</h2><p>Faciliter la gestion et la commercialisation des produits et services.</p></div></div><div class="gmAboutMissionGrid"><article class="gmAboutMiniCard"><b>Organiser</b><p>Structurer les activités professionnelles dans un outil unique.</p></article><article class="gmAboutMiniCard"><b>Vendre</b><p>Permettre aux entreprises de vendre leurs produits et services en ligne.</p></article><article class="gmAboutMiniCard"><b>Développer</b><p>Aider les acteurs économiques à gagner en visibilité et en efficacité.</p></article><article class="gmAboutMiniCard"><b>Rassurer</b><p>Offrir une expérience claire, professionnelle et pratique aux clients.</p></article></div></section>
-    <section class="gmAboutSection"><div class="gmAboutSectionHead"><span>3</span><div><h2>Qui peut utiliser GLOBAL MARKET ?</h2><p>La plateforme est pensée pour plusieurs profils professionnels.</p></div></div><div class="gmAboutAudienceGrid"><article class="gmAboutAudienceCard"><div class="gmAboutIcon">${officialShopIcon('bag')}</div><h3>Boutiques & commerçants</h3><p>Pour vendre des produits, gérer le stock et suivre les commandes.</p></article><article class="gmAboutAudienceCard"><div class="gmAboutIcon">${officialShopIcon('spark')}</div><h3>Prestataires de services</h3><p>Pour publier des prestations, enregistrer les ventes et présenter leurs offres.</p></article><article class="gmAboutAudienceCard"><div class="gmAboutIcon">${officialShopIcon('user')}</div><h3>Entreprises & PME</h3><p>Pour piloter leurs activités commerciales et disposer d’une boutique officielle.</p></article><article class="gmAboutAudienceCard"><div class="gmAboutIcon">${officialShopIcon('cart')}</div><h3>Clients</h3><p>Pour acheter, suivre leurs commandes et accéder à leur espace client.</p></article></div></section>
-    <section class="gmAboutSection"><div class="gmAboutSectionHead"><span>4</span><div><h2>Guide d’utilisation : comment créer une boutique ?</h2><p>Commencez en quelques étapes simples.</p></div></div><div class="gmAboutSteps"><article><span>01</span><h3>Cliquer sur « Créer ma boutique »</h3><p>Depuis l’accueil ou la page À propos, ouvrez l’espace de création de boutique.</p></article><article><span>02</span><h3>Remplir les informations de l’entreprise</h3><p>Saisissez le nom, le responsable, les contacts et les informations de base.</p></article><article><span>03</span><h3>Se connecter à l’espace entreprise</h3><p>Accédez au tableau de bord pour gérer votre activité en toute autonomie.</p></article><article><span>04</span><h3>Ajouter produits et services</h3><p>Créez vos catégories, ajoutez vos articles et publiez-les sur la marketplace.</p></article><article><span>05</span><h3>Recevoir et suivre les commandes</h3><p>Consultez les commandes, mettez à jour les statuts et servez vos clients.</p></article></div></section>
-    <footer class="gmHomeFooter gmAboutFooter"><div>${globalMarketBrandMark()}<span><b>GLOBAL MARKET</b><small>Produits & services en toute confiance</small></span></div><nav class="gmHomeLegalLinks" aria-label="Informations légales"><button type="button" onclick="openLegalPopup('cgu')">Conditions générales d'utilisation</button><button type="button" onclick="openLegalPopup('privacy')">Notre politique de confidentialité</button></nav><p>Gestion complète + boutique en ligne · © 2026 MEGA SERVICES SARL U</p></footer>
-  </main>`;
-  requestAnimationFrame(()=>{refreshGlobalMarketCartBadge();initFlexibleHorizontalMenu();window.scrollTo({top:0,behavior:'smooth'})});
 }
 function syncGlobalMarketSearch(sourceId){const source=document.getElementById(sourceId),target=document.getElementById('globalShopSearch');if(target)target.value=source?.value||'';filterGlobalShop(true);document.getElementById('gmHomeCatalogTop')?.scrollIntoView({behavior:'smooth',block:'start'});}
 function filterGlobalShop(resetPage=true){
@@ -4289,7 +4313,7 @@ function openGlobalClientAuth(mode='login'){
   const selected=PUBLIC_CLIENT_SESSION?.companyId||companies[0].id;
   const options=globalPublicCompanyOptions(selected);
   const isRegister=mode==='register';
-  const fields=isRegister?`<label>Nom complet<input id="clientRegName" placeholder="Nom et prénom"></label><label>Téléphone<input id="clientRegPhone" placeholder="Ex : 0700000000"></label><label>Email<input id="clientRegEmail" type="email" placeholder="Email facultatif"></label><label>Mot de passe<input id="clientRegPass" type="password" placeholder="Créer un mot de passe"></label><button class="gmHomePrimaryAuth" onclick="submitGlobalClientRegister()">Créer mon compte client</button><button class="gmHomeTextBtn" onclick="openGlobalClientAuth('login')">J’ai déjà un compte</button>`:`<label>Téléphone<input id="clientLoginPhone" placeholder="Votre téléphone"></label><label>Mot de passe<input id="clientLoginPass" type="password" placeholder="Votre mot de passe"></label><button class="gmHomePrimaryAuth" onclick="submitGlobalClientLogin()">Se connecter</button><button class="gmHomeTextBtn gmClientForgotLink" onclick="openGlobalClientForgotPassword()">Mot de passe oublié ?</button><button class="gmHomeTextBtn" onclick="openGlobalClientAuth('register')">Créer un compte client</button>`;
+  const fields=isRegister?`<label>Nom complet<input id="clientRegName" placeholder="Nom et prénom"></label><label>Téléphone<input id="clientRegPhone" placeholder="Ex : 0700000000"></label><label>Email<input id="clientRegEmail" type="email" placeholder="Email facultatif"></label><label>Mot de passe<input id="clientRegPass" type="password" placeholder="Créer un mot de passe"></label><button class="gmHomePrimaryAuth" onclick="submitGlobalClientRegister()">Créer mon compte client</button><button class="gmHomeTextBtn" onclick="openGlobalClientAuth('login')">J’ai déjà un compte</button>`:`<label>Téléphone<input id="clientLoginPhone" placeholder="Votre téléphone"></label><label>Mot de passe<input id="clientLoginPass" type="password" placeholder="Votre mot de passe"></label><button class="gmHomePrimaryAuth" onclick="submitGlobalClientLogin()">Se connecter</button><button class="gmHomeTextBtn" onclick="openGlobalClientAuth('register')">Créer un compte client</button>`;
   const modalId=isRegister?'clientRegisterModal':'clientLoginModal';
   document.body.insertAdjacentHTML('beforeend',`<div class="gmHomeAuthBackdrop" id="${modalId}" onclick="if(event.target.id==='${modalId}')this.remove()"><section class="gmHomeAuthCard gmClientAuthCard"><button class="gmHomeAuthClose" onclick="document.getElementById('${modalId}')?.remove()">×</button><span class="gmHomeModalKicker">COMPTE CLIENT</span><h2>${isRegister?'Créer un compte client':'Se connecter à mon compte client'}</h2><p>Choisissez la boutique concernée puis renseignez vos informations.</p><label>Boutique / entreprise<select id="gmClientCompany">${options}</select></label>${fields}</section></div>`);
 }
@@ -4442,7 +4466,7 @@ function renderPublicShop(slug){
           <button type="submit" aria-label="Rechercher">${officialShopIcon('search')}</button>
         </form>
         <div class="officialAccountActions">
-          <button type="button" class="officialHeaderCart officialContactBtn" onclick="openBoutiqueContactPopup('${c.id}')"><span>${officialShopIcon('support')}</span><span><small>Nous</small><b>Contacter</b></span></button>
+          <button type="button" class="officialHeaderCart" onclick="openPublicCart('${c.id}')"><span>${officialShopIcon('cart')}</span><span><small>Votre</small><b>Panier</b></span><i id="publicCartBadge">${publicCartCount(c.id)}</i></button>
         </div>
       </div>
       <nav class="officialNav officialNavSimplified">
@@ -5441,15 +5465,9 @@ async function resetPasswordRequestByAdmin(rid){
   try{const j=await secureEmployeePost('/api/users/reset-password',{userId:r.userId,requestId:rid});await cloudLoadData();alert('Mot de passe temporaire :\n\n'+j.temporaryPassword+'\n\nToutes les anciennes sessions sont invalidées.');renderDash('param')}catch(e){alert(secureErrorMessage(e,'Réinitialisation impossible.'))}
 }
 async function resetPasswordRequestBySuper(rid){
-  const {user}=current();if(user?.role!=='superadmin')return alert('Réservé au Super Admin GLOBAL MARKET.');
-  const r=(seed().passwordResetRequests||[]).find(x=>x.id===rid);if(!r)return alert('Demande introuvable.');
-  try{
-    if(r.role==='client'){
-      const j=await secureEmployeePost('/api/admin/client/reset-password',{clientId:r.userId,requestId:rid});
-      await cloudLoadData();alert('Mot de passe temporaire du compte client :\n\n'+j.temporaryPassword+'\n\nCommuniquez ce mot de passe au client.');renderSuper();return;
-    }
-    const j=await secureEmployeePost('/api/users/reset-password',{userId:r.userId,requestId:rid});await cloudLoadData();alert('Mot de passe temporaire de l’administrateur :\n\n'+j.temporaryPassword+'\n\nToutes ses anciennes sessions sont invalidées.');renderSuper();
-  }catch(e){alert(secureErrorMessage(e,'Réinitialisation impossible.'))}
+  const {user}=current(); if(user?.role!=='superadmin') return alert('Réservé au Super Admin GLOBAL MARKET.');
+  const r=(seed().passwordResetRequests||[]).find(x=>x.id===rid); if(!r) return alert('Demande introuvable.');
+  try{const j=await secureEmployeePost('/api/users/reset-password',{userId:r.userId,requestId:rid});await cloudLoadData();alert('Mot de passe temporaire de l’administrateur :\n\n'+j.temporaryPassword+'\n\nToutes ses anciennes sessions sont invalidées.');renderSuper()}catch(e){alert(secureErrorMessage(e,'Réinitialisation impossible.'))}
 }
 async function superResetAdminPassword(uid){
   const {user}=current(); if(user?.role!=='superadmin') return alert('Réservé au Super Admin GLOBAL MARKET.');
@@ -5539,7 +5557,7 @@ function globalUniversalHeader(active='public',options={}){
   const client=!user?currentGlobalClient():null;
   let nav='';
   let actions='';
-  const home=`<button type="button" class="${active==='public'?'active':''}" onclick="goGlobalMarketHome()">${officialShopIcon('home')}<span>Accueil</span></button><button type="button" class="${active==='about'?'active':''}" onclick="openGlobalMarketAbout()">${officialShopIcon('spark')}<span>À propos</span></button>`;
+  const home=`<button type="button" class="${active==='public'?'active':''}" onclick="goGlobalMarketHome()">${officialShopIcon('home')}<span>Accueil</span></button>`;
   if(user){
     if(user.role==='superadmin'){
       nav=home+(restricted?'':`<button type="button" class="${active==='super'?'active':''}" onclick="renderSuper()">▦ Administration</button><button type="button" onclick="exportData()">📤 Exporter données</button>`);
@@ -5556,7 +5574,7 @@ function globalUniversalHeader(active='public',options={}){
     const role=user.role==='superadmin'?'Super Admin':user.role==='admin'?'Administrateur':user.role==='caisse'?'Caisse':'Utilisateur';
     actions=`<div class="gmUniversalUser"><span class="gmUniversalIdentity">👤 <b>${esc(user.name||user.email||role)}</b><small>${esc(role)}</small></span>${user.role==='admin'&&!restricted?'<button type="button" class="gmUniversalAccount" onclick="showAccountPage()">Mon compte</button>':''}<button type="button" class="gmUniversalLogout" onclick="logout()">Déconnexion</button></div>`;
   }else if(client){
-    nav=home+(restricted?'':`<button type="button" class="${active==='client'?'active':''}" onclick="openClientSpace()">${officialShopIcon('user')}<span>Mon espace client</span></button><button type="button" onclick="openClientMessagesPopup()">${officialShopIcon('support')}<span>Messages</span></button><button type="button" onclick="openGlobalMarketCart()">${officialShopIcon('cart')}<span>Mon panier</span></button>`);
+    nav=home+(restricted?'':`<button type="button" class="${active==='client'?'active':''}" onclick="openClientSpace()">${officialShopIcon('user')}<span>Mon espace client</span></button><button type="button" onclick="openGlobalMarketCart()">${officialShopIcon('cart')}<span>Mon panier</span></button>`);
     actions=`<div class="gmUniversalUser"><span class="gmUniversalIdentity">👤 <b>${esc(client.name||'Client')}</b><small>Compte client</small></span><button type="button" class="gmUniversalLogout" onclick="logoutPublicClient()">Déconnexion</button></div>`;
   }else{
     nav=home;
@@ -5641,7 +5659,7 @@ async function finalizePublicCartPayment(companyId,method){return finalizeGlobal
 function openGlobalClientAuth(mode='login'){
   document.getElementById('gmClientAuthModal')?.remove();document.getElementById('clientLoginModal')?.remove();document.getElementById('clientRegisterModal')?.remove();
   const isRegister=mode==='register',modalId=isRegister?'clientRegisterModal':'clientLoginModal';
-  const fields=isRegister?`<label>Nom complet<input id="clientRegName" placeholder="Nom et prénom"></label><label>Téléphone<input id="clientRegPhone" placeholder="Ex : 0700000000"></label><label>Email<input id="clientRegEmail" type="email" placeholder="Email facultatif"></label><label>Mot de passe<input id="clientRegPass" type="password" placeholder="Majuscule, minuscule, chiffre et caractère spécial"></label><button class="gmHomePrimaryAuth" onclick="submitGlobalClientRegister()">Créer mon compte client</button><button class="gmHomeTextBtn" onclick="openGlobalClientAuth('login')">J’ai déjà un compte</button>`:`<label>Téléphone<input id="clientLoginPhone" placeholder="Votre téléphone"></label><label>Mot de passe<input id="clientLoginPass" type="password" placeholder="Votre mot de passe"></label><button class="gmHomePrimaryAuth" onclick="submitGlobalClientLogin()">Se connecter</button><button class="gmHomeTextBtn gmClientForgotLink" onclick="openGlobalClientForgotPassword()">Mot de passe oublié ?</button><button class="gmHomeTextBtn" onclick="openGlobalClientAuth('register')">Créer un compte client</button>`;
+  const fields=isRegister?`<label>Nom complet<input id="clientRegName" placeholder="Nom et prénom"></label><label>Téléphone<input id="clientRegPhone" placeholder="Ex : 0700000000"></label><label>Email<input id="clientRegEmail" type="email" placeholder="Email facultatif"></label><label>Mot de passe<input id="clientRegPass" type="password" placeholder="Majuscule, minuscule, chiffre et caractère spécial"></label><button class="gmHomePrimaryAuth" onclick="submitGlobalClientRegister()">Créer mon compte client</button><button class="gmHomeTextBtn" onclick="openGlobalClientAuth('login')">J’ai déjà un compte</button>`:`<label>Téléphone<input id="clientLoginPhone" placeholder="Votre téléphone"></label><label>Mot de passe<input id="clientLoginPass" type="password" placeholder="Votre mot de passe"></label><button class="gmHomePrimaryAuth" onclick="submitGlobalClientLogin()">Se connecter</button><button class="gmHomeTextBtn" onclick="openGlobalClientAuth('register')">Créer un compte client</button>`;
   document.body.insertAdjacentHTML('beforeend',`<div class="gmHomeAuthBackdrop" id="${modalId}" onclick="if(event.target.id==='${modalId}')this.remove()"><section class="gmHomeAuthCard gmClientAuthCard"><button class="gmHomeAuthClose" onclick="document.getElementById('${modalId}')?.remove()">×</button><span class="gmHomeModalKicker">COMPTE CLIENT GLOBAL</span><h2>${isRegister?'Créer mon compte GLOBAL MARKET':'Connexion client GLOBAL MARKET'}</h2><p>Un seul compte client pour acheter dans toutes les boutiques, disposer d’un panier unique et suivre tout votre historique.</p>${fields}</section></div>`);
 }
 function submitGlobalClientLogin(){return loginPublicClient();}
@@ -5665,146 +5683,20 @@ async function logoutPublicClient(){
   location.hash='#home';renderGlobalShop();
 }
 
-function gmClientOrderLinesHtml(o){
-  return normalizeOrderItems(o).map((line,i)=>`<tr><td>${i+1}</td><td><b>${esc(line.item||'Article')}</b><small>${esc(line.category||'')}</small></td><td>${Number(line.qty||1)}</td><td>${money(line.unit||0)}</td><td>${money(line.total||0)}</td></tr>`).join('');
-}
-function gmClientOrderCard(o,shop){
-  const canDelete=gmOrderCanClientDelete(o);
-  const clientCancelled=Boolean(o.clientCancelled);
-  const deleteArea=!canDelete?'<span class="gmOrderLocked">Paiement confirmé : suppression impossible</span>':(clientCancelled||gmOrderCancelled(o)?`<button type="button" class="gmOrderDeleteBtn" onclick="deleteMarketplaceOrder('${esc(o.id)}',false)">Supprimer la commande</button>`:`<button type="button" class="gmOrderCancelBtn" onclick="cancelClientMarketplaceOrder('${esc(o.id)}')">Annuler ma commande</button>`);
-  return `<article class="gmClientOrderCard"><div class="gmClientOrderCardHead"><div><span class="gmOrderShopLabel">${officialShopIcon('bag')} ${esc(shop)}</span><h4>Lot #${esc(o.id||'CMD')}</h4><small>${new Date(o.date).toLocaleString('fr-FR')} ${o.checkoutId?' · '+esc(o.checkoutId):''}</small></div><div class="gmClientOrderTotal"><small>Total à régler</small><b>${money(orderTotal(o))}</b></div></div><div class="gmClientOrderDetails"><table class="mkOrdersTable"><tr><th>N°</th><th>Produit / service</th><th>Qté</th><th>Prix U.</th><th>Total</th></tr>${gmClientOrderLinesHtml(o)}</table></div><div class="gmClientOrderMeta"><span><b>Livraison :</b> ${esc(o.deliveryCity||'-')}${o.deliveryNeighborhood?' · '+esc(o.deliveryNeighborhood):''}${o.shippingMethod?' · '+esc(o.shippingMethod):''}</span><span><b>Paiement :</b> ${esc(o.paymentMethod||'Non choisi')}${o.transactionId?' · ID '+esc(o.transactionId):''}</span></div><div class="gmClientOrderActions">${gmOrderClientStatusButton(o)}<button type="button" class="gmOrderDetailsBtn" onclick="openMarketplaceOrderPopup('${esc(o.id)}',false)">Voir les détails</button>${deleteArea}</div></article>`;
-}
 function openClientSpace(){
   document.getElementById('clientSpaceModal')?.remove();
   const d=seed(),client=currentGlobalClient();if(!client)return openGlobalClientAuth('login');
-  const companyMap=new Map((d.companies||[]).map(c=>[String(c.id),c]));
-  const orders=(d.orders||[]).filter(o=>String(o.clientId)===String(client.id)).sort((a,b)=>new Date(b.date)-new Date(a.date));
-  const grouped=new Map();
-  for(const o of orders){const cid=String(o.companyId||'');if(!grouped.has(cid))grouped.set(cid,[]);grouped.get(cid).push(o)}
-  const groupsHtml=[...grouped.entries()].map(([cid,list])=>{const shop=list[0]?.shopName||companyMap.get(cid)?.name||'Boutique';return `<section class="gmClientOrderShopGroup"><div class="gmClientOrderShopHead"><div>${officialShopIcon('bag')}<span><b>${esc(shop)}</b><small>${list.length} lot(s) de commande</small></span></div></div><div class="gmClientOrderCards">${list.map(o=>gmClientOrderCard(o,shop)).join('')}</div></section>`}).join('')||'<div class="gmClientOrdersEmpty">Aucune commande pour le moment.</div>';
-  document.body.insertAdjacentHTML('beforeend',`<div class="marketPayModalBackdrop" id="clientSpaceModal"><div class="marketPayModal clientSpaceBox gmGlobalClientSpace gmClientOrdersWorkspace"><button class="marketPayClose" onclick="document.getElementById('clientSpaceModal')?.remove()">×</button><div class="gmClientSpaceHead"><div><span class="gmHomeModalKicker">ESPACE CLIENT GLOBAL MARKET</span><h2>${esc(client.name)}</h2><p>${esc(client.phone)} ${client.email?'— '+esc(client.email):''}</p></div><div class="gmClientSpaceHeadActions"><button type="button" class="gmClientAccountBtn" onclick="openClientAccountInSpace()">${officialShopIcon('user')} Mon compte</button><button type="button" class="gmClientMessageBtn" onclick="openClientMessagesPopup()">${officialShopIcon('support')} Messages</button></div></div><div class="gmClientOrdersTitle"><div><h3>Mes commandes par boutique</h3><p>Chaque lot est traité par la boutique concernée. Le paiement devient disponible après validation du vendeur.</p></div><span>${orders.length} commande(s)</span></div><div class="gmClientOrdersScroll">${groupsHtml}</div><div class="marketPayActions"><button onclick="document.getElementById('clientSpaceModal')?.remove()">Fermer</button></div></div></div>`);
-}
-async function cancelClientMarketplaceOrder(orderId){
-  const d=seed(),o=(d.orders||[]).find(x=>String(x.id)===String(orderId));if(!o)return alert('Commande introuvable.');
-  if(gmOrderPaymentConfirmed(o))return alert('Cette commande est déjà payée et confirmée. Elle ne peut plus être annulée.');
-  if(!(await g3Confirm('Annuler cette commande ? Le vendeur verra immédiatement son annulation.','Annuler ma commande')))return;
-  try{await securePublicPost('/api/public/order/action',{orderId,action:'cancel'});await cloudLoadPublicData();document.getElementById('clientSpaceModal')?.remove();openClientSpace();}catch(e){alert(secureErrorMessage(e,'Annulation impossible.'))}
+  const deleted=new Set([...(client.deletedOrderIds||[]),...((d.clientDeletedOrders&&d.clientDeletedOrders[client.id])||[])]);
+  const companyMap=new Map((d.companies||[]).map(c=>[c.id,c]));
+  const orders=(d.orders||[]).filter(o=>o.clientId===client.id&&!((o.clientDeletedIds||[]).includes(client.id))&&!deleted.has(o.id)).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const rows=orders.map(o=>{const shop=o.shopName||companyMap.get(o.companyId)?.name||'Boutique';return `<tr><td><button class="orderLinkBtn" onclick="openMarketplaceOrderPopup('${esc(o.id||'CMD')}',false)">#${esc(o.id||'CMD')}</button><small class="gmCheckoutRef">${esc(o.checkoutId||'')}</small></td><td>${esc(shop)}</td><td>${new Date(o.date).toLocaleDateString('fr-FR')}</td><td>${orderItemsCount(o)} article(s)</td><td>${money(orderTotal(o))}</td><td>${esc(o.paymentMethod||'Non choisi')}</td><td><span class="mkStatus">${esc(orderMainStatus(o))}</span></td><td><button class="danger smallDeleteOrder" onclick="deleteMarketplaceOrder('${esc(o.id||'CMD')}',false)">Supprimer</button></td></tr>`}).join('')||'<tr><td colspan="8">Aucune commande pour le moment.</td></tr>';
+  document.body.insertAdjacentHTML('beforeend',`<div class="marketPayModalBackdrop" id="clientSpaceModal"><div class="marketPayModal clientSpaceBox gmGlobalClientSpace"><button class="marketPayClose" onclick="document.getElementById('clientSpaceModal')?.remove()">×</button><div class="gmClientSpaceHead"><div><span class="gmHomeModalKicker">ESPACE CLIENT GLOBAL MARKET</span><h2>${esc(client.name)}</h2><p>${esc(client.phone)} ${client.email?'— '+esc(client.email):''}</p></div></div><h3>Historique et suivi de toutes mes commandes</h3><p class="sub">Chaque lot correspond à la boutique qui doit préparer vos produits. Les statuts sont mis à jour séparément par les administrateurs concernés.</p><div class="clientOrdersScroll"><table class="mkOrdersTable"><tr><th>N° LOT</th><th>Boutique</th><th>Date</th><th>Articles</th><th>Total</th><th>Paiement</th><th>Statut</th><th>Action</th></tr>${rows}</table></div><div class="marketPayActions"><button onclick="document.getElementById('clientSpaceModal')?.remove()">Fermer</button></div></div></div>`);
 }
 async function deleteMarketplaceOrder(orderId,isAdmin){
-  if(isAdmin){
-    if(!(await g3Confirm('Supprimer cette commande seulement de la liste administrateur ?','Suppression commande')))return;
-    const d=seed(),o=(d.orders||[]).find(x=>String(x.id)===String(orderId));if(!o)return alert('Commande introuvable.');o.adminDeleted=true;save(d);document.getElementById('marketOrderDetailsModal')?.remove();showMarketplacePage();return;
-  }
-  const d=seed(),o=(d.orders||[]).find(x=>String(x.id)===String(orderId));if(!o)return alert('Commande introuvable.');
-  if(gmOrderPaymentConfirmed(o))return alert('Une commande déjà payée et confirmée ne peut plus être supprimée.');
-  if(!gmOrderCancelled(o))return alert('Annulez d’abord cette commande avant de la supprimer.');
-  if(!(await g3Confirm('Supprimer définitivement cette commande ? Elle sera également supprimée de la liste de la boutique.','Suppression définitive')))return;
-  try{await securePublicPost('/api/public/order/delete',{orderId});await cloudLoadPublicData();document.getElementById('marketOrderDetailsModal')?.remove();document.getElementById('clientSpaceModal')?.remove();openClientSpace();}catch(e){alert(secureErrorMessage(e,'Suppression impossible.'))}
+  if(!(await g3Confirm('Supprimer cette commande seulement de cette liste ?','Suppression commande')))return;
+  if(isAdmin){const d=seed(),o=(d.orders||[]).find(x=>String(x.id)===String(orderId));if(!o)return alert('Commande introuvable.');o.adminDeleted=true;save(d);document.getElementById('marketOrderDetailsModal')?.remove();showMarketplacePage();return;}
+  try{await securePublicPost('/api/public/order/delete',{orderId});await cloudLoadPublicData();document.getElementById('marketOrderDetailsModal')?.remove();document.getElementById('clientSpaceModal')?.remove();openClientSpace();}catch(e){alert(secureErrorMessage(e,'Suppression impossible.'));}
 }
-function openClientOrderPayment(orderId){
-  document.getElementById('gmClientOrderPaymentModal')?.remove();
-  const d=seed(),client=currentGlobalClient();const o=(d.orders||[]).find(x=>String(x.id)===String(orderId)&&String(x.clientId)===String(client?.id));if(!o)return alert('Commande introuvable.');
-  if(!gmOrderValidated(o)||gmOrderCancelled(o))return alert('Le paiement sera disponible uniquement après validation de la commande par la boutique.');
-  if(gmOrderPaymentConfirmed(o))return alert('Cette commande est déjà payée et confirmée.');
-  const company=(d.companies||[]).find(c=>String(c.id)===String(o.companyId))||{};
-  document.body.insertAdjacentHTML('beforeend',`<div class="gmHomeAuthBackdrop" id="gmClientOrderPaymentModal" onclick="if(event.target.id==='gmClientOrderPaymentModal')this.remove()"><section class="gmHomeAuthCard gmClientOrderPaymentCard"><button class="gmHomeAuthClose" onclick="document.getElementById('gmClientOrderPaymentModal')?.remove()">×</button><span class="gmHomeModalKicker">RÈGLEMENT DE COMMANDE</span><h2>Régler le lot #${esc(o.id)}</h2><p>Boutique : <b>${esc(o.shopName||company.name||'Boutique')}</b> · Total : <b>${money(orderTotal(o))}</b></p><div class="gmOrderPaymentMethods"><button type="button" onclick="showClientOrderPaymentMethod('${esc(o.id)}','WAVE')">Régler avec Wave</button><button type="button" class="usdt" onclick="showClientOrderPaymentMethod('${esc(o.id)}','USDT TRC20')">Régler avec USDT TRC20</button></div><div id="gmOrderPaymentChoice"><p class="notice">Choisissez votre moyen de paiement pour afficher le QR Code configuré par la boutique.</p></div></section></div>`);
-}
-function showClientOrderPaymentMethod(orderId,method){
-  const d=seed(),o=(d.orders||[]).find(x=>String(x.id)===String(orderId));if(!o)return;const company=(d.companies||[]).find(c=>String(c.id)===String(o.companyId))||{};const total=orderTotal(o);let paymentBox='';
-  if(method==='WAVE'){
-    const waveLink=buildWavePaymentLink(company.marketWaveBusinessLink,total);if(!waveLink)paymentBox='<p class="notice">Le lien Wave de cette boutique n’est pas encore configuré.</p>';else{const qr='https://api.qrserver.com/v1/create-qr-code/?size=260x260&data='+encodeURIComponent(waveLink);paymentBox=`<div class="gmOrderQrBox"><img src="${qr}" alt="QR Code Wave"><a href="${esc(waveLink)}" target="_blank" rel="noopener">Ouvrir le paiement Wave</a></div>`}
-  }else{
-    const address=String(company.marketUsdtTrc20||'').trim();if(!address)paymentBox='<p class="notice">L’adresse USDT TRC20 de cette boutique n’est pas encore configurée.</p>';else{const payload=`USDT TRC20\nAdresse: ${address}\nMontant commande: ${total} FCFA\nCommande: ${o.id}`;const qr='https://api.qrserver.com/v1/create-qr-code/?size=260x260&data='+encodeURIComponent(payload);paymentBox=`<div class="gmOrderQrBox"><img src="${qr}" alt="QR Code USDT TRC20"><div class="usdtBox"><small>Adresse USDT TRC20</small><b>${esc(address)}</b><small>Lot #${esc(o.id)} · ${money(total)}</small></div></div>`}
-  }
-  const target=document.getElementById('gmOrderPaymentChoice');if(target)target.innerHTML=paymentBox+`<div class="gmOrderTransactionForm"><label>ID de la transaction<input id="gmOrderTransactionId" placeholder="Saisissez l’identifiant de la transaction"></label><button type="button" onclick="submitClientOrderPayment('${esc(o.id)}','${esc(method)}')">J’ai payé</button></div>`;
-}
-async function submitClientOrderPayment(orderId,method){
-  const transactionId=String($('#gmOrderTransactionId')?.value||'').trim();if(!transactionId)return alert('Saisissez l’ID de la transaction avant de confirmer.');
-  try{await securePublicPost('/api/public/order/action',{orderId,action:'declare_payment',paymentMethod:method,transactionId});await cloudLoadPublicData();document.getElementById('gmClientOrderPaymentModal')?.remove();document.getElementById('clientSpaceModal')?.remove();openClientSpace();alert('Paiement transmis à la boutique. En attente de confirmation par l’administrateur.');}catch(e){alert(secureErrorMessage(e,'Transmission du paiement impossible.'))}
-}
-
-/* ========================================================================
-   MESSAGERIE BOUTIQUES / CLIENTS — ajout ciblé sur la base V5.5.1
-   ======================================================================== */
-function gmMessageDate(value){try{return new Date(value||Date.now()).toLocaleString('fr-FR')}catch{return ''}}
-function gmMessageThreadId(message){return String(message?.threadId||message?.id||'')}
-function gmMessageCompanyName(companyId){return (seed().companies||[]).find(c=>String(c.id)===String(companyId))?.name||'Boutique GLOBAL MARKET'}
-function gmClientVisibleMessages(){const client=currentGlobalClient();if(!client)return[];return (seed().marketMessages||[]).filter(m=>String(m.clientId||'')===String(client.id)&&!m.deletedByClient).slice().sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0))}
-
-function openBoutiqueContactPopup(companyId,threadId=''){
-  document.getElementById('gmBoutiqueContactModal')?.remove();
-  const d=seed(),company=(d.companies||[]).find(c=>String(c.id)===String(companyId));if(!company)return alert('Boutique introuvable.');
-  const client=currentGlobalClient();
-  const name=client?.name||'',phone=client?.phone||'',email=client?.email||'';
-  const subject=threadId?'Réponse à la boutique':'';
-  document.body.insertAdjacentHTML('beforeend',`<div class="gmHomeAuthBackdrop" id="gmBoutiqueContactModal" onclick="if(event.target.id==='gmBoutiqueContactModal')this.remove()"><section class="gmHomeAuthCard gmMessageComposeCard"><button class="gmHomeAuthClose" onclick="document.getElementById('gmBoutiqueContactModal')?.remove()">×</button><span class="gmHomeModalKicker">CONTACT BOUTIQUE</span><h2>Contacter ${esc(company.name||'la boutique')}</h2><p>Votre message sera transmis directement à l’administrateur de cette boutique.</p><div class="gmMessageFormGrid"><label>Nom complet<input id="gmMsgName" value="${esc(name)}" placeholder="Votre nom"></label><label>Téléphone<input id="gmMsgPhone" value="${esc(phone)}" placeholder="Votre contact"></label><label>Email<input id="gmMsgEmail" type="email" value="${esc(email)}" placeholder="Email facultatif"></label><label>Objet<input id="gmMsgSubject" value="${esc(subject)}" placeholder="Objet de votre demande"></label><label class="full">Message<textarea id="gmMsgBody" rows="6" placeholder="Écrivez votre message à la boutique..."></textarea></label></div><div class="gmMessageFormActions"><button type="button" class="btn2" onclick="document.getElementById('gmBoutiqueContactModal')?.remove()">Annuler</button><button type="button" class="gmHomePrimaryAuth" onclick="sendBoutiqueMessage('${esc(companyId)}','${esc(threadId)}')">Envoyer le message</button></div></section></div>`);
-}
-async function sendBoutiqueMessage(companyId,threadId=''){
-  const payload={companyId,threadId,name:($('#gmMsgName')?.value||'').trim(),phone:($('#gmMsgPhone')?.value||'').trim(),email:($('#gmMsgEmail')?.value||'').trim(),subject:($('#gmMsgSubject')?.value||'').trim(),message:($('#gmMsgBody')?.value||'').trim()};
-  if(!payload.name||!payload.phone||!payload.message)return alert('Nom, téléphone et message sont obligatoires.');
-  const btn=document.querySelector('#gmBoutiqueContactModal .gmHomePrimaryAuth');if(btn){btn.disabled=true;btn.textContent='Envoi…'}
-  try{const r=await fetchWithTimeout('/api/public/message',{method:'POST',headers:clientSecurityHeaders({'Content-Type':'application/json'}),body:JSON.stringify(payload),cache:'no-store'},12000);await readApiPayload(r);await cloudLoadPublicData();document.getElementById('gmBoutiqueContactModal')?.remove();alert('Votre message a été envoyé à la boutique.');if(currentGlobalClient())openClientMessagesPopup();}
-  catch(e){alert(secureErrorMessage(e,'Envoi du message impossible.'));if(btn){btn.disabled=false;btn.textContent='Envoyer le message'}}
-}
-
-function marketplaceAdminMessagesHtml(messages,companyId){
-  const rows=messages.map(m=>`<tr><td><input class="gmAdminMsgCheck" type="checkbox" value="${esc(m.id)}"></td><td><span class="gmMsgDirection ${m.senderType==='admin'?'admin':'client'}">${m.senderType==='admin'?'Réponse boutique':'Client'}</span></td><td><b>${esc(m.senderName||'Client')}</b><br><small>${esc(m.senderPhone||'')}${m.senderEmail?' · '+esc(m.senderEmail):''}</small></td><td><b>${esc(m.subject||'Sans objet')}</b><p>${esc(m.body||m.message||'')}</p></td><td>${gmMessageDate(m.createdAt)}</td><td><div class="gmMsgRowActions"><button class="btn2" onclick="openAdminMessageThread('${esc(gmMessageThreadId(m))}')">Consulter</button>${m.senderType==='client'?`<button onclick="openAdminMessageReply('${esc(m.id)}')">Répondre</button>`:''}</div></td></tr>`).join('');
-  return `<div class="mkPanel mkAdminSinglePage gmAdminMessagesPanel"><div class="mkPanelHead gmMessagesPanelHead"><div><h2>Messages des clients</h2><p class="sub">Demandes reçues depuis la boutique publique et réponses envoyées par votre boutique.</p></div><span class="gmMessagesCount">${messages.length} message(s)</span></div><div class="gmMessagesToolbar"><label><input type="checkbox" onchange="toggleAllAdminMessages(this.checked)"> Tout sélectionner</label><button class="danger" onclick="deleteSelectedAdminMessages()">Supprimer la sélection</button><button class="danger gmDeleteAllMessages" onclick="deleteAllAdminMessages()">Tout supprimer</button></div><div class="clientOrdersScroll"><table class="mkOrdersTable gmMessagesTable"><tr><th>✓</th><th>Type</th><th>Client</th><th>Message</th><th>Date</th><th>Action</th></tr>${rows||'<tr><td colspan="6">Aucun message reçu pour le moment.</td></tr>'}</table></div></div>`;
-}
-function toggleAllAdminMessages(checked){document.querySelectorAll('.gmAdminMsgCheck').forEach(x=>x.checked=!!checked)}
-async function deleteSelectedAdminMessages(){const ids=[...document.querySelectorAll('.gmAdminMsgCheck:checked')].map(x=>x.value);if(!ids.length)return alert('Sélectionnez au moins un message.');if(!(await g3Confirm(`Supprimer ${ids.length} message(s) de votre espace ?`,'Suppression messages')))return;const {d,company}=current();(d.marketMessages||[]).forEach(m=>{if(String(m.companyId)===String(company.id)&&ids.includes(String(m.id)))m.deletedByAdmin=true});save(d);showMarketplaceAdminPage('messages')}
-async function deleteAllAdminMessages(){if(!(await g3Confirm('Supprimer tous les messages de votre espace Marketplace ?','Tout supprimer')))return;const {d,company}=current();(d.marketMessages||[]).forEach(m=>{if(String(m.companyId)===String(company.id))m.deletedByAdmin=true});save(d);showMarketplaceAdminPage('messages')}
-function openAdminMessageThread(threadId){
-  document.getElementById('gmAdminMessageThreadModal')?.remove();const {d,company}=current();const rows=(d.marketMessages||[]).filter(m=>String(m.companyId)===String(company.id)&&gmMessageThreadId(m)===String(threadId)&&!m.deletedByAdmin).sort((a,b)=>new Date(a.createdAt||0)-new Date(b.createdAt||0));if(!rows.length)return alert('Conversation introuvable.');const clientMsg=rows.find(m=>m.senderType==='client')||rows[0];
-  const conversation=rows.map(m=>`<article class="gmConversationBubble ${m.senderType==='admin'?'fromAdmin':'fromClient'}"><header><b>${esc(m.senderName|| (m.senderType==='admin'?'Boutique':'Client'))}</b><span>${gmMessageDate(m.createdAt)}</span></header><h4>${esc(m.subject||'')}</h4><p>${esc(m.body||m.message||'')}</p></article>`).join('');
-  document.body.insertAdjacentHTML('beforeend',`<div class="gmHomeAuthBackdrop" id="gmAdminMessageThreadModal" onclick="if(event.target.id==='gmAdminMessageThreadModal')this.remove()"><section class="gmHomeAuthCard gmMessageThreadCard"><button class="gmHomeAuthClose" onclick="document.getElementById('gmAdminMessageThreadModal')?.remove()">×</button><span class="gmHomeModalKicker">CONVERSATION CLIENT</span><h2>${esc(clientMsg.senderName||'Client')}</h2><p>${esc(clientMsg.senderPhone||'')}${clientMsg.senderEmail?' · '+esc(clientMsg.senderEmail):''}</p><div class="gmConversationList">${conversation}</div><div class="gmMessageFormActions"><button class="btn2" onclick="document.getElementById('gmAdminMessageThreadModal')?.remove()">Fermer</button><button onclick="document.getElementById('gmAdminMessageThreadModal')?.remove();openAdminMessageReply('${esc(clientMsg.id)}')">Répondre</button></div></section></div>`);
-}
-function openAdminMessageReply(messageId){
-  document.getElementById('gmAdminMessageReplyModal')?.remove();const {d}=current();const source=(d.marketMessages||[]).find(m=>String(m.id)===String(messageId));if(!source)return alert('Message introuvable.');
-  document.body.insertAdjacentHTML('beforeend',`<div class="gmHomeAuthBackdrop" id="gmAdminMessageReplyModal" onclick="if(event.target.id==='gmAdminMessageReplyModal')this.remove()"><section class="gmHomeAuthCard gmMessageComposeCard"><button class="gmHomeAuthClose" onclick="document.getElementById('gmAdminMessageReplyModal')?.remove()">×</button><span class="gmHomeModalKicker">RÉPONSE BOUTIQUE</span><h2>Répondre à ${esc(source.senderName||'ce client')}</h2><p>Objet : <b>${esc(source.subject||'Demande client')}</b></p><label class="gmReplyLabel">Votre réponse<textarea id="gmAdminReplyBody" rows="7" placeholder="Rédigez votre réponse..."></textarea></label><div class="gmMessageFormActions"><button class="btn2" onclick="document.getElementById('gmAdminMessageReplyModal')?.remove()">Annuler</button><button onclick="sendAdminMessageReply('${esc(source.id)}')">Envoyer la réponse</button></div></section></div>`);
-}
-function sendAdminMessageReply(messageId){const {d,company,user}=current();d.marketMessages=d.marketMessages||[];const source=d.marketMessages.find(m=>String(m.id)===String(messageId));if(!source)return alert('Message introuvable.');const body=($('#gmAdminReplyBody')?.value||'').trim();if(!body)return alert('Rédigez votre réponse.');d.marketMessages.push({id:id('msg'),companyId:company.id,clientId:source.clientId||'',threadId:gmMessageThreadId(source),senderType:'admin',senderName:company.name||user?.name||'Boutique',senderPhone:company.phone||'',senderEmail:company.email||'',subject:'RE: '+String(source.subject||'Demande client').replace(/^RE:\s*/i,''),body,createdAt:new Date().toISOString(),deletedByAdmin:false,deletedByClient:false});save(d);document.getElementById('gmAdminMessageReplyModal')?.remove();showMarketplaceAdminPage('messages');alert('Réponse enregistrée et visible dans l’espace client.')}
-
-
-function openClientAccountInSpace(){
-  document.getElementById('clientSpaceModal')?.remove();
-  const client=currentGlobalClient();if(!client)return openGlobalClientAuth('login');
-  const created=client.createdAt?new Date(client.createdAt).toLocaleString('fr-FR'):'Non disponible';
-  document.body.insertAdjacentHTML('beforeend',`<div class="marketPayModalBackdrop" id="clientSpaceModal"><div class="marketPayModal clientSpaceBox gmGlobalClientSpace gmClientAccountWorkspace"><button class="marketPayClose" onclick="document.getElementById('clientSpaceModal')?.remove()">×</button><div class="gmClientSpaceHead"><div><span class="gmHomeModalKicker">MON COMPTE CLIENT</span><h2>${esc(client.name||'Client')}</h2><p>Gérez vos informations personnelles et vos accès GLOBAL MARKET.</p></div><button type="button" class="gmClientMessageBtn" onclick="openClientSpace()">← Mes commandes</button></div><div class="gmClientAccountSummary"><article><small>N° compte client</small><b>${esc(client.id||'-')}</b></article><article><small>Statut du compte</small><b>Actif</b></article><article><small>Identifiant de connexion</small><b>${esc(client.phone||'-')}</b></article><article><small>Créé le</small><b>${esc(created)}</b></article></div><section class="gmClientAccountForm"><h3>Informations personnelles</h3><div class="gmClientAccountGrid"><label>Nom complet<input id="gmAccountClientName" value="${esc(client.name||'')}" autocomplete="name"></label><label>Email<input id="gmAccountClientEmail" type="email" value="${esc(client.email||'')}" autocomplete="email"></label><label>Identifiant de connexion (téléphone)<input id="gmAccountClientPhone" value="${esc(client.phone||'')}" inputmode="tel" autocomplete="tel"></label></div><h3>Sécurité du compte</h3><p class="sub">Le mot de passe actuel est obligatoire pour changer l’identifiant ou le mot de passe.</p><div class="gmClientAccountGrid"><label>Mot de passe actuel<input id="gmAccountCurrentPassword" type="password" autocomplete="current-password" placeholder="Votre mot de passe actuel"></label><label>Nouveau mot de passe<input id="gmAccountNewPassword" type="password" autocomplete="new-password" placeholder="Laisser vide pour conserver"></label><label>Confirmer le nouveau mot de passe<input id="gmAccountConfirmPassword" type="password" autocomplete="new-password" placeholder="Confirmer le nouveau mot de passe"></label></div><div class="gmClientAccountActions"><button type="button" class="btn2" onclick="openClientSpace()">Retour</button><button type="button" class="gmHomePrimaryAuth" onclick="saveGlobalClientAccount()">Enregistrer les modifications</button></div></section></div></div>`);
-}
-async function saveGlobalClientAccount(){
-  const client=currentGlobalClient();if(!client)return openGlobalClientAuth('login');
-  const name=($('#gmAccountClientName')?.value||'').trim(),email=($('#gmAccountClientEmail')?.value||'').trim(),phone=($('#gmAccountClientPhone')?.value||'').trim();
-  const currentPassword=$('#gmAccountCurrentPassword')?.value||'',newPassword=$('#gmAccountNewPassword')?.value||'',confirmPassword=$('#gmAccountConfirmPassword')?.value||'';
-  if(!name||!phone)return alert('Le nom et le téléphone sont obligatoires.');
-  if(newPassword&&newPassword!==confirmPassword)return alert('La confirmation du nouveau mot de passe ne correspond pas.');
-  const securityChanged=String(phone)!==String(client.phone||'')||Boolean(newPassword);
-  if(securityChanged&&!currentPassword)return alert('Saisissez votre mot de passe actuel pour modifier votre identifiant ou votre mot de passe.');
-  try{
-    const r=await fetchWithTimeout('/api/public/client/update',{method:'POST',headers:clientSecurityHeaders({'Content-Type':'application/json'}),body:JSON.stringify({name,email,phone,currentPassword,newPassword}),cache:'no-store'},12000);
-    const j=await readApiPayload(r);if(j.session)PUBLIC_CLIENT_SESSION=j.session;window.publicShopClientId=j.client?.id||client.id;
-    await cloudLoadPublicData();document.getElementById('clientSpaceModal')?.remove();render();setTimeout(()=>openClientAccountInSpace(),0);alert('Votre compte client a été mis à jour.');
-  }catch(e){alert(secureErrorMessage(e,'Modification du compte impossible.'))}
-}
-function openGlobalClientForgotPassword(){
-  document.getElementById('clientLoginModal')?.remove();document.getElementById('gmClientForgotModal')?.remove();
-  document.body.insertAdjacentHTML('beforeend',`<div class="gmHomeAuthBackdrop" id="gmClientForgotModal" onclick="if(event.target.id==='gmClientForgotModal')this.remove()"><section class="gmHomeAuthCard gmClientForgotCard"><button class="gmHomeAuthClose" onclick="document.getElementById('gmClientForgotModal')?.remove()">×</button><span class="gmHomeModalKicker">RÉINITIALISATION COMPTE CLIENT</span><h2>Mot de passe oublié</h2><p>Votre demande sera transmise au Super Admin GLOBAL MARKET.</p><label>Téléphone / identifiant<input id="gmForgotClientPhone" inputmode="tel" placeholder="Votre téléphone de connexion"></label><label>Email de contact<input id="gmForgotClientEmail" type="email" placeholder="Votre email, si disponible"></label><label>Motif<textarea id="gmForgotClientReason" rows="4" placeholder="Ex : mot de passe oublié">Mot de passe oublié</textarea></label><div class="gmClientAccountActions"><button type="button" class="btn2" onclick="document.getElementById('gmClientForgotModal')?.remove();openGlobalClientAuth('login')">Retour connexion</button><button type="button" class="gmHomePrimaryAuth" onclick="submitGlobalClientForgotPassword()">Envoyer la demande</button></div></section></div>`);
-}
-async function submitGlobalClientForgotPassword(){
-  const phone=($('#gmForgotClientPhone')?.value||'').trim(),email=($('#gmForgotClientEmail')?.value||'').trim(),reason=($('#gmForgotClientReason')?.value||'Mot de passe oublié').trim();
-  if(!phone)return alert('Saisissez votre téléphone / identifiant de connexion.');
-  try{const r=await fetchWithTimeout('/api/public/client/request-reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,email,reason}),cache:'no-store'},12000);await readApiPayload(r);document.getElementById('gmClientForgotModal')?.remove();alert('Demande envoyée au Super Admin GLOBAL MARKET.');openGlobalClientAuth('login');}catch(e){alert(secureErrorMessage(e,'Envoi de la demande impossible.'))}
-}
-function openClientMessagesPopup(){
-  document.getElementById('gmClientMessagesModal')?.remove();const client=currentGlobalClient();if(!client)return openGlobalClientAuth('login');const d=seed(),companies=d.companies||[],messages=gmClientVisibleMessages();const companyOptions=companies.filter(c=>hasPlanFeature(c,'public_shop')).map(c=>`<option value="${esc(c.id)}">${esc(c.name||'Boutique')}</option>`).join('');
-  const rows=messages.map(m=>`<tr><td><input class="gmClientMsgCheck" type="checkbox" value="${esc(m.id)}"></td><td><span class="gmMsgDirection ${m.senderType==='admin'?'admin':'client'}">${m.senderType==='admin'?'Boutique':'Moi'}</span></td><td>${esc(gmMessageCompanyName(m.companyId))}</td><td><b>${esc(m.subject||'Sans objet')}</b><p>${esc(m.body||m.message||'')}</p></td><td>${gmMessageDate(m.createdAt)}</td><td>${m.senderType==='admin'?`<button class="btn2" onclick="openBoutiqueContactPopup('${esc(m.companyId)}','${esc(gmMessageThreadId(m))}')">Répondre</button>`:''}</td></tr>`).join('');
-  document.body.insertAdjacentHTML('beforeend',`<div class="marketPayModalBackdrop" id="gmClientMessagesModal"><div class="marketPayModal gmClientMessagesBox"><button class="marketPayClose" onclick="document.getElementById('gmClientMessagesModal')?.remove()">×</button><div class="gmClientMessagesHeader"><div><span class="gmHomeModalKicker">MESSAGERIE CLIENT</span><h2>Mes messages</h2><p>Échangez directement avec les administrateurs des boutiques.</p></div><div class="gmClientNewMessage"><select id="gmClientMessageCompany"><option value="">Choisir une boutique</option>${companyOptions}</select><button onclick="openClientNewMessageForSelectedShop()">Nouveau message</button></div></div><div class="gmMessagesToolbar"><label><input type="checkbox" onchange="toggleAllClientMessages(this.checked)"> Tout sélectionner</label><button class="danger" onclick="deleteSelectedClientMessages()">Supprimer la sélection</button><button class="danger gmDeleteAllMessages" onclick="deleteAllClientMessages()">Tout supprimer</button></div><div class="clientOrdersScroll"><table class="mkOrdersTable gmMessagesTable"><tr><th>✓</th><th>Type</th><th>Boutique</th><th>Message</th><th>Date</th><th>Action</th></tr>${rows||'<tr><td colspan="6">Aucun message pour le moment.</td></tr>'}</table></div><div class="marketPayActions"><button class="btn2" onclick="document.getElementById('gmClientMessagesModal')?.remove()">Fermer</button></div></div></div>`);
-}
-function openClientNewMessageForSelectedShop(){const companyId=$('#gmClientMessageCompany')?.value||'';if(!companyId)return alert('Choisissez une boutique.');document.getElementById('gmClientMessagesModal')?.remove();openBoutiqueContactPopup(companyId)}
-function toggleAllClientMessages(checked){document.querySelectorAll('.gmClientMsgCheck').forEach(x=>x.checked=!!checked)}
-async function deleteClientMessages(ids=[],all=false){try{const r=await fetchWithTimeout('/api/public/message/delete',{method:'POST',headers:clientSecurityHeaders({'Content-Type':'application/json'}),body:JSON.stringify({ids,all}),cache:'no-store'},12000);await readApiPayload(r);await cloudLoadPublicData();document.getElementById('gmClientMessagesModal')?.remove();openClientMessagesPopup()}catch(e){alert(secureErrorMessage(e,'Suppression des messages impossible.'))}}
-async function deleteSelectedClientMessages(){const ids=[...document.querySelectorAll('.gmClientMsgCheck:checked')].map(x=>x.value);if(!ids.length)return alert('Sélectionnez au moins un message.');if(await g3Confirm(`Supprimer ${ids.length} message(s) de votre espace ?`,'Suppression messages'))deleteClientMessages(ids,false)}
-async function deleteAllClientMessages(){if(await g3Confirm('Supprimer tous les messages de votre espace client ?','Tout supprimer'))deleteClientMessages([],true)}
 
 
 /* ========================================================================
