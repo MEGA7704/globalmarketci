@@ -1,31 +1,369 @@
 import fs from 'node:fs';
-const fail=m=>{console.error('[validate V6] '+m);process.exit(1)};
-const required=['public/index.html','public/assets/app.js','public/assets/style.css','public/_worker.js','public/_routes.json','wrangler.json','cloudflare/schema-v6.sql','realtime-worker/src/index.js','realtime-worker/wrangler.json','wrangler.pages-with-realtime.json','wrangler.pages-with-media.json','wrangler.pages-full.json','scripts/migrate-v6.mjs','README_MIGRATION_V6.md'];
-for(const f of required)if(!fs.existsSync(f))fail('Fichier obligatoire absent : '+f);
-const app=fs.readFileSync('public/assets/app.js','utf8'),worker=fs.readFileSync('public/_worker.js','utf8'),schema=fs.readFileSync('cloudflare/schema-v6.sql','utf8'),legacyMigration=fs.readFileSync('cloudflare/migrations/0006_normalized_company_storage.sql','utf8'),rt=fs.readFileSync('realtime-worker/src/index.js','utf8'),pkg=JSON.parse(fs.readFileSync('package.json','utf8')),wr=JSON.parse(fs.readFileSync('wrangler.json','utf8')),wrRt=JSON.parse(fs.readFileSync('wrangler.pages-with-realtime.json','utf8')),wrMedia=JSON.parse(fs.readFileSync('wrangler.pages-with-media.json','utf8')),wrFull=JSON.parse(fs.readFileSync('wrangler.pages-full.json','utf8')),rtwr=JSON.parse(fs.readFileSync('realtime-worker/wrangler.json','utf8'));
-try{new Function(app)}catch(e){console.error(e);fail('JavaScript navigateur invalide')}
-if(pkg.version!=='6.1.8')fail('Version package inattendue : '+pkg.version);
-if(wr.d1_databases?.find(x=>x.binding==='GLOBAL_MARKET_D1')?.migrations_dir!=='cloudflare/migrations')fail('migrations_dir D1 absent ou invalide');
-for(const x of ['gm_legacy_snapshot_sales','gm_legacy_snapshot_payments','gm_legacy_snapshot_orders','gm_legacy_snapshot_settings','gm_legacy_snapshot_password_resets','gm_legacy_snapshot_stock_entries','gm_legacy_snapshot_stock_outputs','gm_legacy_snapshot_stock_movements'])if(!legacyMigration.includes(x))fail('Migration 0006 non sécurisée : '+x);
-for(const x of ['CREATE TABLE IF NOT EXISTS gm_sales (','CREATE TABLE IF NOT EXISTS gm_payments (','CREATE TABLE IF NOT EXISTS gm_orders (','CREATE TABLE IF NOT EXISTS gm_company_settings (','CREATE TABLE IF NOT EXISTS gm_password_reset_requests (','CREATE TABLE IF NOT EXISTS gm_stock_entries (','CREATE TABLE IF NOT EXISTS gm_stock_outputs (','CREATE TABLE IF NOT EXISTS gm_stock_movements ('])if(legacyMigration.includes(x))fail('Migration 0006 réutilise encore un nom relationnel : '+x);
 
-for(const x of ['gm_companies','gm_items','gm_orders','gm_order_items','gm_clients','gm_market_clients','gm_client_order_refs','gm_market_messages','idx_gm_items_search','idx_gm_orders_client','idx_gm_orders_company_status','idx_gm_orders_checkout','trg_gm_items_nonnegative_stock'])if(!schema.includes(x))fail('Schéma D1 incomplet : '+x);
-for(const x of ['V614_CLIENT_ORDER_MIRROR_PREFIX','v614ReadDirectClientOrders','v614MirrorClientOrders','gm_client_order_refs','V613_CLIENT_RECOVERY_PREFIX','v613LoadClientOrders','v613RecoverClientOrders','v613ScanPendingOps','v613ScanClientPayloadCaches','v613ScanBackups','v613ScanSnapshots','V612_CLIENT_RECOVERY_PREFIX','v612LoadClientOrders','v612PatchClientSlice','v612LegacyClientSlice','v612RelationalIdentityOrders','V611_RECONCILE_META_KEY','v611LegacyClientSlice','v611InsertMissingFromLegacy','v611CompanyHistoryDone','v611ClientHistoryDone','v610LegacyCatalogFast','v610ScheduleFullMigration','/api/v6/item-photo/','V6_SCHEMA_VERSION','v6MigrateLegacy','withSession','X-D1-Bookmark','handleV6Catalog','LIMIT ? OFFSET ?','handleV6ClientOrders','handleV6AdminOrders','REALTIME_HUB','GLOBAL_MARKET_MEDIA','handleV6AdminMarketplaceSnapshot'])if(!worker.includes(x))fail('Worker V6 incomplet : '+x);
-for(const x of ['GM_V614_RECENT_ORDER_PREFIX','gmV614RememberCreatedOrders','GM_V613_ORDER_RECOVERY_RETRIES','gmV612ForceClientOrderRecovery','gmV611RefreshClientSpace','gmV6StableCatalogItems','GM_V610_PUBLIC_CACHE_KEY','/api/v6/bootstrap','/api/v6/catalog','GM_V6_D1_BOOKMARK','new WebSocket','gmV6ConnectRealtime','gmV6RefreshAdminMarketplace'])if(!app.includes(x))fail('Client V6 incomplet : '+x);
-if(!wr.d1_databases?.some(x=>x.binding==='GLOBAL_MARKET_D1'))fail('Binding D1 absent');
-if(!wr.kv_namespaces?.some(x=>x.binding==='GLOBAL_MARKET_KV'))fail('Binding KV absent');
-if(wr.r2_buckets?.length)fail('wrangler.json ne doit pas exiger R2 avant la création du bucket');
-if(!wrMedia.r2_buckets?.some(x=>x.binding==='GLOBAL_MARKET_MEDIA'&&x.bucket_name==='global-market-media'))fail('Configuration R2 optionnelle absente');
-if(!wrFull.r2_buckets?.some(x=>x.binding==='GLOBAL_MARKET_MEDIA'))fail('Configuration complète R2 absente');
-if(wr.durable_objects?.bindings?.some(x=>x.name==='REALTIME_HUB'))fail('wrangler.json doit rester déployable avant la création du Worker temps réel');
-if(!wrRt.durable_objects?.bindings?.some(x=>x.name==='REALTIME_HUB'&&x.script_name==='global-market-realtime'))fail('Configuration WebSocket optionnelle absente');
-if(wrRt.r2_buckets?.length)fail('La configuration WebSocket seule ne doit pas exiger R2');
-if(!wrFull.durable_objects?.bindings?.some(x=>x.name==='REALTIME_HUB'&&x.script_name==='global-market-realtime'))fail('Configuration complète WebSocket absente');
-if(!rt.includes('acceptWebSocket')||!rt.includes('getWebSockets')||!rt.includes('serializeAttachment'))fail('WebSocket Hibernation incomplet');
-if(!rtwr.migrations?.some(x=>x.new_sqlite_classes?.includes('RealtimeHub')))fail('Migration Durable Object absente');
-for(const x of ['gm_legacy_snapshot_orders','INSERT OR REPLACE INTO ${archive} SELECT * FROM ${table}','relational_schema_version','6.1.6','idx_gm_items_search','idx_gm_orders_checkout'])if(!worker.includes(x))fail('Réparation de compatibilité D1 absente : '+x);
-const routes=JSON.parse(fs.readFileSync('public/_routes.json','utf8'));if(!routes.include?.includes('/api/*'))fail('Routes Pages API invalides');
-for(const x of ['V6.1.8 : chemin rapide','progressiveClientData:true','gmRefreshPublicAfterConfirmedAction','error.gmTimeoutMs','dbSchemaReady'])if(!(worker.includes(x)||app.includes(x)))fail('Correctif latence/sauvegarde V6.1.8 absent : '+x);
-if(worker.includes('dbReadyPromise'))fail('Une Promise D1 globale est encore présente');
-for(const x of ['splitCloudDelta(delta,32)','sendCloudSaveDelta(delta)','SAVE_DELTA_TOO_LARGE','CLIENT_PHONE_ALREADY_USED','D1_SCHEMA_OUTDATED','écriture R2 indisponible, repli KV','v618TrySchemaRepair'])if(!(worker.includes(x)||app.includes(x)))fail('Correctif sauvegarde V6.1.8 absent : '+x);
-console.log('[validate V6.1.8] OK — sauvegarde D1 découpée, diagnostics précis, médias résilients et limites D1 protégées.');
+const required = [
+  'public/index.html',
+  'public/assets/app.js',
+  'public/assets/style.css',
+  'public/_worker.js',
+  'public/_routes.json',
+  'wrangler.json'
+];
+
+for (const file of required) {
+  if (!fs.existsSync(file)) {
+    console.error(`[validate] Fichier obligatoire introuvable : ${file}`);
+    process.exit(1);
+  }
+}
+
+const app = fs.readFileSync('public/assets/app.js', 'utf8');
+const worker = fs.readFileSync('public/_worker.js', 'utf8');
+const wrangler = JSON.parse(fs.readFileSync('wrangler.json', 'utf8'));
+
+const routes = JSON.parse(fs.readFileSync('public/_routes.json', 'utf8'));
+if (JSON.stringify(routes.include) !== JSON.stringify(['/api/*'])) {
+  console.error('[validate] Anti-503 invalide : seul /api/* doit invoquer le Worker.');
+  process.exit(1);
+}
+if (!worker.includes('KV_STATE_MAX_BYTES') || !worker.includes('ensureLegacyCredentialsMigrated')) {
+  console.error('[validate] Protection anti-503 KV/D1 incomplète.');
+  process.exit(1);
+}
+if (!worker.includes('writeCompanySnapshot') || !worker.includes('company_state_chunks') || !worker.includes('runD1Batches')) {
+  console.error('[validate] Sauvegarde D1 par entreprise anti-503 incomplète.');
+  process.exit(1);
+}
+if (!worker.includes('writeGlobalStateV2') || !worker.includes('global_state_chunks_v2') || !worker.includes("storage: 'd1-versioned'")) {
+  console.error('[validate] Sauvegarde globale D1 versionnée anti-503 incomplète.');
+  process.exit(1);
+}
+if (!app.includes('CLOUD_SAVE_IN_FLIGHT') || !app.includes('sendCloudSavePayload') || !app.includes('isTransientCloudSaveError')) {
+  console.error('[validate] File d’attente et reprises automatiques de sauvegarde absentes.');
+  process.exit(1);
+}
+if (worker.includes("new HttpError(503, 'Initialisation de sécurité requise")) {
+  console.error('[validate] Une erreur de configuration est encore exposée comme 503.');
+  process.exit(1);
+}
+
+if (!worker.includes("url.pathname === '/api/save-delta'") || !worker.includes('company_state_patches') || !worker.includes('persistStateDelta')) {
+  console.error('[validate] Sauvegarde incrémentielle D1 anti-503 V4.2 incomplète.');
+  process.exit(1);
+}
+if (!worker.includes("saveMode: 'incremental-d1-delta-v7'") || !worker.includes('deleted_companies')) {
+  console.error('[validate] Mode de stockage incrémentiel ou suppression logique sécurisée absent.');
+  process.exit(1);
+}
+if (!app.includes('buildCloudDelta') || !app.includes("'/api/save-delta'") || !app.includes('scheduleCloudSaveRetry')) {
+  console.error('[validate] File de sauvegarde différentielle et reprise automatique absentes.');
+  process.exit(1);
+}
+if (app.includes('La sauvegarde sécurisée a échoué :')) {
+  console.error('[validate] L’ancien message bloquant Erreur serveur 503 est encore présent.');
+  process.exit(1);
+}
+
+try {
+  new Function(app);
+  console.log('[validate] public/assets/app.js : syntaxe valide');
+} catch (error) {
+  console.error('[validate] Erreur JavaScript dans public/assets/app.js');
+  console.error(error);
+  process.exit(1);
+}
+
+if (!worker.includes("url.pathname === '/api/login' && request.method === 'POST'")) {
+  console.error('[validate] Route sécurisée POST /api/login absente.');
+  process.exit(1);
+}
+if (!worker.includes("url.pathname === '/api/load'")) {
+  console.error('[validate] Route /api/load absente.');
+  process.exit(1);
+}
+if (!worker.includes("url.pathname === '/api/save'")) {
+  console.error('[validate] Route /api/save absente.');
+  process.exit(1);
+}
+
+
+if (!worker.includes("url.pathname === '/api/companies/delete'")) {
+  console.error('[validate] Route sécurisée de suppression entreprise absente.');
+  process.exit(1);
+}
+if (!app.includes('deleteCompanyAccount') || !app.includes('Supprimer le compte')) {
+  console.error('[validate] Action Super Admin de suppression entreprise absente.');
+  process.exit(1);
+}
+
+const registrationChecks = [
+  ['FICHE D’INSCRIPTION DES ENTREPRISES', 'titre de la fiche d’inscription'],
+  ['id="cName"', 'champ raison sociale'],
+  ['id="cLegalForm"', 'champ forme juridique'],
+  ['id="cRccm"', 'champ RCCM'],
+  ['id="cTaxAccount"', 'champ compte contribuable'],
+  ['id="cType"', 'champ type de commerce'],
+  ['Produits et services', 'option Produits et services'],
+  ['Gestion commerciale générale', 'option Gestion commerciale générale'],
+  ['id="cActivity"', 'champ activité principale'],
+  ['id="cOwner"', 'champ gérant'],
+  ['id="cAddress"', 'champ adresse'],
+  ['id="cPhone"', 'champ téléphone'],
+  ['id="cEmail"', 'champ e-mail'],
+  ['id="cPass"', 'champ mot de passe administrateur'],
+  ['CRÉATION EN COURS…', 'état de chargement du bouton d’inscription']
+];
+for (const [needle, label] of registrationChecks) {
+  if (!app.includes(needle)) {
+    console.error(`[validate] Composant d’inscription incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+
+const planChecks = [
+  ['const FREE_PLAN_DAYS=21;', 'Plan Free de 21 jours'],
+  ['const BUSINESS_PLAN_DAYS=365;', 'Plan Business de 365 jours'],
+  ['const BUSINESS_PLAN_AMOUNT=26300;', 'montant Business de 26 300 FCFA'],
+  ["https://pay.wave.com/m/M_ci_Enx-2JNAklk-/c/ci/?amount=26300", 'lien Wave Business'],
+  ['15*60*1000', 'rappel automatique toutes les 15 minutes'],
+  ['Acheter mon plan Business', 'bouton achat Business'],
+  ['Compris', 'bouton de fermeture du rappel Free']
+];
+for (const [needle, label] of planChecks) {
+  if (!app.includes(needle)) {
+    console.error(`[validate] Gestion des plans incomplète : ${label}.`);
+    process.exit(1);
+  }
+}
+
+const targetedSaleChecks = [
+  ['saleBatchClients', 'champ Nb de Clients servis dans le formulaire multi-lignes'],
+  ['clientsServed,unit,total', 'enregistrement du nombre de clients servis'],
+  ['r.clientsServed+=saleClientsServedValue(s)', 'comptabilisation dans le bilan détaillé'],
+  ['initFlexibleHorizontalMenu', 'menu horizontal flexible au défilement'],
+  ['saleProfessionalCart', 'panier professionnel intégré à la vente'],
+  ['ENCAISSER ET VALIDER', 'bouton d’encaissement du panier'],
+  ["saleStatus:'cart'", 'mise en attente des articles avant encaissement'],
+  ['openPendingCartLineFromClick', 'ouverture de la modification en cliquant sur une ligne du panier'],
+  ['saleProCartLineClickable', 'style cliquable des lignes du panier']
+];
+for (const [needle, label] of targetedSaleChecks) {
+  if (!app.includes(needle)) {
+    console.error(`[validate] Correction ciblée incomplète : ${label}.`);
+    process.exit(1);
+  }
+}
+
+const connectedCompanyReportChecks = [
+  ['companyReportProfile', 'profil dynamique de l’entreprise connectée'],
+  ['buildBilanOfficialReport', 'modèle A4 du rapport bilan'],
+  ['s.companyId===company.id&&isInActiveExercise(s)', 'filtrage des ventes par entreprise et exercice'],
+  ['getObligationsForMonth(d,company.id', 'filtrage des obligations mensuelles par entreprise'],
+  ['Exporter Excel (CSV)', 'export Excel du rapport bilan'],
+  ['openBilanPdfPage', 'aperçu PDF A4 dédié'],
+  ['Imprimer / Télécharger PDF', 'bouton PDF A4 dédié'],
+  ['Rapport sécurisé : profil, ventes, charges et obligations', 'indication d’isolation des données']
+];
+for (const [needle, label] of connectedCompanyReportChecks) {
+  if (!app.includes(needle)) {
+    console.error(`[validate] Rapport entreprise connectée incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+const unifiedPrintHeaderChecks = [
+  ['globalPrintHeaderHTML(company,documentTitle', 'entête PDF dynamique avec titre de document'],
+  ['g3phIdentity', 'bloc identité de l’entreprise dans l’entête'],
+  ['g3phDocumentTitle', 'titre dynamique de chaque impression'],
+  ['refreshGlobalPrintHeaderTitle', 'mise à jour automatique du titre avant impression'],
+  ["globalPrintHeaderHTML(company,'FACTURE / REÇU DE VENTE')", 'entête des factures et reçus'],
+  ["globalPrintHeaderHTML(company,'RAPPORT GÉNÉRAL DÉTAILLÉ DES SERVICES VENDUS')", 'entête des rapports de ventes'],
+  ["globalPrintHeaderHTML(company,'TABLEAU DE GESTION SUR 12 MOIS')", 'entête de la gestion annuelle'],
+  ["globalPrintHeaderHTML(company,'BILAN JOUR')", 'entête du bilan journalier'],
+  ["globalPrintHeaderHTML(company,'REÇU OFFICIEL D’ABONNEMENT')", 'entête du reçu d’abonnement']
+];
+for (const [needle, label] of unifiedPrintHeaderChecks) {
+  if (!app.includes(needle)) {
+    console.error(`[validate] Entête PDF universel incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+
+const reportStyle = fs.readFileSync('public/assets/style.css', 'utf8');
+if (!reportStyle.includes('.bilanOfficialReport') || !reportStyle.includes('@page{size:A4 portrait;margin:7mm 7mm 14mm}') || !reportStyle.includes('max-width:196mm!important') || !reportStyle.includes('GLOBAL MARKET V4.1 - ENTETE OFFICIEL UNIFIE') || !reportStyle.includes('.printCompanyHeader .g3phIdentity')) {
+  console.error('[validate] Mise en page A4 centrée et anti-débordement du rapport bilan absente.');
+  process.exit(1);
+}
+
+const officialShopChecks = [
+  ['officialStore', 'nouvelle boutique officielle premium'],
+  ['officialHeaderMain', 'en-tête e-commerce responsive'],
+  ['officialShopSearch', 'recherche produits et marques'],
+  ['filterOfficialShop', 'filtres de catalogue'],
+  ['addToPublicCart', 'panier public conservé'],
+  ['deliveryFeeRateForSubtotal', 'barème automatique des frais de livraison'],
+  ['PAIEMENT À LA LIVRAISON', 'paiement à la livraison'],
+  ['publicTransactionId', 'champ identifiant de transaction'],
+  ['OFFICIAL_SHOP_PAGE_SIZE=16', 'pagination limitée à 16 éléments'],
+  ['officialShopPagination', 'bouton Suivant du catalogue']
+];
+for (const [needle, label] of officialShopChecks) {
+  if (!app.includes(needle) && !fs.readFileSync('public/assets/style.css', 'utf8').includes(needle)) {
+    console.error(`[validate] Boutique officielle incomplète : ${label}.`);
+    process.exit(1);
+  }
+}
+
+
+const v44Checks = [
+  ['saleCartBatchCard', 'popup premium multi-lignes'],
+  ['saleCartBatchRow', 'lignes multiples du popup'],
+  ['Ajouter une ligne', 'ajout dynamique de ligne'],
+  ['ENREGISTRER LES SERVICES', 'validation multi-lignes'],
+  ['Ajout multiple au panier', 'transfert de toutes les lignes vers le panier'],
+  ['serviceReportPageSize(){return 30;}', 'pagination rapports à 30 lignes'],
+  ['serviceReportPagination', 'contrôles Précédent / Suivant'],
+  ['serviceSaleRowClickable', 'lignes de rapport cliquables'],
+  ['contractClientListPage hidden', 'liste clients masquée par défaut']
+];
+for (const [needle, label] of v44Checks) {
+  if (!app.includes(needle) && !reportStyle.includes(needle)) {
+    console.error(`[validate] GLOBAL MARKET V4.4 incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+if (app.includes('Catégories populaires') || app.includes('officialTrustStats') || app.includes('GLOBAL MARKET • Caisse enregistreuse')) {
+  console.error('[validate] Des sections supprimées en V4.3 sont revenues dans l’interface.');
+  process.exit(1);
+}
+
+if (/passwordHash|passwordSalt|derivePasswordHash/.test(app)) {
+  console.error('[validate] Une logique sensible de mot de passe est présente dans le navigateur.');
+  process.exit(1);
+}
+if (/localStorage\s*\.\s*setItem\s*\(/.test(app)) {
+  console.error('[validate] Une écriture localStorage subsiste dans app.js.');
+  process.exit(1);
+}
+
+const v52Checks = [
+  ['openMarketplaceDeliveryConfig', 'configuration livraison Marketplace'],
+  ['Maximum 10 villes de livraison.', 'limite de 10 villes'],
+  ['gmCartAvailableCities', 'villes compatibles du panier multi-boutiques'],
+  ['gmSetCartShippingMethod', 'choix du moyen d’expédition par boutique'],
+  ['deliveryAddressDetail', 'détail sur l’adresse de livraison'],
+  ['gmPasswordEye', 'icône afficher / masquer les mots de passe'],
+  ['guardedBusinessLogin', 'protection double clic connexion entreprise']
+];
+for (const [needle, label] of v52Checks) {
+  if (!app.includes(needle) && !reportStyle.includes(needle)) {
+    console.error(`[validate] GLOBAL MARKET V5.3 incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+if (app.includes('Après validation, GLOBAL MARKET répartit automatiquement la commande entre les ${pricing.shopCount} boutique(s).')) {
+  console.error('[validate] Le texte supprimé du panier multi-boutiques est encore présent.');
+  process.exit(1);
+}
+const workerV52Checks = [
+  ['marketDeliveryConfig', 'configuration de livraison exposée au catalogue public'],
+  ['calculateMarketDelivery', 'calcul serveur des frais d’expédition'],
+  ['shippingByCompany', 'validation du moyen d’expédition par boutique'],
+  ['DELIVERY_ADDRESS_REQUIRED', 'validation serveur du détail d’adresse']
+];
+for (const [needle, label] of workerV52Checks) {
+  if (!worker.includes(needle)) {
+    console.error(`[validate] Worker V5.3 incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+
+const v53Checks = [
+  ['gmCartShippingSection', 'moyen d’expédition déplacé sous l’adresse de livraison'],
+  ['gmShippingMethodLocked', 'retrait à la boutique verrouillé dans la configuration'],
+  ["{id:'retrait-boutique',name:'RETRAIT A LA BOUTIQUE',fee:0}", 'retrait boutique forcé à 0 FCFA'],
+  ['Ville hors boutique • frais du moyen d’expédition uniquement', 'villes sans frais fixes'],
+  ['Autres villes : frais du moyen uniquement.', 'calcul des autres villes limité au moyen d’expédition']
+];
+for (const [needle, label] of v53Checks) {
+  if (!app.includes(needle) && !reportStyle.includes(needle)) {
+    console.error(`[validate] GLOBAL MARKET V5.3 incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+if (app.includes('class="gmDeliveryCityFee"') || app.includes('Frais fixes de la ville') || app.includes('Frais ville (FCFA)')) {
+  console.error('[validate] Un champ de frais fixes par ville subsiste dans la configuration.');
+  process.exit(1);
+}
+if (worker.includes('Number(city.fee') || worker.includes("{ name: 'DIABO', fee:")) {
+  console.error('[validate] Le Worker utilise encore des frais fixes par ville.');
+  process.exit(1);
+}
+
+const v54Checks = [
+  ['GM_DEFAULT_LOCAL_NEIGHBORHOODS', '10 choix de quartiers locaux préremplis'],
+  ['gmCartNeighborhoodSection', 'liste déroulante quartier de livraison'],
+  ['deliveryNeighborhood', 'quartier transmis avec la commande'],
+  ['Hors ville de la boutique : seuls les frais du moyen choisi sont appliqués.', 'aucun pourcentage hors ville'],
+  ['gmDeliveryCartSummary', 'résumé du panier déplacé dans adresse de livraison']
+];
+for (const [needle, label] of v54Checks) {
+  if (!app.includes(needle) && !reportStyle.includes(needle)) {
+    console.error(`[validate] GLOBAL MARKET V5.4 incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+if (app.includes('gmUnifiedShippingAuto')) {
+  console.error('[validate] La carte « Frais d’expédition automatiques » doit être supprimée du popup panier.');
+  process.exit(1);
+}
+const workerV54Checks = [
+  ['DEFAULT_MARKET_LOCAL_NEIGHBORHOODS', 'quartiers locaux côté serveur'],
+  ['DELIVERY_NEIGHBORHOOD_REQUIRED', 'validation serveur du quartier local'],
+  ['deliveryNeighborhoodForOrder', 'quartier enregistré sur la commande'],
+  ['availableMethods = config.methods.filter', 'moyens hors ville sans retrait boutique']
+];
+for (const [needle, label] of workerV54Checks) {
+  if (!worker.includes(needle)) {
+    console.error(`[validate] Worker V5.4 incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+if (!worker.includes("const pickup = { id: 'retrait-boutique', name: 'RETRAIT A LA BOUTIQUE', fee: 0 }")) {
+  console.error('[validate] Le retrait boutique n’est pas verrouillé côté serveur.');
+  process.exit(1);
+}
+
+
+const v551Checks = [
+  ['Minimum hors ville : 10 000 FCFA par commande.', 'minimum hors ville appliqué au total de la commande'],
+  ['outsideOrderMinimumMet', 'validation navigateur du total général hors ville'],
+  ['hasOutside&&Number(pricing.total||0)<10000', 'contrôle final navigateur du total général hors ville']
+];
+for (const [needle, label] of v551Checks) {
+  if (!app.includes(needle)) {
+    console.error(`[validate] GLOBAL MARKET V5.5.1 incomplet : ${label}.`);
+    process.exit(1);
+  }
+}
+if (app.includes('10 000 FCFA par boutique') || app.includes('Paiement appliqué : <b>Paiement à la livraison</b>.')) {
+  console.error('[validate] Une ancienne règle/mention du panier V5.5 subsiste.');
+  process.exit(1);
+}
+if (!worker.includes('preparedGrandTotal < 10000') || !worker.includes('hasOutsideDelivery')) {
+  console.error('[validate] Le Worker ne contrôle pas le minimum hors ville sur le total général de la commande.');
+  process.exit(1);
+}
+
+if (wrangler.pages_build_output_dir !== 'public') {
+  console.error('[validate] pages_build_output_dir doit être exactement "public".');
+  process.exit(1);
+}
+if (!wrangler.kv_namespaces?.some(item => item.binding === 'GLOBAL_MARKET_KV')) {
+  console.error('[validate] Binding KV GLOBAL_MARKET_KV absent.');
+  process.exit(1);
+}
+if (!wrangler.d1_databases?.some(item => item.binding === 'GLOBAL_MARKET_D1')) {
+  console.error('[validate] Binding D1 GLOBAL_MARKET_D1 absent.');
+  process.exit(1);
+}
+
+console.log('[validate] Worker, sécurité, KV, D1 et configuration Cloudflare : valides');

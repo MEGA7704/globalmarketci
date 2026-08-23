@@ -15,7 +15,7 @@ Infrastructure         : Aucun
 1. Envoyer tous les fichiers du projet à la racine de la branche `main`.
 2. Vérifier que GitHub crée un nouveau commit.
 3. Dans Cloudflare Pages, relancer le déploiement du dernier commit.
-4. Vérifier que le journal affiche `global-market-cloudflare@6.1.6 build`.
+4. Vérifier que le journal affiche `global-market-cloudflare@2.2.0 build`.
 5. Vérifier que le journal affiche `[build] Construction terminée avec succès.`.
 6. Ouvrir `/version.json` sur le domaine Pages.
 
