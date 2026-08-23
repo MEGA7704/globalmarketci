@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "6.1.3",
+  "version": "6.1.4",
   "private": true,
-  "description": "GLOBAL MARKET V6.1.3 - restauration forensique des commandes client depuis D1, patches, snapshots, backups, caches KV et file d’écriture différée, avec rattachement durable au compte courant.",
+  "description": "GLOBAL MARKET V6.1.4 - commandes client garanties en lecture après création: D1 relationnel + index gm_client_order_refs + miroir KV + reçu local immédiat, sans dépendre du marqueur de migration.",
   "type": "module",
   "engines": {
     "node": ">=20"
