@@ -1546,62 +1546,6 @@ async function publicLoadPayload(request, env) {
 }
 
 
-function gmNotificationOrderView(order) {
-  return {
-    id: String(order?.id || ''),
-    companyId: String(order?.companyId || ''),
-    clientId: String(order?.clientId || ''),
-    client: String(order?.client || ''),
-    date: String(order?.date || order?.createdAt || ''),
-    validationStatus: String(order?.validationStatus || ''),
-    paymentStatus: String(order?.paymentStatus || ''),
-    deliveryStatus: String(order?.deliveryStatus || order?.delivery || ''),
-    afterSaleStatus: String(order?.afterSaleStatus || ''),
-    clientCancelled: Boolean(order?.clientCancelled),
-    adminDeleted: Boolean(order?.adminDeleted)
-  };
-}
-
-function gmNotificationMessageView(message) {
-  return {
-    id: String(message?.id || ''),
-    companyId: String(message?.companyId || ''),
-    clientId: String(message?.clientId || ''),
-    threadId: String(message?.threadId || message?.id || ''),
-    senderType: String(message?.senderType || ''),
-    senderName: String(message?.senderName || ''),
-    subject: String(message?.subject || ''),
-    createdAt: String(message?.createdAt || message?.date || '')
-  };
-}
-
-async function handleEmployeeNotifications(request, env) {
-  const ctx = await getEmployeeSessionLight(request, env);
-  if (ctx.user.role !== 'admin') return json({ success: true, identity: '', orders: [], messages: [] });
-  const companyId = String(ctx.user.companyId || '');
-  if (!companyId) return json({ success: true, identity: '', orders: [], messages: [] });
-  const state = await loadState(env, companyId);
-  const orders = (state.orders || [])
-    .filter(order => String(order?.companyId || '') === companyId && !order?.adminDeleted)
-    .map(gmNotificationOrderView);
-  const messages = (state.marketMessages || [])
-    .filter(message => String(message?.companyId || '') === companyId && message?.senderType === 'client' && !message?.deletedByAdmin)
-    .map(gmNotificationMessageView);
-  return json({ success: true, identity: `admin:${ctx.user.id}:${companyId}`, orders, messages, checkedAt: new Date().toISOString() });
-}
-
-async function handleClientNotifications(request, env) {
-  const ctx = await getClientSession(request, env, false);
-  const clientId = String(ctx.client.id || '');
-  const orders = (ctx.state.orders || [])
-    .filter(order => String(order?.clientId || '') === clientId)
-    .map(gmNotificationOrderView);
-  const messages = (ctx.state.marketMessages || [])
-    .filter(message => String(message?.clientId || '') === clientId && message?.senderType === 'admin' && !message?.deletedByClient)
-    .map(gmNotificationMessageView);
-  return json({ success: true, identity: `client:${clientId}`, orders, messages, checkedAt: new Date().toISOString() });
-}
-
 async function handlePublicMessageCreate(request, env) {
   assertSameOrigin(request);
   const body = await readJson(request, 60_000);
@@ -2406,7 +2350,6 @@ async function handleApi(request, env, executionCtx) {
       const ctx = await getEmployeeSession(request, env, false);
       return json(scopeState(ctx.state, ctx.user));
     }
-    if (url.pathname === '/api/notifications' && request.method === 'GET') return await handleEmployeeNotifications(request, env);
     if (url.pathname === '/api/save-delta' && request.method === 'POST') {
       assertSameOrigin(request);
       const ctx = await getEmployeeSessionLight(request, env);
@@ -2439,7 +2382,6 @@ async function handleApi(request, env, executionCtx) {
     if (url.pathname === '/api/admin/client/reset-password' && request.method === 'POST') return await handleResetClientPasswordBySuper(request, env);
 
     if (url.pathname === '/api/public/load' && request.method === 'GET') return json(await publicLoadPayload(request, env));
-    if (url.pathname === '/api/public/notifications' && request.method === 'GET') return await handleClientNotifications(request, env);
     if (url.pathname === '/api/public/client/register' && request.method === 'POST') return await handlePublicClientRegister(request, env);
     if (url.pathname === '/api/public/client/login' && request.method === 'POST') return await handlePublicClientLogin(request, env);
     if (url.pathname === '/api/public/client/update' && request.method === 'POST') return await handlePublicClientUpdate(request, env);
