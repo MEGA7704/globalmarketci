@@ -2771,16 +2771,56 @@ async function v604RecoverLegacyCatalogIfNeeded(env){
   })().catch(error=>({recovered:false,reason:'recovery-error',error:String(error?.message||error||'')})).finally(()=>{V604_CATALOG_RECOVERY_PROMISE=null});
   const result=await V604_CATALOG_RECOVERY_PROMISE;V604_CATALOG_RECOVERY_RESULT=result;V604_CATALOG_RECOVERY_AT=Date.now();return result;
 }
+
+let V605_CATALOG_RECONCILE_PROMISE=null,V605_CATALOG_RECONCILE_AT=0;
+async function v605ForceCatalogReconcile(env){
+  const now=Date.now();
+  if(V605_CATALOG_RECONCILE_PROMISE)return V605_CATALOG_RECONCILE_PROMISE;
+  if(now-V605_CATALOG_RECONCILE_AT<60000)return {recovered:false,reason:'v605-reconcile-throttled'};
+  V605_CATALOG_RECONCILE_AT=now;
+  V605_CATALOG_RECONCILE_PROMISE=(async()=>{
+    await ensureDB(env);
+    const legacy=await loadStateLegacy(env,'*');
+    const legacyItems=Array.isArray(legacy.items)?legacy.items.filter(x=>x?.id&&x?.companyId):[];
+    const legacyCompanies=Array.isArray(legacy.companies)?legacy.companies.filter(x=>x?.id):[];
+    if(!legacyItems.length)return {recovered:false,reason:'no-legacy-items',items:0};
+    const neededCompanyIds=new Set(legacyItems.map(x=>String(x.companyId||'')));
+    const statements=[];
+    for(const company of legacyCompanies.filter(c=>neededCompanyIds.has(String(c.id||''))))statements.push(...await v6UpsertStatements(env,'companies',company));
+    for(const item of legacyItems)statements.push(...await v6UpsertStatements(env,'items',item));
+    if(statements.length)await runD1Batches(env.GLOBAL_MARKET_D1,statements,20);
+    const marker={at:v6Now(),items:legacyItems.length,companies:neededCompanyIds.size};
+    await v6MetaSet(env,'catalog_recovery_v605',JSON.stringify(marker));
+    invalidatePublicStateCache();
+    return {recovered:true,reason:'v605-forced-reconciliation',...marker};
+  })().catch(error=>({recovered:false,reason:'v605-reconcile-error',error:String(error?.message||error||'')})).finally(()=>{V605_CATALOG_RECONCILE_PROMISE=null});
+  return V605_CATALOG_RECONCILE_PROMISE;
+}
+function v605CatalogBaseRequest(p){return !p.q&&!p.category&&!p.type&&!p.companyId;}
+function v605CatalogLastGoodKey(p){return `v6:catalog:last-good:${p.page}:${p.pageSize}:${p.sort||'recent'}`;}
+async function v605ReadLastGoodCatalog(env,p){try{return await env.GLOBAL_MARKET_KV.get(v605CatalogLastGoodKey(p),'json')}catch{return null}}
+async function v605WriteLastGoodCatalog(env,p,data){if(!v605CatalogBaseRequest(p)||!Array.isArray(data?.items)||!data.items.length)return;try{await env.GLOBAL_MARKET_KV.put(v605CatalogLastGoodKey(p),JSON.stringify({...data,savedAt:v6Now()}),{expirationTtl:86400})}catch{}}
 async function v6CatalogQueryCached(request,env,executionCtx){
-  const url=new URL(request.url),p=v6CatalogParams(url),key=`https://cache.global-market.internal/catalog-v604?page=${p.page}&pageSize=${p.pageSize}&q=${encodeURIComponent(p.q)}&category=${encodeURIComponent(p.category)}&type=${encodeURIComponent(p.type)}&sort=${encodeURIComponent(p.sort)}&companyId=${encodeURIComponent(p.companyId)}`;
-  const cached=await v6CacheJsonGet(key);if(cached&&Array.isArray(cached.items)&&cached.items.length)return {...cached,edgeCached:true};
-  let data=await v6CatalogQuery(request,env);
-  if(!Array.isArray(data.items)||!data.items.length){
-    const recovery=await v604RecoverLegacyCatalogIfNeeded(env);
-    if(recovery.recovered)data=await v6CatalogQuery(request,env);
-    if(!Array.isArray(data.items)||!data.items.length){try{const legacy=await v603LegacyCatalogData(request,env);if(Array.isArray(legacy.items)&&legacy.items.length)data={...legacy,recovery};}catch(error){console.warn('[V6.0.3] Catalogue legacy de secours indisponible',error?.message||error)}}
+  const url=new URL(request.url),p=v6CatalogParams(url),key=`https://cache.global-market.internal/catalog-v605?page=${p.page}&pageSize=${p.pageSize}&q=${encodeURIComponent(p.q)}&category=${encodeURIComponent(p.category)}&type=${encodeURIComponent(p.type)}&sort=${encodeURIComponent(p.sort)}&companyId=${encodeURIComponent(p.companyId)}`;
+  const cached=await v6CacheJsonGet(key);if(cached&&Array.isArray(cached.items)&&cached.items.length)return {...cached,edgeCached:true,authoritativeEmpty:false};
+  let data=null,recovery=null,legacy=null;
+  try{data=await v6CatalogQuery(request,env)}catch(error){console.warn('[V6.0.5] Lecture D1 catalogue différée',error?.message||error)}
+  if(v605CatalogBaseRequest(p)&&(!Array.isArray(data?.items)||!data.items.length)){
+    recovery=await v605ForceCatalogReconcile(env);
+    if(recovery?.recovered){try{data=await v6CatalogQuery(request,env)}catch{}}
   }
-  await v6CacheJsonPut(key,data,V6_PUBLIC_CATALOG_CACHE_SECONDS,executionCtx);return data;
+  if(!Array.isArray(data?.items)||!data.items.length){
+    try{legacy=await v603LegacyCatalogData(request,env);if(Array.isArray(legacy.items)&&legacy.items.length)data={...legacy,recovery,source:'legacy-fallback-v605'};}catch(error){console.warn('[V6.0.5] Catalogue legacy de secours indisponible',error?.message||error)}
+  }
+  if(v605CatalogBaseRequest(p)&&(!Array.isArray(data?.items)||!data.items.length)){
+    const lastGood=await v605ReadLastGoodCatalog(env,p);
+    if(Array.isArray(lastGood?.items)&&lastGood.items.length)data={...lastGood,source:'kv-last-good-v605',staleFallback:true,recovery};
+  }
+  if(!data)data={items:[],companies:[],pagination:{page:p.page,pageSize:p.pageSize,total:0,pages:1},categories:[]};
+  const authoritativeEmpty=!Array.isArray(data.items)||!data.items.length;
+  data={...data,authoritativeEmpty};
+  if(Array.isArray(data.items)&&data.items.length){await v605WriteLastGoodCatalog(env,p,data);await v6CacheJsonPut(key,data,60,executionCtx)}
+  return data;
 }
 async function v6PublicCompaniesCached(request,env,executionCtx){
   const key='https://cache.global-market.internal/companies-public-v604',cached=await v6CacheJsonGet(key);if(cached?.companies)return cached.companies;
@@ -2799,7 +2839,7 @@ async function handleV6Bootstrap(request,env,executionCtx){
   const [catalog,companies]=await Promise.all([v6CatalogQueryCached(request,env,executionCtx),v6PublicCompaniesCached(request,env,executionCtx)]),db=v6ReadDb(request,env,false); let clientSession=null,marketClients=[],orders=[],marketMessages=[];
   try{const ctx=await v6GetClientSession(request,env,false);clientSession=publicClientSessionView(ctx.session);marketClients=[cleanClone(ctx.client)];orders=await v6ReadTable(db,'SELECT * FROM gm_orders WHERE client_id=? AND deleted_by_client=0 ORDER BY order_date DESC LIMIT 250',[ctx.client.id],v6OrderFromRow);marketMessages=await v6ReadTable(db,'SELECT * FROM gm_market_messages WHERE client_id=? AND client_deleted=0 ORDER BY created_at DESC LIMIT 250',[ctx.client.id],v6MessageFromRow);}catch{}
   const companyMap=new Map((companies||[]).map(c=>[c.id,c]));for(const c of catalog.companies||[])companyMap.set(c.id,c);
-  return v6AttachBookmark(json({companies:[...companyMap.values()].map(publicCompany),items:catalog.items,marketClients,orders,marketMessages,clientDeletedOrders:{},clientSession,app:{name:APP_NAME,storageVersion:6},catalogMeta:{pagination:catalog.pagination,categories:catalog.categories}}),db);
+  return v6AttachBookmark(json({companies:[...companyMap.values()].map(publicCompany),items:catalog.items,marketClients,orders,marketMessages,clientDeletedOrders:{},clientSession,app:{name:APP_NAME,storageVersion:6},catalogMeta:{pagination:catalog.pagination,categories:catalog.categories,authoritativeEmpty:Boolean(catalog.authoritativeEmpty),source:catalog.source||'d1-v6'}}),db);
 }
 async function handleV6Catalog(request,env,executionCtx){const db=v6ReadDb(request,env,false),data=await v6CatalogQueryCached(request,env,executionCtx);return v6AttachBookmark(json(data,{headers:{'X-Global-Market-Edge-Cache':data.edgeCached?'HIT':'MISS'}}),db);}
 async function handleV6ClientOrders(request,env){const ctx=await v6GetClientSession(request,env,false),url=new URL(request.url),page=Math.max(1,Number(url.searchParams.get('page')||1)),size=Math.min(100,Math.max(10,Number(url.searchParams.get('pageSize')||30))),count=await ctx.db.prepare('SELECT COUNT(*) n FROM gm_orders WHERE client_id=? AND deleted_by_client=0').bind(ctx.client.id).first(),rows=await ctx.db.prepare('SELECT * FROM gm_orders WHERE client_id=? AND deleted_by_client=0 ORDER BY order_date DESC LIMIT ? OFFSET ?').bind(ctx.client.id,size,(page-1)*size).all();return v6AttachBookmark(json({orders:(rows.results||[]).map(v6OrderFromRow),pagination:{page,pageSize:size,total:Number(count?.n||0),pages:Math.max(1,Math.ceil(Number(count?.n||0)/size))}}),ctx.db);}
