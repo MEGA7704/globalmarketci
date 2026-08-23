@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "6.1.4",
+  "version": "6.1.6",
   "private": true,
-  "description": "GLOBAL MARKET V6.1.4 - commandes client garanties en lecture après création: D1 relationnel + index gm_client_order_refs + miroir KV + reçu local immédiat, sans dépendre du marqueur de migration.",
+  "description": "GLOBAL MARKET V6.1.6 - migrations D1 locales sécurisées, schéma relationnel auto-réparé sans perte des anciens snapshots, commandes client garanties par D1 + références + miroir KV.",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -13,7 +13,7 @@
     "check": "npm run build",
     "dev": "npm run build && wrangler pages dev public",
     "deploy": "npm run build && wrangler pages deploy public --project-name=globalmarketci",
-    "db:v6": "wrangler d1 execute global_market_d1 --remote --file=cloudflare/schema-v6.sql",
+    "db:v6": "npm run db:v6:local",
     "realtime:deploy": "wrangler deploy --config realtime-worker/wrangler.json",
     "media:create": "wrangler r2 bucket create global-market-media",
     "migrate:v6": "node scripts/migrate-v6.mjs",
@@ -21,7 +21,11 @@
     "pages:deploy": "npm run build && wrangler pages deploy public --project-name=globalmarketci",
     "pages:deploy:media": "npm run build && wrangler pages deploy public --project-name=globalmarketci --config wrangler.pages-with-media.json",
     "pages:deploy:realtime": "npm run build && wrangler pages deploy public --project-name=globalmarketci --config wrangler.pages-with-realtime.json",
-    "pages:deploy:full": "npm run build && wrangler pages deploy public --project-name=globalmarketci --config wrangler.pages-full.json"
+    "pages:deploy:full": "npm run build && wrangler pages deploy public --project-name=globalmarketci --config wrangler.pages-full.json",
+    "db:migrations:local": "wrangler d1 migrations apply global_market_d1 --local",
+    "db:migrations:remote": "wrangler d1 migrations apply global_market_d1 --remote",
+    "db:v6:local": "wrangler d1 execute global_market_d1 --local --file=cloudflare/schema-v6.sql",
+    "db:v6:remote": "wrangler d1 execute global_market_d1 --remote --file=cloudflare/schema-v6.sql"
   },
   "devDependencies": {
     "wrangler": "^4.27.0"

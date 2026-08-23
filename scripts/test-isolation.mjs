@@ -25,6 +25,10 @@ class MemoryD1 {
   async batch(stmts){const out=[];for(const st of stmts)out.push(await st.run());return out;}
   table(name){if(!this.tables.has(name))this.tables.set(name,[]);return this.tables.get(name);}
   async first(sql,a){
+    if(sql==='SELECT 1 AS ok')return {ok:1};
+    if(sql.startsWith('SELECT (SELECT COUNT(*) FROM gm_items)'))return {items:this.table('gm_items').length,companies:this.table('gm_companies').length};
+    if(sql.startsWith("SELECT value FROM gm_meta WHERE key='relational_schema_version'"))return null;
+    if(sql.startsWith('SELECT value FROM gm_meta WHERE key=?'))return null;
     if(sql.startsWith('SELECT chunk_count FROM state_meta')){const r=this.meta.get(a[0]);return r?{chunk_count:r.chunk_count}:null;}
     if(sql.startsWith('SELECT data FROM backups')){const rows=this.backups.filter(r=>r.company_id===a[0]).sort((x,y)=>y.id-x.id);return rows[0]?{data:rows[0].data}:null;}
     if(sql.includes('FROM gm_company_storage_meta WHERE company_id = ?')){
@@ -36,6 +40,7 @@ class MemoryD1 {
     throw new Error('D1 first unsupported: '+sql);
   }
   async all(sql,a){
+    if(sql.startsWith('PRAGMA table_info('))return {results:[]};
     if(sql.startsWith('SELECT data FROM state_chunks')){const rows=[...(this.chunks.get(a[0])||new Map()).entries()].sort((x,y)=>x[0]-y[0]).map(([,data])=>({data}));return {results:rows};}
     let m=sql.match(/^SELECT entity_id, data FROM (gm_[a-z_]+) WHERE company_id = \? AND snapshot_id = \?/);
     if(m){return {results:this.table(m[1]).filter(r=>r.company_id===a[0]&&r.snapshot_id===a[1]).sort((x,y)=>String(x.entity_id).localeCompare(String(y.entity_id))).map(r=>({entity_id:r.entity_id,data:r.data}))};}
@@ -51,7 +56,8 @@ class MemoryD1 {
     throw new Error('D1 all unsupported: '+sql);
   }
   async run(sql,a){
-    if(sql.startsWith('CREATE TABLE')||sql.startsWith('CREATE INDEX'))return {success:true,meta:{changes:0}};
+    if(sql.startsWith('CREATE TABLE')||sql.startsWith('CREATE INDEX')||sql.startsWith('CREATE UNIQUE INDEX')||sql.startsWith('CREATE TRIGGER'))return {success:true,meta:{changes:0}};
+    if(sql.startsWith("INSERT INTO gm_meta(key,value,updated_at) VALUES('relational_schema_version'"))return {success:true,meta:{changes:1}};
     if(sql.startsWith('DELETE FROM state_chunks')){this.chunks.delete(a[0]);return {success:true,meta:{changes:1}};}
     if(sql.startsWith('DELETE FROM state_meta')){this.meta.delete(a[0]);return {success:true,meta:{changes:1}};}
     if(sql.startsWith('DELETE FROM backups WHERE company_id = ? AND id NOT IN')){const id=a[0];const keep=this.backups.filter(r=>r.company_id===id).sort((x,y)=>y.id-x.id).slice(0,20).map(r=>r.id);this.backups=this.backups.filter(r=>r.company_id!==id||keep.includes(r.id));return {success:true,meta:{changes:0}};}

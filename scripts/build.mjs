@@ -8,6 +8,8 @@ const assetsDir = path.join(publicDir, 'assets');
 const appSource = path.join(assetsDir, 'app.js');
 const styleSource = path.join(assetsDir, 'style.css');
 const indexPath = path.join(publicDir, 'index.html');
+const packageInfo = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const packageVersion = String(packageInfo.version || '0.0.0');
 
 function fail(message) {
   console.error(`[build] ${message}`);
@@ -44,7 +46,7 @@ fs.writeFileSync(
   path.join(publicDir, 'version.json'),
   `${JSON.stringify({
     app: 'GLOBAL MARKET',
-    version: '6.1.4',
+    version: packageVersion,
     build: buildId,
     generatedAt: now.toISOString(),
     outputDirectory: 'public'
@@ -67,7 +69,7 @@ html = html.replace(
 
 fs.writeFileSync(indexPath, html, 'utf8');
 
-console.log(`[build] GLOBAL MARKET ${buildId}`);
+console.log(`[build] GLOBAL MARKET v${packageVersion} ${buildId}`);
 console.log(`[build] Répertoire de sortie : public`);
 console.log(`[build] CSS : assets/${styleName}`);
 console.log(`[build] JS  : assets/${appName}`);

@@ -35,7 +35,10 @@ CREATE TABLE IF NOT EXISTS security_events (
 CREATE INDEX IF NOT EXISTS idx_security_events_created
 ON security_events(created_at DESC);
 
--- Stockage métier normalisé GLOBAL MARKET v6.
+-- Stockage métier historique par snapshots.
+-- V6.1.6 : les noms incompatibles avec le schéma relationnel sont préfixés
+-- gm_legacy_snapshot_* sur les nouvelles bases. Les anciennes bases déjà
+-- migrées sont réparées automatiquement par ensureDB() avant les lectures V6.
 CREATE TABLE IF NOT EXISTS gm_company_storage_meta (
   company_id TEXT PRIMARY KEY,
   revision INTEGER NOT NULL DEFAULT 0,
@@ -56,7 +59,7 @@ CREATE TABLE IF NOT EXISTS gm_company_snapshots (
 CREATE INDEX IF NOT EXISTS idx_gm_snapshots_company_revision
 ON gm_company_snapshots(company_id, revision DESC);
 
-CREATE TABLE IF NOT EXISTS gm_company_settings (
+CREATE TABLE IF NOT EXISTS gm_legacy_snapshot_settings (
   company_id TEXT NOT NULL,
   snapshot_id TEXT NOT NULL,
   setting_key TEXT NOT NULL,
@@ -66,7 +69,7 @@ CREATE TABLE IF NOT EXISTS gm_company_settings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_gm_settings_snapshot
-ON gm_company_settings(company_id, snapshot_id);
+ON gm_legacy_snapshot_settings(company_id, snapshot_id);
 
 CREATE TABLE IF NOT EXISTS gm_large_record_chunks (
   company_id TEXT NOT NULL,
@@ -91,7 +94,7 @@ CREATE TABLE IF NOT EXISTS gm_products (
 );
 CREATE INDEX IF NOT EXISTS idx_gm_products_snapshot ON gm_products(company_id, snapshot_id);
 
-CREATE TABLE IF NOT EXISTS gm_sales (
+CREATE TABLE IF NOT EXISTS gm_legacy_snapshot_sales (
   company_id TEXT NOT NULL,
   snapshot_id TEXT NOT NULL,
   entity_id TEXT NOT NULL,
@@ -99,9 +102,9 @@ CREATE TABLE IF NOT EXISTS gm_sales (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (company_id, snapshot_id, entity_id)
 );
-CREATE INDEX IF NOT EXISTS idx_gm_sales_snapshot ON gm_sales(company_id, snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_gm_legacy_snapshot_sales_snapshot ON gm_legacy_snapshot_sales(company_id, snapshot_id);
 
-CREATE TABLE IF NOT EXISTS gm_payments (
+CREATE TABLE IF NOT EXISTS gm_legacy_snapshot_payments (
   company_id TEXT NOT NULL,
   snapshot_id TEXT NOT NULL,
   entity_id TEXT NOT NULL,
@@ -109,9 +112,9 @@ CREATE TABLE IF NOT EXISTS gm_payments (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (company_id, snapshot_id, entity_id)
 );
-CREATE INDEX IF NOT EXISTS idx_gm_payments_snapshot ON gm_payments(company_id, snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_gm_legacy_snapshot_payments_snapshot ON gm_legacy_snapshot_payments(company_id, snapshot_id);
 
-CREATE TABLE IF NOT EXISTS gm_orders (
+CREATE TABLE IF NOT EXISTS gm_legacy_snapshot_orders (
   company_id TEXT NOT NULL,
   snapshot_id TEXT NOT NULL,
   entity_id TEXT NOT NULL,
@@ -119,7 +122,7 @@ CREATE TABLE IF NOT EXISTS gm_orders (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (company_id, snapshot_id, entity_id)
 );
-CREATE INDEX IF NOT EXISTS idx_gm_orders_snapshot ON gm_orders(company_id, snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_gm_legacy_snapshot_orders_snapshot ON gm_legacy_snapshot_orders(company_id, snapshot_id);
 
 CREATE TABLE IF NOT EXISTS gm_customers (
   company_id TEXT NOT NULL,
@@ -141,7 +144,7 @@ CREATE TABLE IF NOT EXISTS gm_market_customers (
 );
 CREATE INDEX IF NOT EXISTS idx_gm_market_customers_snapshot ON gm_market_customers(company_id, snapshot_id);
 
-CREATE TABLE IF NOT EXISTS gm_password_reset_requests (
+CREATE TABLE IF NOT EXISTS gm_legacy_snapshot_password_resets (
   company_id TEXT NOT NULL,
   snapshot_id TEXT NOT NULL,
   entity_id TEXT NOT NULL,
@@ -149,9 +152,9 @@ CREATE TABLE IF NOT EXISTS gm_password_reset_requests (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (company_id, snapshot_id, entity_id)
 );
-CREATE INDEX IF NOT EXISTS idx_gm_password_reset_requests_snapshot ON gm_password_reset_requests(company_id, snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_gm_legacy_snapshot_password_resets_snapshot ON gm_legacy_snapshot_password_resets(company_id, snapshot_id);
 
-CREATE TABLE IF NOT EXISTS gm_stock_entries (
+CREATE TABLE IF NOT EXISTS gm_legacy_snapshot_stock_entries (
   company_id TEXT NOT NULL,
   snapshot_id TEXT NOT NULL,
   entity_id TEXT NOT NULL,
@@ -159,9 +162,9 @@ CREATE TABLE IF NOT EXISTS gm_stock_entries (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (company_id, snapshot_id, entity_id)
 );
-CREATE INDEX IF NOT EXISTS idx_gm_stock_entries_snapshot ON gm_stock_entries(company_id, snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_gm_legacy_snapshot_stock_entries_snapshot ON gm_legacy_snapshot_stock_entries(company_id, snapshot_id);
 
-CREATE TABLE IF NOT EXISTS gm_stock_outputs (
+CREATE TABLE IF NOT EXISTS gm_legacy_snapshot_stock_outputs (
   company_id TEXT NOT NULL,
   snapshot_id TEXT NOT NULL,
   entity_id TEXT NOT NULL,
@@ -169,9 +172,9 @@ CREATE TABLE IF NOT EXISTS gm_stock_outputs (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (company_id, snapshot_id, entity_id)
 );
-CREATE INDEX IF NOT EXISTS idx_gm_stock_outputs_snapshot ON gm_stock_outputs(company_id, snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_gm_legacy_snapshot_stock_outputs_snapshot ON gm_legacy_snapshot_stock_outputs(company_id, snapshot_id);
 
-CREATE TABLE IF NOT EXISTS gm_stock_movements (
+CREATE TABLE IF NOT EXISTS gm_legacy_snapshot_stock_movements (
   company_id TEXT NOT NULL,
   snapshot_id TEXT NOT NULL,
   entity_id TEXT NOT NULL,
@@ -179,7 +182,7 @@ CREATE TABLE IF NOT EXISTS gm_stock_movements (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (company_id, snapshot_id, entity_id)
 );
-CREATE INDEX IF NOT EXISTS idx_gm_stock_movements_snapshot ON gm_stock_movements(company_id, snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_gm_legacy_snapshot_stock_movements_snapshot ON gm_legacy_snapshot_stock_movements(company_id, snapshot_id);
 
 CREATE TABLE IF NOT EXISTS gm_cashier_logs (
   company_id TEXT NOT NULL,

@@ -164,6 +164,11 @@ CREATE TABLE IF NOT EXISTS gm_company_settings (
 CREATE TABLE IF NOT EXISTS gm_client_order_hidden (
   client_id TEXT NOT NULL, order_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(client_id, order_id)
 );
+CREATE TABLE IF NOT EXISTS gm_client_order_refs (
+  client_id TEXT NOT NULL, order_id TEXT NOT NULL, created_at TEXT NOT NULL,
+  PRIMARY KEY(client_id, order_id),
+  FOREIGN KEY(order_id) REFERENCES gm_orders(id) ON DELETE CASCADE
+);
 
 CREATE INDEX IF NOT EXISTS idx_gm_companies_shop_slug ON gm_companies(shop_slug);
 CREATE INDEX IF NOT EXISTS idx_gm_companies_status ON gm_companies(status, subscription_end);
@@ -174,6 +179,8 @@ CREATE INDEX IF NOT EXISTS idx_gm_items_company ON gm_items(company_id, updated_
 CREATE INDEX IF NOT EXISTS idx_gm_items_category ON gm_items(category, marketplace_hidden, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_gm_items_search ON gm_items(search_text);
 CREATE INDEX IF NOT EXISTS idx_gm_orders_client ON gm_orders(client_id, order_date DESC);
+CREATE INDEX IF NOT EXISTS idx_gm_client_order_refs_client ON gm_client_order_refs(client_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_gm_client_order_refs_order ON gm_client_order_refs(order_id);
 CREATE INDEX IF NOT EXISTS idx_gm_orders_company_status ON gm_orders(company_id, validation_status, payment_status, order_date DESC);
 CREATE INDEX IF NOT EXISTS idx_gm_orders_checkout ON gm_orders(checkout_id, company_id);
 CREATE INDEX IF NOT EXISTS idx_gm_order_items_order ON gm_order_items(order_id);

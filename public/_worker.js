@@ -499,10 +499,12 @@ function dbSchemaStatements(env) {
     `CREATE INDEX IF NOT EXISTS idx_gm_items_market ON gm_items(marketplace_hidden, company_id, updated_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_gm_items_company ON gm_items(company_id, updated_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_gm_items_category ON gm_items(category, marketplace_hidden, updated_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_gm_items_search ON gm_items(search_text)`,
     `CREATE INDEX IF NOT EXISTS idx_gm_orders_client ON gm_orders(client_id, order_date DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_gm_client_order_refs_client ON gm_client_order_refs(client_id, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_gm_client_order_refs_order ON gm_client_order_refs(order_id)`,
     `CREATE INDEX IF NOT EXISTS idx_gm_orders_company_status ON gm_orders(company_id, validation_status, payment_status, order_date DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_gm_orders_checkout ON gm_orders(checkout_id, company_id)`,
     `CREATE INDEX IF NOT EXISTS idx_gm_order_items_order ON gm_order_items(order_id)`,
     `CREATE INDEX IF NOT EXISTS idx_gm_messages_company ON gm_market_messages(company_id, admin_deleted, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_gm_messages_client ON gm_market_messages(client_id, client_deleted, created_at DESC)`,
@@ -520,15 +522,47 @@ async function ensureDB(env) {
   needBindings(env);
   if (!dbReadyPromise) {
     dbReadyPromise = (async () => {
+      const legacyConflicts = [
+        ['gm_sales', 'id', 'gm_legacy_snapshot_sales'],
+        ['gm_payments', 'id', 'gm_legacy_snapshot_payments'],
+        ['gm_orders', 'id', 'gm_legacy_snapshot_orders'],
+        ['gm_company_settings', 'section', 'gm_legacy_snapshot_settings'],
+        ['gm_password_reset_requests', 'id', 'gm_legacy_snapshot_password_resets'],
+        ['gm_stock_entries', 'id', 'gm_legacy_snapshot_stock_entries'],
+        ['gm_stock_outputs', 'id', 'gm_legacy_snapshot_stock_outputs'],
+        ['gm_stock_movements', 'id', 'gm_legacy_snapshot_stock_movements']
+      ];
+      // V4.1 utilisait certains noms gm_* pour des snapshots JSON. V6 utilise
+      // les mêmes noms pour les tables relationnelles. Préserver les anciennes
+      // lignes sous un nom d'archive avant de créer le schéma V6.
+      for (const [table, requiredColumn, archive] of legacyConflicts) {
+        const info = await env.GLOBAL_MARKET_D1.prepare(`PRAGMA table_info(${table})`).all();
+        const columns = (info.results || []).map(row => String(row.name || ''));
+        if (columns.length && !columns.includes(requiredColumn)) {
+          const archiveInfo = await env.GLOBAL_MARKET_D1.prepare(`PRAGMA table_info(${archive})`).all();
+          const archiveColumns = (archiveInfo.results || []).map(row => String(row.name || ''));
+          if (!archiveColumns.length) {
+            await env.GLOBAL_MARKET_D1.prepare(`ALTER TABLE ${table} RENAME TO ${archive}`).run();
+          } else if (archiveColumns.join('|') === columns.join('|')) {
+            // Une tentative précédente peut avoir déjà créé l'archive. Fusionner
+            // les snapshots sans perte, puis libérer le nom relationnel V6.
+            await env.GLOBAL_MARKET_D1.prepare(`INSERT OR REPLACE INTO ${archive} SELECT * FROM ${table}`).run();
+            await env.GLOBAL_MARKET_D1.prepare(`DROP TABLE ${table}`).run();
+          } else {
+            throw new Error(`D1_LEGACY_SCHEMA_CONFLICT:${table}:${archive}`);
+          }
+        }
+      }
       try {
-        await env.GLOBAL_MARKET_D1.prepare('SELECT key FROM gm_meta LIMIT 1').first();
-        return true;
+        const marker = await env.GLOBAL_MARKET_D1.prepare("SELECT value FROM gm_meta WHERE key='relational_schema_version' LIMIT 1").first();
+        if (String(marker?.value || '') === '6.1.6') return true;
       } catch (error) {
         const message = String(error?.message || error || '');
         if (!/no such table|does not exist|missing table/i.test(message)) throw error;
-        await runD1Batches(env.GLOBAL_MARKET_D1, dbSchemaStatements(env), 20);
-        return true;
       }
+      await runD1Batches(env.GLOBAL_MARKET_D1, dbSchemaStatements(env), 20);
+      await env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_meta(key,value,updated_at) VALUES('relational_schema_version','6.1.6',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`).bind(new Date().toISOString()).run();
+      return true;
     })().catch(error => { dbReadyPromise = null; throw error; });
   }
   await dbReadyPromise;
