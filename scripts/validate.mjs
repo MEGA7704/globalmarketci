@@ -4,7 +4,7 @@ const required=['public/index.html','public/assets/app.js','public/assets/style.
 for(const f of required)if(!fs.existsSync(f))fail('Fichier obligatoire absent : '+f);
 const app=fs.readFileSync('public/assets/app.js','utf8'),worker=fs.readFileSync('public/_worker.js','utf8'),schema=fs.readFileSync('cloudflare/schema-v6.sql','utf8'),legacyMigration=fs.readFileSync('cloudflare/migrations/0006_normalized_company_storage.sql','utf8'),rt=fs.readFileSync('realtime-worker/src/index.js','utf8'),pkg=JSON.parse(fs.readFileSync('package.json','utf8')),wr=JSON.parse(fs.readFileSync('wrangler.json','utf8')),wrRt=JSON.parse(fs.readFileSync('wrangler.pages-with-realtime.json','utf8')),wrMedia=JSON.parse(fs.readFileSync('wrangler.pages-with-media.json','utf8')),wrFull=JSON.parse(fs.readFileSync('wrangler.pages-full.json','utf8')),rtwr=JSON.parse(fs.readFileSync('realtime-worker/wrangler.json','utf8'));
 try{new Function(app)}catch(e){console.error(e);fail('JavaScript navigateur invalide')}
-if(pkg.version!=='6.1.6')fail('Version package inattendue : '+pkg.version);
+if(pkg.version!=='6.1.7')fail('Version package inattendue : '+pkg.version);
 if(wr.d1_databases?.find(x=>x.binding==='GLOBAL_MARKET_D1')?.migrations_dir!=='cloudflare/migrations')fail('migrations_dir D1 absent ou invalide');
 for(const x of ['gm_legacy_snapshot_sales','gm_legacy_snapshot_payments','gm_legacy_snapshot_orders','gm_legacy_snapshot_settings','gm_legacy_snapshot_password_resets','gm_legacy_snapshot_stock_entries','gm_legacy_snapshot_stock_outputs','gm_legacy_snapshot_stock_movements'])if(!legacyMigration.includes(x))fail('Migration 0006 non sécurisée : '+x);
 for(const x of ['CREATE TABLE IF NOT EXISTS gm_sales (','CREATE TABLE IF NOT EXISTS gm_payments (','CREATE TABLE IF NOT EXISTS gm_orders (','CREATE TABLE IF NOT EXISTS gm_company_settings (','CREATE TABLE IF NOT EXISTS gm_password_reset_requests (','CREATE TABLE IF NOT EXISTS gm_stock_entries (','CREATE TABLE IF NOT EXISTS gm_stock_outputs (','CREATE TABLE IF NOT EXISTS gm_stock_movements ('])if(legacyMigration.includes(x))fail('Migration 0006 réutilise encore un nom relationnel : '+x);
@@ -25,4 +25,6 @@ if(!rt.includes('acceptWebSocket')||!rt.includes('getWebSockets')||!rt.includes(
 if(!rtwr.migrations?.some(x=>x.new_sqlite_classes?.includes('RealtimeHub')))fail('Migration Durable Object absente');
 for(const x of ['gm_legacy_snapshot_orders','INSERT OR REPLACE INTO ${archive} SELECT * FROM ${table}','relational_schema_version','6.1.6','idx_gm_items_search','idx_gm_orders_checkout'])if(!worker.includes(x))fail('Réparation de compatibilité D1 absente : '+x);
 const routes=JSON.parse(fs.readFileSync('public/_routes.json','utf8'));if(!routes.include?.includes('/api/*'))fail('Routes Pages API invalides');
-console.log('[validate V6.1.6] OK — schéma D1 compatible et commandes client garanties après création.');
+for(const x of ['V6.1.7 : chemin rapide','progressiveClientData:true','gmRefreshPublicAfterConfirmedAction','error.gmTimeoutMs','dbSchemaReady'])if(!(worker.includes(x)||app.includes(x)))fail('Correctif latence V6.1.7 absent : '+x);
+if(worker.includes('dbReadyPromise'))fail('Une Promise D1 globale est encore présente');
+console.log('[validate V6.1.7] OK — D1 rapide au démarrage, bootstrap public léger et délais réseau sécurisés.');

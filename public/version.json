@@ -1,7 +1,7 @@
 {
   "app": "GLOBAL MARKET",
-  "version": "6.1.6",
-  "build": "2026.08.23-abe57b38a093",
-  "generatedAt": "2026-08-23T18:54:12.218Z",
+  "version": "6.1.7",
+  "build": "2026.08.23-1fb026a98a5a",
+  "generatedAt": "2026-08-23T19:05:15.756Z",
   "outputDirectory": "public"
 }

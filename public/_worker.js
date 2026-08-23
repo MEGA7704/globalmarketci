@@ -27,7 +27,7 @@ const CLIENT_PAYLOAD_CACHE_PREFIX = 'cache:client-payload:v563:';
 const PENDING_OPS_PREFIX = 'pending-ops:v563:';
 const FALLBACK_CACHE_TTL = 60 * 60 * 48;
 const FALLBACK_CACHE_MAX_BYTES = 18_000_000;
-let dbReadyPromise = null;
+let dbSchemaReady = false;
 let legacyMigrationChecked = false;
 let publicStateCache = null;
 let publicStateCacheAt = 0;
@@ -520,52 +520,55 @@ function dbSchemaStatements(env) {
 
 async function ensureDB(env) {
   needBindings(env);
-  if (!dbReadyPromise) {
-    dbReadyPromise = (async () => {
-      const legacyConflicts = [
-        ['gm_sales', 'id', 'gm_legacy_snapshot_sales'],
-        ['gm_payments', 'id', 'gm_legacy_snapshot_payments'],
-        ['gm_orders', 'id', 'gm_legacy_snapshot_orders'],
-        ['gm_company_settings', 'section', 'gm_legacy_snapshot_settings'],
-        ['gm_password_reset_requests', 'id', 'gm_legacy_snapshot_password_resets'],
-        ['gm_stock_entries', 'id', 'gm_legacy_snapshot_stock_entries'],
-        ['gm_stock_outputs', 'id', 'gm_legacy_snapshot_stock_outputs'],
-        ['gm_stock_movements', 'id', 'gm_legacy_snapshot_stock_movements']
-      ];
-      // V4.1 utilisait certains noms gm_* pour des snapshots JSON. V6 utilise
-      // les mêmes noms pour les tables relationnelles. Préserver les anciennes
-      // lignes sous un nom d'archive avant de créer le schéma V6.
-      for (const [table, requiredColumn, archive] of legacyConflicts) {
-        const info = await env.GLOBAL_MARKET_D1.prepare(`PRAGMA table_info(${table})`).all();
-        const columns = (info.results || []).map(row => String(row.name || ''));
-        if (columns.length && !columns.includes(requiredColumn)) {
-          const archiveInfo = await env.GLOBAL_MARKET_D1.prepare(`PRAGMA table_info(${archive})`).all();
-          const archiveColumns = (archiveInfo.results || []).map(row => String(row.name || ''));
-          if (!archiveColumns.length) {
-            await env.GLOBAL_MARKET_D1.prepare(`ALTER TABLE ${table} RENAME TO ${archive}`).run();
-          } else if (archiveColumns.join('|') === columns.join('|')) {
-            // Une tentative précédente peut avoir déjà créé l'archive. Fusionner
-            // les snapshots sans perte, puis libérer le nom relationnel V6.
-            await env.GLOBAL_MARKET_D1.prepare(`INSERT OR REPLACE INTO ${archive} SELECT * FROM ${table}`).run();
-            await env.GLOBAL_MARKET_D1.prepare(`DROP TABLE ${table}`).run();
-          } else {
-            throw new Error(`D1_LEGACY_SCHEMA_CONFLICT:${table}:${archive}`);
-          }
-        }
-      }
-      try {
-        const marker = await env.GLOBAL_MARKET_D1.prepare("SELECT value FROM gm_meta WHERE key='relational_schema_version' LIMIT 1").first();
-        if (String(marker?.value || '') === '6.1.6') return true;
-      } catch (error) {
-        const message = String(error?.message || error || '');
-        if (!/no such table|does not exist|missing table/i.test(message)) throw error;
-      }
-      await runD1Batches(env.GLOBAL_MARKET_D1, dbSchemaStatements(env), 20);
-      await env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_meta(key,value,updated_at) VALUES('relational_schema_version','6.1.6',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`).bind(new Date().toISOString()).run();
+  if (dbSchemaReady) return true;
+
+  // V6.1.7 : chemin rapide. Sur une base déjà réparée, une seule lecture
+  // du marqueur suffit. Aucun objet Promise D1 en cours n'est partagé entre
+  // requêtes : les isolates Workers peuvent être réutilisés entre utilisateurs.
+  try {
+    const marker = await env.GLOBAL_MARKET_D1.prepare("SELECT value FROM gm_meta WHERE key='relational_schema_version' LIMIT 1").first();
+    if (String(marker?.value || '') === '6.1.6') {
+      dbSchemaReady = true;
       return true;
-    })().catch(error => { dbReadyPromise = null; throw error; });
+    }
+  } catch (error) {
+    const message = String(error?.message || error || '');
+    if (!/no such table|does not exist|missing table/i.test(message)) throw error;
   }
-  await dbReadyPromise;
+
+  const legacyConflicts = [
+    ['gm_sales', 'id', 'gm_legacy_snapshot_sales'],
+    ['gm_payments', 'id', 'gm_legacy_snapshot_payments'],
+    ['gm_orders', 'id', 'gm_legacy_snapshot_orders'],
+    ['gm_company_settings', 'section', 'gm_legacy_snapshot_settings'],
+    ['gm_password_reset_requests', 'id', 'gm_legacy_snapshot_password_resets'],
+    ['gm_stock_entries', 'id', 'gm_legacy_snapshot_stock_entries'],
+    ['gm_stock_outputs', 'id', 'gm_legacy_snapshot_stock_outputs'],
+    ['gm_stock_movements', 'id', 'gm_legacy_snapshot_stock_movements']
+  ];
+  // V4.1 utilisait certains noms gm_* pour des snapshots JSON. V6 utilise
+  // les mêmes noms pour les tables relationnelles. Préserver les anciennes
+  // lignes sous un nom d'archive avant de créer le schéma V6.
+  for (const [table, requiredColumn, archive] of legacyConflicts) {
+    const info = await env.GLOBAL_MARKET_D1.prepare(`PRAGMA table_info(${table})`).all();
+    const columns = (info.results || []).map(row => String(row.name || ''));
+    if (columns.length && !columns.includes(requiredColumn)) {
+      const archiveInfo = await env.GLOBAL_MARKET_D1.prepare(`PRAGMA table_info(${archive})`).all();
+      const archiveColumns = (archiveInfo.results || []).map(row => String(row.name || ''));
+      if (!archiveColumns.length) {
+        await env.GLOBAL_MARKET_D1.prepare(`ALTER TABLE ${table} RENAME TO ${archive}`).run();
+      } else if (archiveColumns.join('|') === columns.join('|')) {
+        await env.GLOBAL_MARKET_D1.prepare(`INSERT OR REPLACE INTO ${archive} SELECT * FROM ${table}`).run();
+        await env.GLOBAL_MARKET_D1.prepare(`DROP TABLE ${table}`).run();
+      } else {
+        throw new Error(`D1_LEGACY_SCHEMA_CONFLICT:${table}:${archive}`);
+      }
+    }
+  }
+  await runD1Batches(env.GLOBAL_MARKET_D1, dbSchemaStatements(env), 20);
+  await env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_meta(key,value,updated_at) VALUES('relational_schema_version','6.1.6',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`).bind(new Date().toISOString()).run();
+  dbSchemaReady = true;
+  return true;
 }
 
 function defaultState() {
@@ -3351,16 +3354,17 @@ async function v6CatalogQuery(request,env){
   return {items,companies,pagination:{page:Math.min(p.page,pages),pageSize:p.pageSize,total,pages},categories:(cats.results||[]).map(x=>x.category).filter(Boolean),source:'d1-v610-light'};
 }
 async function handleV6Bootstrap(request,env,executionCtx){
-  v611ScheduleHistoricalReconcile(env,executionCtx);
-  const [catalog,companies]=await Promise.all([v6CatalogQueryCached(request,env,executionCtx),v6PublicCompaniesCached(request,env,executionCtx)]),db=v6ReadDb(request,env,false); let clientSession=null,marketClients=[],orders=[],marketMessages=[],historyFallback=false;
+  // V6.1.7 : le bootstrap public reste volontairement léger. L'historique des
+  // commandes et les messages sont chargés uniquement quand l'espace client
+  // est ouvert via /api/v6/client/orders et /api/v6/client/messages.
+  // Cela évite qu'une simple connexion ou un retour à l'accueil déclenche une
+  // restauration historique lourde sur le chemin critique.
+  const [catalog,companies]=await Promise.all([v6CatalogQueryCached(request,env,executionCtx),v6PublicCompaniesCached(request,env,executionCtx)]),db=v6ReadDb(request,env,false); let clientSession=null,marketClients=[];
   try{
     const ctx=await v6GetClientSession(request,env,false);clientSession=publicClientSessionView(ctx.session);marketClients=[cleanClone(ctx.client)];
-    const recoveredOrders=await v613LoadClientOrders(env,ctx,executionCtx,{force:false,limit:1000});orders=recoveredOrders.orders;
-    marketMessages=await v6ReadTable(db,'SELECT * FROM gm_market_messages WHERE client_id=? AND client_deleted=0 ORDER BY created_at DESC LIMIT 250',[ctx.client.id],v6MessageFromRow);
-    if(!(await v611ClientHistoryDone(env,ctx.client.id))){const legacy=await v611LegacyClientSlice(env,ctx.client);marketMessages=v611MergeRows(marketMessages,legacy.messages);historyFallback=Boolean(recoveredOrders.recovery?.ran||legacy.messages.length);const task=v611BackfillClientSlice(env,{orders:[],messages:legacy.messages,companies:legacy.companies,marketClients:legacy.marketClients},ctx.client.id).catch(e=>console.warn('[V6.1.2] backfill messages client différé',e?.message||e));if(executionCtx?.waitUntil)executionCtx.waitUntil(task);}
-  }catch(error){if(error?.code&&!['CLIENT_UNAUTHENTICATED','CLIENT_SESSION_EXPIRED'].includes(error.code))console.warn('[V6.1.1] session client bootstrap',error?.message||error);}
+  }catch(error){if(error?.code&&!['CLIENT_UNAUTHENTICATED','CLIENT_SESSION_EXPIRED'].includes(error.code))console.warn('[V6.1.7] session client bootstrap',error?.message||error);}
   const companyMap=new Map((companies||[]).map(c=>[c.id,c]));for(const c of catalog.companies||[])companyMap.set(c.id,c);
-  return v6AttachBookmark(json({companies:[...companyMap.values()].map(publicCompany),items:catalog.items,marketClients,orders,marketMessages,clientDeletedOrders:{},clientSession,app:{name:APP_NAME,storageVersion:6},catalogMeta:{pagination:catalog.pagination,categories:catalog.categories,authoritativeEmpty:Boolean(catalog.authoritativeEmpty),source:catalog.source||'d1-v6'},historyFallback}),db);
+  return v6AttachBookmark(json({companies:[...companyMap.values()].map(publicCompany),items:catalog.items,marketClients,orders:[],marketMessages:[],clientDeletedOrders:{},clientSession,app:{name:APP_NAME,storageVersion:6},catalogMeta:{pagination:catalog.pagination,categories:catalog.categories,authoritativeEmpty:Boolean(catalog.authoritativeEmpty),source:catalog.source||'d1-v6'},progressiveClientData:true,historyFallback:false}),db);
 }
 async function handleV6Catalog(request,env,executionCtx){v611ScheduleHistoricalReconcile(env,executionCtx);const db=v6ReadDb(request,env,false),data=await v6CatalogQueryCached(request,env,executionCtx);return v6AttachBookmark(json(data,{headers:{'X-Global-Market-Edge-Cache':data.edgeCached?'HIT':'MISS'}}),db);}
 async function handleV6ClientOrders(request,env,executionCtx){
