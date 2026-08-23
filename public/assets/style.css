@@ -4915,3 +4915,210 @@ body.registerModalOpen{overflow:hidden!important}
 .gmUnifiedCartCard{width:min(1240px,97vw)!important}.gmUnifiedCartMain{width:100%}
 @media(max-width:1050px){.gmCartCheckoutGrid{grid-template-columns:1fr 1fr}.gmCartSummaryCard{grid-column:1/-1}}
 @media(max-width:720px){.gmCartCheckoutGrid{grid-template-columns:1fr}.gmCartSummaryCard{grid-column:auto}.gmCartCheckoutCard{padding:14px}}
+
+/* === CORRECTION V5.5.1 — Accueil sans hero + page À propos + popups === */
+.gmHomePageNoHero .gmHomeFiltersTop{margin-top:18px;background:#fff;box-shadow:0 10px 24px rgba(6,61,52,.06);border:1px solid #e6efeb;border-radius:18px;padding:12px}
+.gmHomePageNoHero .gmHomeCatalogSection{padding-top:8px}
+.gmHomeCatalogGrid.gmHomeCatalogGridFour{grid-template-columns:repeat(4,minmax(0,1fr))!important}
+.gmItemDetailClose{width:auto!important;min-width:110px;height:40px!important;padding:0 14px!important;border-radius:999px!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;gap:8px!important;background:#0a4639!important;color:#fff!important;font-size:14px!important;font-weight:900!important;box-shadow:0 10px 24px rgba(6,61,52,.18)}
+.gmItemDetailClose span:first-child{font-size:22px;line-height:1}
+
+.gmAboutPage{background:linear-gradient(180deg,#fbfdfc 0%,#f3f8f5 100%)}
+.gmAboutHero{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(320px,.85fr);gap:22px;margin:18px 20px 14px;padding:28px;border-radius:28px;background:radial-gradient(circle at top right,rgba(245,189,44,.16),transparent 28%),linear-gradient(135deg,#073d34,#0b5648 58%,#0d6a58 100%);color:#fff;box-shadow:0 18px 45px rgba(6,61,52,.18)}
+.gmAboutKicker{display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border-radius:999px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);font-size:11px;letter-spacing:.12em;font-weight:1000}
+.gmAboutHeroText h1{margin:14px 0 10px;font-size:clamp(30px,3vw,46px);line-height:1.08;color:#fff}
+.gmAboutHeroText p{margin:0;color:#e5f3ef;font-size:15px;line-height:1.7;max-width:760px}
+.gmAboutHeroActions{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}
+.gmAboutGhostBtn{height:48px;padding:0 18px;border-radius:14px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.08);color:#fff;font-weight:900}
+.gmAboutHeroStats{display:grid;gap:14px}
+.gmAboutHeroStats article{display:grid;grid-template-columns:44px 1fr;gap:12px;align-items:start;padding:18px;border-radius:20px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(8px)}
+.gmAboutHeroStats article span{width:44px;height:44px;display:grid;place-items:center;border-radius:14px;background:rgba(255,255,255,.12);color:#ffd86e}
+.gmAboutHeroStats article .officialSvgIcon{width:24px;height:24px}
+.gmAboutHeroStats article b{display:block;color:#fff;font-size:16px;margin-bottom:4px}
+.gmAboutHeroStats article small{display:block;color:#e2f1ed;line-height:1.5}
+.gmAboutSection{margin:0 20px 16px;padding:24px;border-radius:24px;background:#fff;border:1px solid #e5efea;box-shadow:0 10px 30px rgba(10,62,51,.06)}
+.gmAboutAccentSection{background:linear-gradient(180deg,#fffdf6 0%,#ffffff 100%);border-color:#f2e0a4}
+.gmAboutSectionHead{display:flex;gap:14px;align-items:flex-start;margin-bottom:18px}
+.gmAboutSectionHead>span{width:46px;height:46px;flex:0 0 46px;display:grid;place-items:center;border-radius:16px;background:linear-gradient(135deg,#f6c32d,#ebad0c);color:#173a31;font-size:18px;font-weight:1000;box-shadow:0 8px 18px rgba(235,173,12,.22)}
+.gmAboutSectionHead h2{margin:0 0 5px;color:#0a3d33;font-size:26px}
+.gmAboutSectionHead p{margin:0;color:#667672;font-size:14px}
+.gmAboutGridTwo,.gmAboutAudienceGrid,.gmAboutMissionGrid{display:grid;gap:16px}
+.gmAboutGridTwo{grid-template-columns:repeat(2,minmax(0,1fr))}
+.gmAboutMissionGrid{grid-template-columns:repeat(4,minmax(0,1fr))}
+.gmAboutAudienceGrid{grid-template-columns:repeat(4,minmax(0,1fr))}
+.gmAboutCard,.gmAboutAudienceCard,.gmAboutMiniCard{padding:20px;border-radius:20px;border:1px solid #e3ece8;background:linear-gradient(180deg,#fbfdfc 0%,#f7fbf9 100%)}
+.gmAboutCard h3,.gmAboutAudienceCard h3{margin:12px 0 8px;color:#0f4338;font-size:18px}
+.gmAboutCard p,.gmAboutAudienceCard p,.gmAboutMiniCard p{margin:0;color:#60706b;line-height:1.65}
+.gmAboutMiniCard b{display:block;color:#0a463b;font-size:17px;margin-bottom:7px}
+.gmAboutIcon{width:54px;height:54px;display:grid;place-items:center;border-radius:18px;background:linear-gradient(135deg,#083f34,#0c6655);color:#f7c94a;box-shadow:0 12px 26px rgba(6,61,52,.18)}
+.gmAboutIcon .officialSvgIcon{width:26px;height:26px}
+.gmAboutSteps{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px}
+.gmAboutSteps article{position:relative;padding:22px 18px 18px;border-radius:20px;border:1px solid #e1ece7;background:linear-gradient(180deg,#ffffff 0%,#f6faf8 100%)}
+.gmAboutSteps article span{display:inline-flex;align-items:center;justify-content:center;min-width:58px;height:34px;padding:0 12px;border-radius:999px;background:#fff5d5;color:#8b6503;font-weight:1000;font-size:13px;border:1px solid #f2dda0}
+.gmAboutSteps article h3{margin:14px 0 8px;color:#0b4137;font-size:17px}
+.gmAboutSteps article p{margin:0;color:#677672;line-height:1.6}
+.gmAboutFooter{margin-top:10px}
+
+.orderDetailsBox{background:#fff!important;color:#103334!important}
+.orderDetailsBox h2,.orderDetailsBox h3,.orderDetailsBox p,.orderDetailsBox b,.orderDetailsBox strong,.orderDetailsBox span,.orderDetailsBox small,.orderDetailsBox label{color:#103334!important}
+.orderDetailsBox .marketPayClose{color:#063d34!important}
+.orderDetailsBox .orderFinancialSummary div,.orderDetailsBox .orderStatusRead,.orderDetailsBox .orderStatusGrid label,.orderDetailsBox .paymentProofBox{background:#f8fcfb!important;color:#103334!important}
+.orderDetailsBox .orderFinancialSummary b{color:#073f34!important}
+.orderDetailsBox .orderFinancialSummary .total{background:#eef9f4!important;border:1px solid #cfeadf!important}
+.orderDetailsBox .paymentCaptureLink{color:#004a48!important}
+
+@media(max-width:1180px){
+  .gmAboutHero{grid-template-columns:1fr}
+  .gmAboutMissionGrid,.gmAboutAudienceGrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .gmAboutSteps{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:980px){
+  .gmHomePageNoHero .gmHomeFiltersTop{margin:12px}
+  .gmHomeCatalogGrid.gmHomeCatalogGridFour{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+  .gmAboutSection,.gmAboutHero{margin-left:12px;margin-right:12px}
+  .gmAboutGridTwo{grid-template-columns:1fr}
+}
+@media(max-width:720px){
+  .gmHomeCatalogGrid.gmHomeCatalogGridFour{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .gmItemDetailClose{min-width:0!important;padding:0 12px!important;right:12px!important;top:12px!important}
+  .gmAboutHero{padding:20px}
+  .gmAboutSection{padding:18px}
+  .gmAboutSectionHead h2{font-size:22px}
+  .gmAboutMissionGrid,.gmAboutAudienceGrid,.gmAboutSteps{grid-template-columns:1fr}
+}
+@media(max-width:480px){
+  .gmHomeCatalogGrid.gmHomeCatalogGridFour{grid-template-columns:1fr!important}
+  .gmItemDetailClose{height:38px!important;font-size:13px!important}
+}
+
+/* === MESSAGERIE BOUTIQUES / CLIENTS — ajout ciblé V5.5.1 === */
+.officialContactBtn{min-width:155px!important;justify-content:center!important;background:linear-gradient(135deg,#073f34,#0c6655)!important;color:#fff!important;border-color:#0c6655!important;box-shadow:0 10px 24px rgba(6,61,52,.16)!important}
+.officialContactBtn .officialSvgIcon{color:#f5c94a!important}
+.officialContactBtn small,.officialContactBtn b{color:#fff!important}
+.mkSectionButtonsFive{grid-template-columns:repeat(5,minmax(0,1fr))!important}
+.mkSectionButtonsFive button{min-height:58px}
+.marketMessagesTopBtn{position:relative;background:linear-gradient(135deg,#fff6d6,#ffe89a)!important;color:#554000!important;border:1px solid #e6c85a!important}
+.marketMessagesTopBtn span{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;margin-left:6px;border-radius:999px;background:#0b5d4c;color:#fff;font-size:11px}
+.gmAdminMessagesPanel{overflow:hidden}
+.gmMessagesPanelHead{gap:16px;align-items:flex-start!important}
+.gmMessagesCount{display:inline-flex;align-items:center;padding:7px 10px;border-radius:999px;background:#e9f8f1;color:#0b614c;font-weight:900;font-size:12px;white-space:nowrap}
+.gmMessagesToolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0;padding:12px;border-radius:14px;background:#f7faf9;border:1px solid #e1ebe7}
+.gmMessagesToolbar label{display:flex;align-items:center;gap:8px;margin-right:auto;color:#25473e;font-weight:900;font-size:12px}
+.gmMessagesToolbar input[type="checkbox"],.gmMessagesTable input[type="checkbox"]{width:18px;height:18px;accent-color:#0b6753}
+.gmMessagesToolbar button{border:0;border-radius:10px;padding:10px 13px;font-weight:900;cursor:pointer}
+.gmMessagesToolbar .danger{background:#fff0f0;color:#a42121;border:1px solid #f0caca}
+.gmDeleteAllMessages{background:#b42318!important;color:#fff!important;border-color:#b42318!important}
+.gmMessagesTable th{background:#063f35!important;color:#fff!important}
+.gmMessagesTable td{vertical-align:top;color:#173a32!important;background:#fff!important}
+.gmMessagesTable td p{margin:5px 0 0;color:#66756f;line-height:1.45;max-width:460px;white-space:pre-wrap}
+.gmMsgDirection{display:inline-flex;padding:5px 8px;border-radius:999px;font-size:10px;font-weight:1000;white-space:nowrap}
+.gmMsgDirection.client{background:#e9f5ff;color:#14538a}
+.gmMsgDirection.admin{background:#e8f8ef;color:#08734f}
+.gmMsgRowActions{display:flex;gap:6px;flex-wrap:wrap}
+.gmMsgRowActions button{border:0;border-radius:9px;padding:8px 10px;background:#0b5f4c;color:#fff;font-weight:900;cursor:pointer}
+.gmMsgRowActions .btn2{background:#eef5f2;color:#17483b}
+.gmMessageComposeCard{width:min(760px,96vw)!important}
+.gmMessageFormGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px;margin-top:16px}
+.gmMessageFormGrid label,.gmReplyLabel{display:flex;flex-direction:column;gap:7px;color:#274d42;font-weight:900;font-size:12px}
+.gmMessageFormGrid label.full{grid-column:1/-1}
+.gmMessageFormGrid input,.gmMessageFormGrid textarea,.gmReplyLabel textarea{width:100%;border:1px solid #d7e4df;border-radius:12px;padding:12px;background:#fbfdfc;color:#153d33;outline:none;font:inherit;resize:vertical}
+.gmMessageFormGrid input:focus,.gmMessageFormGrid textarea:focus,.gmReplyLabel textarea:focus{border-color:#4c9c84;box-shadow:0 0 0 3px rgba(23,120,93,.10)}
+.gmMessageFormActions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px;flex-wrap:wrap}
+.gmMessageFormActions button{min-width:130px;border:0;border-radius:11px;padding:12px 16px;background:#0b5f4c;color:#fff;font-weight:1000;cursor:pointer}
+.gmMessageFormActions .btn2{background:#eef4f2;color:#19483c}
+.gmMessageThreadCard{width:min(820px,96vw)!important}
+.gmConversationList{display:grid;gap:10px;max-height:56vh;overflow:auto;padding:8px 2px;margin-top:14px}
+.gmConversationBubble{max-width:84%;padding:13px 15px;border-radius:16px;border:1px solid #dce9e4}
+.gmConversationBubble header{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:6px}
+.gmConversationBubble header b{color:#123e34}
+.gmConversationBubble header span{font-size:10px;color:#7b8984}
+.gmConversationBubble h4{margin:0 0 4px;color:#244d42;font-size:12px}
+.gmConversationBubble p{margin:0;color:#435f57;white-space:pre-wrap;line-height:1.55}
+.gmConversationBubble.fromClient{justify-self:start;background:#f0f7ff;border-color:#d5e6f8}
+.gmConversationBubble.fromAdmin{justify-self:end;background:#edf9f2;border-color:#d3eadc}
+.gmClientMessagesBox{width:min(1080px,96vw)!important;max-width:1080px!important}
+.gmClientMessagesHeader{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:10px}
+.gmClientMessagesHeader h2{margin:8px 0 4px!important}
+.gmClientMessagesHeader p{margin:0!important}
+.gmClientNewMessage{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.gmClientNewMessage select{min-width:220px;height:42px;border:1px solid #d7e4df;border-radius:10px;padding:0 10px;background:#fff;color:#173c33}
+.gmClientNewMessage button,.gmClientMessageBtn{height:42px;border:0;border-radius:10px;padding:0 14px;background:linear-gradient(135deg,#0b604c,#063e34);color:#fff;font-weight:1000;cursor:pointer}
+.gmClientMessageBtn{display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+.gmClientMessageBtn .officialSvgIcon{width:18px;height:18px}
+
+@media(max-width:1180px){.mkSectionButtonsFive{grid-template-columns:repeat(3,minmax(0,1fr))!important}}
+@media(max-width:820px){
+  .mkSectionButtonsFive{grid-template-columns:1fr 1fr!important}
+  .gmMessageFormGrid{grid-template-columns:1fr}.gmMessageFormGrid label.full{grid-column:auto}
+  .gmClientMessagesHeader{flex-direction:column}.gmClientNewMessage{width:100%}.gmClientNewMessage select{flex:1;min-width:0}
+  .gmMessagesTable{min-width:760px}
+}
+@media(max-width:520px){
+  .mkSectionButtonsFive{grid-template-columns:1fr!important}
+  .officialContactBtn{min-width:0!important;width:100%!important}
+  .gmMessageFormActions button{width:100%}
+  .gmConversationBubble{max-width:94%}
+  .gmMessagesToolbar{align-items:stretch}.gmMessagesToolbar label{width:100%;margin-right:0}.gmMessagesToolbar button{flex:1}
+}
+
+/* === CORRECTION CIBLÉE — Suivi commandes client / paiement après validation === */
+.gmClientOrdersWorkspace{width:min(1180px,97vw)!important;max-height:94vh!important;display:flex;flex-direction:column;color:#12352e!important}
+.gmClientOrdersWorkspace .gmClientOrdersScroll{overflow:auto;padding:4px 2px 14px;display:grid;gap:18px}
+.gmClientOrdersTitle{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding:10px 0 16px;border-bottom:1px solid #e2ebe7;margin-bottom:14px}
+.gmClientOrdersTitle h3{margin:0 0 4px;color:#0b4539}.gmClientOrdersTitle p{margin:0;color:#697a74}.gmClientOrdersTitle>span{padding:7px 12px;border-radius:999px;background:#eef8f4;color:#0c5b49;font-weight:900;white-space:nowrap}
+.gmClientOrderShopGroup{border:1px solid #dfe9e5;border-radius:20px;background:#f9fcfb;overflow:hidden}
+.gmClientOrderShopHead{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;background:linear-gradient(135deg,#073f34,#0a6250);color:#fff}.gmClientOrderShopHead>div{display:flex;align-items:center;gap:10px}.gmClientOrderShopHead span{display:flex;flex-direction:column}.gmClientOrderShopHead b{color:#fff!important;font-size:16px}.gmClientOrderShopHead small{color:#d8eee7!important;margin-top:2px}.gmClientOrderShopHead .officialSvgIcon{color:#f6c84a}
+.gmClientOrderCards{display:grid;gap:14px;padding:14px}
+.gmClientOrderCard{background:#fff;border:1px solid #e2ebe7;border-radius:16px;padding:16px;box-shadow:0 7px 20px rgba(6,61,52,.06)}
+.gmClientOrderCardHead{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:12px}.gmClientOrderCardHead h4{margin:6px 0 2px;color:#123f35;font-size:17px}.gmClientOrderCardHead small{color:#71807b}.gmOrderShopLabel{display:inline-flex;align-items:center;gap:6px;color:#0b6b55;font-size:11px;font-weight:900;text-transform:uppercase}.gmOrderShopLabel .officialSvgIcon{width:15px;height:15px}.gmClientOrderTotal{text-align:right}.gmClientOrderTotal small{display:block;color:#77847f}.gmClientOrderTotal b{display:block;color:#073f34!important;font-size:20px;margin-top:3px}
+.gmClientOrderDetails{overflow:auto;border-radius:12px;border:1px solid #e5ece9}.gmClientOrderDetails .mkOrdersTable th{background:#f0f7f4!important;color:#23453d!important}.gmClientOrderDetails .mkOrdersTable td{color:#213b35!important}.gmClientOrderDetails .mkOrdersTable small{display:block;color:#71807b!important;margin-top:2px}
+.gmClientOrderMeta{display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;margin:12px 0;color:#526762;font-size:12px}.gmClientOrderMeta b{color:#274a42!important}
+.gmClientOrderActions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding-top:12px;border-top:1px solid #edf2f0}.gmClientOrderActions button{min-height:40px;border-radius:11px;padding:0 14px;font-weight:900;border:0}.gmOrderStateBtn{min-width:165px}.gmOrderStateWaiting{background:#eef2f3;color:#536168}.gmOrderStatePay{background:#f59e0b!important;color:#fff!important;box-shadow:0 7px 16px rgba(245,158,11,.22)}.gmOrderStatePaymentWait{background:#fff3cd;color:#8a6500}.gmOrderStateCancelled{background:#dc2626!important;color:#fff!important}.gmOrderStateShipping{background:#2563eb!important;color:#fff!important}.gmOrderStateDelivered{background:#16a34a!important;color:#fff!important}.gmOrderDetailsBtn{background:#eef7f4;color:#0c5948;border:1px solid #bcded3!important}.gmOrderCancelBtn{background:#fff3e8;color:#b45309;border:1px solid #f4c99d!important}.gmOrderDeleteBtn{background:#fee2e2;color:#b91c1c;border:1px solid #fecaca!important}.gmOrderLocked{font-size:11px;color:#7c8790;font-weight:800;padding:8px 10px;background:#f4f5f6;border-radius:9px}
+.gmClientOrderPaymentCard{width:min(680px,95vw)!important}.gmOrderPaymentMethods{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:18px 0}.gmOrderPaymentMethods button{height:50px;border:0;border-radius:13px;background:#17a34a;color:#fff;font-weight:1000}.gmOrderPaymentMethods button.usdt{background:#0f766e}.gmOrderQrBox{display:grid;justify-items:center;gap:12px;padding:16px;border-radius:16px;background:#f8fbfa;border:1px solid #dce8e4}.gmOrderQrBox img{width:min(260px,70vw);height:auto;border-radius:12px;background:#fff;padding:8px;border:1px solid #e1e8e5}.gmOrderQrBox a{display:inline-flex;padding:11px 16px;border-radius:10px;background:#16a34a;color:#fff;text-decoration:none;font-weight:900}.gmOrderTransactionForm{margin-top:15px;display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end}.gmOrderTransactionForm label{display:grid;gap:6px;color:#284a42;font-weight:900}.gmOrderTransactionForm input{height:46px;border:1px solid #cfddd8;border-radius:11px;padding:0 12px;color:#183a32}.gmOrderTransactionForm button{height:46px;border:0;border-radius:11px;background:#f59e0b;color:#fff;padding:0 20px;font-weight:1000}
+.gmAdminPaymentInfo{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0 16px}.gmAdminPaymentInfo>div{padding:12px;border-radius:12px;background:#f5faf8;border:1px solid #dce9e4}.gmAdminPaymentInfo span{display:block;color:#6b7c76!important;font-size:11px}.gmAdminPaymentInfo b{display:block;color:#123f35!important;margin-top:4px;word-break:break-word}.gmOrderAdminStatus select:disabled{opacity:.55;cursor:not-allowed}
+@media(max-width:760px){.gmClientOrdersWorkspace{width:96vw!important;padding:18px 12px!important}.gmClientOrdersTitle,.gmClientOrderCardHead{align-items:flex-start;flex-direction:column}.gmClientOrderTotal{text-align:left}.gmClientOrderMeta{grid-template-columns:1fr}.gmClientOrderActions{align-items:stretch;flex-direction:column}.gmClientOrderActions button,.gmClientOrderActions .gmOrderLocked{width:100%}.gmOrderPaymentMethods,.gmOrderTransactionForm,.gmAdminPaymentInfo{grid-template-columns:1fr}.gmClientOrderDetails table{min-width:620px}}
+
+/* === V5.5.1 — Compte client + réinitialisation === */
+body.gmForgotOpen .gmHomeFilters{display:none!important}
+#forgotPasswordModal{z-index:10080!important}
+#forgotPasswordModal .modalOverlay{background:rgba(2,18,15,.88)!important;backdrop-filter:blur(10px)!important}
+#forgotPasswordModal .modalCard{width:min(680px,94vw)!important}
+.gmClientForgotLink{color:#b87900!important;text-decoration:underline!important;text-underline-offset:3px}
+.gmClientSpaceHeadActions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+.gmClientAccountBtn,.gmClientMessageBtn{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:42px;padding:0 14px;border-radius:12px;border:1px solid #b8d8cf;background:#eefaf6;color:#0a5748;font-weight:900}
+.gmClientAccountBtn{background:#fff7d9;border-color:#ead084;color:#725300}
+.gmClientAccountBtn .officialSvgIcon,.gmClientMessageBtn .officialSvgIcon{width:18px;height:18px}
+.gmClientAccountWorkspace{width:min(980px,96vw)!important;max-width:980px!important}
+.gmClientAccountSummary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:18px 0}
+.gmClientAccountSummary article{padding:16px;border:1px solid #dfeae6;border-radius:16px;background:linear-gradient(180deg,#fbfdfc,#f3f9f6)}
+.gmClientAccountSummary small{display:block;color:#70807b;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+.gmClientAccountSummary b{display:block;margin-top:6px;color:#0c4338;font-size:14px;word-break:break-word}
+.gmClientAccountForm{border-top:1px solid #e4ece9;padding-top:18px}
+.gmClientAccountForm h3{margin:10px 0 12px;color:#0b4237!important}
+.gmClientAccountGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.gmClientAccountGrid label,.gmClientForgotCard label{display:flex;flex-direction:column;gap:7px;color:#274f45;font-size:12px;font-weight:900}
+.gmClientAccountGrid input,.gmClientForgotCard input,.gmClientForgotCard textarea{width:100%;border:1px solid #d5e3de;border-radius:11px;background:#fbfdfc;color:#153b32;padding:12px 13px;outline:0}
+.gmClientAccountGrid input{height:44px}
+.gmClientAccountGrid input:focus,.gmClientForgotCard input:focus,.gmClientForgotCard textarea:focus{border-color:#4c9a84;box-shadow:0 0 0 3px rgba(31,125,99,.10)}
+.gmClientAccountActions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:18px}
+.gmClientAccountActions .gmHomePrimaryAuth{width:auto;min-width:220px;padding:0 18px}
+.gmClientAccountActions .btn2{min-height:44px;border:1px solid #d6e2de;border-radius:10px;background:#eef4f2;color:#24473e;font-weight:900;padding:0 16px}
+.gmClientForgotCard{width:min(620px,94vw)!important}
+.gmClientForgotCard>label{margin-top:12px}
+@media(max-width:820px){.gmClientAccountSummary{grid-template-columns:repeat(2,minmax(0,1fr))}.gmClientAccountGrid{grid-template-columns:1fr 1fr}}
+@media(max-width:600px){.gmClientSpaceHead{align-items:flex-start!important}.gmClientSpaceHeadActions{width:100%;justify-content:stretch}.gmClientSpaceHeadActions button{flex:1}.gmClientAccountSummary,.gmClientAccountGrid{grid-template-columns:1fr}.gmClientAccountActions{flex-direction:column}.gmClientAccountActions button,.gmClientAccountActions .gmHomePrimaryAuth{width:100%;min-width:0}}
+
+/* === GLOBAL MARKET V5.5.1 — Notifications nouvelles commandes / nouveaux messages === */
+.gmRealtimeNoticeBackdrop{position:fixed;inset:0;z-index:120000;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(3,24,20,.58);backdrop-filter:blur(7px)}
+.gmRealtimeNoticeCard{position:relative;width:min(470px,94vw);padding:28px 26px 24px;border-radius:24px;background:#fff;color:#17382f;border:1px solid #e2ece8;box-shadow:0 28px 90px rgba(0,0,0,.32);text-align:center;font-family:Inter,Manrope,"Segoe UI",Arial,sans-serif;animation:gmNoticeIn .22s ease-out}
+.gmRealtimeNoticeClose{position:absolute;right:14px;top:12px;width:38px;height:38px;border:0;border-radius:50%;background:#f1f5f3;color:#17382f;font-size:24px;cursor:pointer}
+.gmRealtimeNoticeIcon{width:68px;height:68px;margin:0 auto 12px;display:grid;place-items:center;border-radius:22px;background:linear-gradient(135deg,#073f34,#0b6553);color:#fff;font-size:30px;box-shadow:0 14px 28px rgba(7,63,52,.22)}
+.gmRealtimeNoticeKicker{display:inline-flex;padding:6px 10px;border-radius:999px;background:#fff5d4;border:1px solid #f0db95;color:#876205;font-size:10px;letter-spacing:.13em;font-weight:1000}
+.gmRealtimeNoticeCard h2{margin:12px 36px 8px;color:#073f34;font-size:24px;line-height:1.2}
+.gmRealtimeNoticeCard p{margin:0;color:#60726d;font-size:14px;line-height:1.6}
+.gmRealtimeNoticeActions{display:grid;grid-template-columns:.8fr 1.2fr;gap:10px;margin-top:22px}
+.gmRealtimeNoticeActions button{height:46px;border-radius:12px;font-weight:1000;cursor:pointer}
+.gmRealtimeNoticeLater{border:1px solid #d8e4df;background:#f6f9f8;color:#35554c}
+.gmRealtimeNoticeOpen{border:0;background:linear-gradient(135deg,#f6c32d,#e9ad0b);color:#17382f;box-shadow:0 10px 22px rgba(233,173,11,.22)}
+@keyframes gmNoticeIn{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+@media(max-width:520px){.gmRealtimeNoticeCard{padding:24px 18px 20px}.gmRealtimeNoticeActions{grid-template-columns:1fr}.gmRealtimeNoticeCard h2{font-size:21px}}
