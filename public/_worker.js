@@ -2561,12 +2561,122 @@ function v6GenericFromRow(row) { return row ? v6Payload(row) : null; }
 
 function v6DataUri(value) { return /^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/i.exec(String(value||'')); }
 async function v6ExternalizeMedia(env, ownerType, ownerId, field, value) {
-  const match=v6DataUri(value); if(!match || !env.GLOBAL_MARKET_MEDIA) return value;
-  const mime=match[1].slice(0,100); const bin=atob(match[2].replace(/\s+/g,'')); const bytes=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
-  const ext=(mime.split('/')[1]||'bin').replace(/[^a-z0-9]/gi,'').slice(0,8)||'bin';
-  const key=`${ownerType}/${ownerId}/${field}-${crypto.randomUUID()}.${ext}`;
-  await env.GLOBAL_MARKET_MEDIA.put(key,bytes,{httpMetadata:{contentType:mime,cacheControl:'public, max-age=31536000'}});
-  return `/api/v6/media/${encodeURIComponent(key)}`;
+  const match=v6DataUri(value); if(!match) return value;
+  const mime=match[1].slice(0,100); const raw=String(value||'');
+  if (env.GLOBAL_MARKET_MEDIA) {
+    const bin=atob(match[2].replace(/\s+/g,'')); const bytes=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+    const ext=(mime.split('/')[1]||'bin').replace(/[^a-z0-9]/gi,'').slice(0,8)||'bin';
+    const key=`${ownerType}/${ownerId}/${field}-${crypto.randomUUID()}.${ext}`;
+    await env.GLOBAL_MARKET_MEDIA.put(key,bytes,{httpMetadata:{contentType:mime,cacheControl:'public, max-age=31536000'}});
+    return `/api/v6/media/${encodeURIComponent(key)}`;
+  }
+  if (env.GLOBAL_MARKET_KV && raw.length <= 22_000_000) {
+    const key=`v610:media:${encodeURIComponent(String(ownerType))}:${encodeURIComponent(String(ownerId))}:${encodeURIComponent(String(field))}`;
+    try {
+      await env.GLOBAL_MARKET_KV.put(key,raw);
+      return `/api/v6/media-kv/${encodeURIComponent(String(ownerType))}/${encodeURIComponent(String(ownerId))}/${encodeURIComponent(String(field))}`;
+    } catch (error) { console.warn('[V6.1] média KV non externalisé',ownerType,ownerId,error?.message||error); }
+  }
+  return value;
+}
+
+function v610DecodeDataUri(raw){
+  const m=v6DataUri(raw); if(!m)return null;
+  const bin=atob(m[2].replace(/\s+/g,'')); const bytes=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+  return {mime:m[1].slice(0,100),bytes};
+}
+async function handleV610KvMedia(request,env,ownerType,ownerId,field){
+  const cacheKey=new Request(request.url,{method:'GET'}); try{const hit=await caches.default.match(cacheKey);if(hit)return hit}catch{}
+  const key=`v610:media:${encodeURIComponent(String(ownerType))}:${encodeURIComponent(String(ownerId))}:${encodeURIComponent(String(field))}`;
+  const raw=await env.GLOBAL_MARKET_KV.get(key); if(!raw)throw new HttpError(404,'Média introuvable.','MEDIA_NOT_FOUND');
+  const decoded=v610DecodeDataUri(raw); if(!decoded) return Response.redirect(new URL(raw,request.url).href,302);
+  const response=new Response(decoded.bytes,{headers:{'Content-Type':decoded.mime,'Cache-Control':'public, max-age=86400, stale-while-revalidate=604800'}});
+  try{await caches.default.put(cacheKey,response.clone())}catch{} return response;
+}
+async function handleV610ItemPhoto(request,env,itemId){
+  const cacheKey=new Request(request.url,{method:'GET'}); try{const hit=await caches.default.match(cacheKey);if(hit)return hit}catch{}
+  await ensureDB(env); const row=await env.GLOBAL_MARKET_D1.prepare(`SELECT CASE WHEN json_valid(payload_json) THEN json_extract(payload_json,'$.photo') ELSE NULL END AS photo FROM gm_items WHERE id=? LIMIT 1`).bind(String(itemId||'')).first();
+  const raw=String(row?.photo||''); if(!raw)throw new HttpError(404,'Image produit introuvable.','MEDIA_NOT_FOUND');
+  if(/^https?:\/\//i.test(raw)||raw.startsWith('/api/')) return Response.redirect(new URL(raw,request.url).href,302);
+  const decoded=v610DecodeDataUri(raw); if(!decoded)throw new HttpError(404,'Image produit invalide.','MEDIA_NOT_FOUND');
+  const response=new Response(decoded.bytes,{headers:{'Content-Type':decoded.mime,'Cache-Control':'public, max-age=86400, stale-while-revalidate=604800'}});
+  try{await caches.default.put(cacheKey,response.clone())}catch{} return response;
+}
+function v610CatalogItemFromRow(row){
+  return {id:row.id,companyId:row.company_id,code:row.code||'',name:row.name||'',cat:row.category||'',type:row.item_type||'',sell:Number(row.sell||0),stock:Number(row.stock||0),stockType:row.stock_type||'',marketplaceHidden:Boolean(row.marketplace_hidden),detail:row.detail||'',marketplaceDesc:row.marketplace_desc||'',marketplacePromo:row.marketplace_promo||'',photo:row.photo||''};
+}
+function v610PublicCompanyFromRow(row){
+  let delivery={}; try{delivery=row.market_delivery_config?JSON.parse(row.market_delivery_config):{}}catch{}
+  return {id:row.id,name:row.name||'',email:row.email||'',phone:row.phone||'',status:row.status||'',planCode:row.plan_code||'',subscriptionEnd:row.subscription_end||'',shopSlug:row.shop_slug||'',businessType:row.business_type||'',address:row.address||row.city||'',activity:row.activity||'',shopBanner:row.shop_banner||'',shopColor:row.shop_color||'',marketWaveBusinessLink:row.wave_link||'',marketUsdtTrc20:row.usdt_trc20||'',marketDeliveryConfig:delivery};
+}
+async function v610SelectPublicCompanies(db,companyIds=null){
+  let where='',bind=[]; if(Array.isArray(companyIds)&&companyIds.length){where=`WHERE c.id IN (${companyIds.map(()=>'?').join(',')})`;bind=companyIds;}
+  const rows=await db.prepare(`SELECT c.id,c.name,c.email,c.phone,c.status,c.plan_code,c.subscription_end,c.shop_slug,c.business_type,c.city,
+    CASE WHEN json_valid(c.payload_json) THEN COALESCE(json_extract(c.payload_json,'$.address'),c.city,'') ELSE COALESCE(c.city,'') END AS address,
+    CASE WHEN json_valid(c.payload_json) THEN COALESCE(json_extract(c.payload_json,'$.activity'),'') ELSE '' END AS activity,
+    CASE WHEN json_valid(c.payload_json) THEN COALESCE(json_extract(c.payload_json,'$.shopBanner'),'') ELSE '' END AS shop_banner,
+    CASE WHEN json_valid(c.payload_json) THEN COALESCE(json_extract(c.payload_json,'$.shopColor'),'') ELSE '' END AS shop_color,
+    CASE WHEN json_valid(c.payload_json) THEN COALESCE(json_extract(c.payload_json,'$.marketWaveBusinessLink'),'') ELSE '' END AS wave_link,
+    CASE WHEN json_valid(c.payload_json) THEN COALESCE(json_extract(c.payload_json,'$.marketUsdtTrc20'),'') ELSE '' END AS usdt_trc20,
+    CASE WHEN json_valid(c.payload_json) THEN COALESCE(json_extract(c.payload_json,'$.marketDeliveryConfig'),'{}') ELSE '{}' END AS market_delivery_config
+    FROM gm_companies c ${where} ORDER BY c.name COLLATE NOCASE ASC`).bind(...bind).all();
+  return (rows.results||[]).map(v610PublicCompanyFromRow);
+}
+async function v610FastLegacyState(env){
+  try{const state=await readStateFallback(env,'*');if(state&&(state.items?.length||state.users?.length||state.companies?.length))return state}catch{}
+  return null;
+}
+async function v610FastPublicPayload(env){
+  try{const p=await env.GLOBAL_MARKET_KV.get(PUBLIC_PAYLOAD_CACHE_KEY,'json');if(p&&(p.items?.length||p.companies?.length))return p}catch{}
+  const state=await v610FastLegacyState(env); if(!state)return null;
+  return {companies:(state.companies||[]).map(publicCompany),items:(state.items||[]).map(publicItem),marketClients:[],orders:[],marketMessages:[],clientDeletedOrders:{},app:state.app||{}};
+}
+async function v610LegacyCatalogFast(request,env){
+  const payload=await v610FastPublicPayload(env); const url=new URL(request.url),p=v6CatalogParams(url); if(!payload)return {items:[],companies:[],pagination:{page:p.page,pageSize:p.pageSize,total:0,pages:1},categories:[],migrationPending:true,source:'fast-cache-miss-v610',authoritativeEmpty:false};
+  const companies=Array.isArray(payload.companies)?payload.companies:[], cmap=new Map(companies.map(c=>[String(c.id),c]));
+  let rows=(Array.isArray(payload.items)?payload.items:[]).filter(i=>cmap.has(String(i.companyId||''))&&v6Bool(i.marketplaceHidden)===0);
+  if(p.q)rows=rows.filter(i=>v6SearchText(i).includes(p.q)); if(p.category)rows=rows.filter(i=>String(i.cat||i.category||'')===p.category); if(p.companyId)rows=rows.filter(i=>String(i.companyId||'')===p.companyId);
+  if(p.type==='product')rows=rows.filter(i=>!['service','services','prestation'].includes(String(i.type||'').toLowerCase())); if(p.type==='service')rows=rows.filter(i=>['service','services','prestation'].includes(String(i.type||'').toLowerCase()));
+  if(p.sort==='priceAsc')rows.sort((a,b)=>Number(a.sell||0)-Number(b.sell||0));else if(p.sort==='priceDesc')rows.sort((a,b)=>Number(b.sell||0)-Number(a.sell||0));else if(p.sort==='name')rows.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'fr'));else rows.sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||'')));
+  const total=rows.length,pages=Math.max(1,Math.ceil(total/p.pageSize)),page=Math.min(p.page,pages),items=rows.slice((page-1)*p.pageSize,page*p.pageSize).map(publicItem),ids=new Set(items.map(i=>String(i.companyId||''))),categories=[...new Set(rows.map(i=>String(i.cat||i.category||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'));
+  return {items,companies:companies.filter(c=>ids.has(String(c.id||''))).map(publicCompany),pagination:{page,pageSize:p.pageSize,total,pages},categories,migrationPending:true,source:'kv-fast-legacy-v610',authoritativeEmpty:false};
+}
+let V610_CORE_HYDRATE_PROMISE=null,V610_MIGRATION_PROMISE=null;
+async function v610HydrateCoreFromState(env,state){
+  if(!state)return {hydrated:false}; const keys=['companies','users','items','marketClients']; let count=0,buf=[];
+  for(const key of keys){for(const row of Array.isArray(state[key])?state[key]:[]){if(!row?.id)continue;buf.push(...await v6UpsertStatements(env,key,row));count++;if(buf.length>=20){await runD1Batches(env.GLOBAL_MARKET_D1,buf,20);buf=[];}}}
+  if(buf.length)await runD1Batches(env.GLOBAL_MARKET_D1,buf,20); await v6MetaSet(env,'v610_core_hydrated',JSON.stringify({at:v6Now(),count})); return {hydrated:true,count};
+}
+function v610ScheduleCoreHydration(env,executionCtx){
+  if(V610_CORE_HYDRATE_PROMISE)return; V610_CORE_HYDRATE_PROMISE=(async()=>{const state=await v610FastLegacyState(env);if(state)await v610HydrateCoreFromState(env,state);})().catch(e=>console.warn('[V6.1] hydratation coeur différée',e?.message||e)).finally(()=>{V610_CORE_HYDRATE_PROMISE=null});
+  if(executionCtx?.waitUntil)executionCtx.waitUntil(V610_CORE_HYDRATE_PROMISE);
+}
+function v610ScheduleFullMigration(env,executionCtx){
+  if(V610_MIGRATION_PROMISE)return; V610_MIGRATION_PROMISE=(async()=>{try{if(await v6IsReady(env))return;const lock=await env.GLOBAL_MARKET_KV.get('v610:auto-migration-lock');if(lock)return;await env.GLOBAL_MARKET_KV.put('v610:auto-migration-lock',String(Date.now()),{expirationTtl:120});try{await v6MigrateLegacy(env)}finally{await env.GLOBAL_MARKET_KV.delete('v610:auto-migration-lock')}}catch(e){console.warn('[V6.1] migration complète différée',e?.message||e)}})().finally(()=>{V610_MIGRATION_PROMISE=null});
+  if(executionCtx?.waitUntil)executionCtx.waitUntil(V610_MIGRATION_PROMISE);
+}
+async function v610FindLegacyUserFast(env,indexedId,identifier){
+  const state=await v610FastLegacyState(env); let user=(state?.users||[]).find(u=>String(u.id)===String(indexedId||'')||normalizeIdentifier(u.email||u.username)===identifier)||null; let company=user?.companyId?(state?.companies||[]).find(c=>String(c.id)===String(user.companyId)):null;
+  if(!user&&indexedId){try{const r=await env.GLOBAL_MARKET_D1.prepare(`SELECT company_id,data FROM company_state_patches WHERE section='array:users' AND record_id=? AND deleted=0 ORDER BY updated_at DESC LIMIT 1`).bind(indexedId).first();if(r?.data){user=JSON.parse(r.data);if(!user.companyId)user.companyId=r.company_id;}}catch{}}
+  if(user?.companyId&&!company){try{const r=await env.GLOBAL_MARKET_D1.prepare(`SELECT data FROM company_state_patches WHERE section='array:companies' AND record_id=? AND deleted=0 ORDER BY updated_at DESC LIMIT 1`).bind(user.companyId).first();if(r?.data)company=JSON.parse(r.data)}catch{} }
+  if(user?.companyId&&!company){try{const snaps=await readCompanySnapshots(env,user.companyId);const st=snaps?.[0]?.state;company=(st?.companies||[]).find(c=>String(c.id)===String(user.companyId))||null}catch{} }
+  return {user,company};
+}
+async function v610MinimalEmployeeData(db,user){
+  const state=defaultState();state.app={name:APP_NAME,storageVersion:6,architecture:'D1 relational V6.1 progressive'};
+  if(user.role==='superadmin'){
+    state.companies=await v610SelectPublicCompanies(db); const ur=await db.prepare('SELECT id,company_id,name,email,role,status,main_admin,created_at,updated_at FROM gm_users ORDER BY created_at DESC LIMIT 5000').all();state.users=(ur.results||[]).map(r=>({id:r.id,companyId:r.company_id||null,name:r.name||'',email:r.email||'',role:r.role,status:r.status,mainAdmin:Boolean(r.main_admin)}));
+  }else{
+    const cr=await db.prepare(`SELECT id,name,email,phone,status,plan_code,subscription_end,shop_slug,business_type,city,CASE WHEN json_valid(payload_json) THEN COALESCE(json_extract(payload_json,'$.address'),city,'') ELSE COALESCE(city,'') END address,CASE WHEN json_valid(payload_json) THEN COALESCE(json_extract(payload_json,'$.activity'),'') ELSE '' END activity,CASE WHEN json_valid(payload_json) THEN COALESCE(json_extract(payload_json,'$.shopBanner'),'') ELSE '' END shop_banner,CASE WHEN json_valid(payload_json) THEN COALESCE(json_extract(payload_json,'$.shopColor'),'') ELSE '' END shop_color,CASE WHEN json_valid(payload_json) THEN COALESCE(json_extract(payload_json,'$.marketWaveBusinessLink'),'') ELSE '' END wave_link,CASE WHEN json_valid(payload_json) THEN COALESCE(json_extract(payload_json,'$.marketUsdtTrc20'),'') ELSE '' END usdt_trc20,CASE WHEN json_valid(payload_json) THEN COALESCE(json_extract(payload_json,'$.marketDeliveryConfig'),'{}') ELSE '{}' END market_delivery_config FROM gm_companies WHERE id=?`).bind(user.companyId).first(); if(cr)state.companies=[v610PublicCompanyFromRow(cr)];
+    const ur=await db.prepare('SELECT id,company_id,name,email,role,status,main_admin FROM gm_users WHERE company_id=? ORDER BY created_at').bind(user.companyId).all();state.users=(ur.results||[]).map(r=>({id:r.id,companyId:r.company_id||null,name:r.name||'',email:r.email||'',role:r.role,status:r.status,mainAdmin:Boolean(r.main_admin)}));
+  }
+  return normalizeState(state);
+}
+async function v610GetEmployeeSessionLight(request,env,requireCsrf=false){
+  const sid=getCookie(request,EMPLOYEE_SESSION_COOKIE);if(!sid)throw new HttpError(401,'Connexion requise.','UNAUTHENTICATED');const session=await env.GLOBAL_MARKET_KV.get(`session:${sid}`,'json');if(!session||Number(session.expiresAt||0)<=Date.now()){if(sid)await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);throw new HttpError(401,'Session expirée. Reconnectez-vous.','SESSION_EXPIRED');}
+  if(requireCsrf){assertSameOrigin(request);const csrf=request.headers.get('X-CSRF-Token')||'';if(!csrf||!constantTimeEqual(csrf,session.csrfToken))throw new HttpError(403,'Jeton de sécurité invalide.','CSRF_REJECTED');}
+  const db=v6ReadDb(request,env,true);let user=await v6FindUser(db,session.userId);if(!user){const auth0=await getAuth(env,session.userId);const legacy=await v610FindLegacyUserFast(env,session.userId,normalizeIdentifier(auth0?.identifier));if(legacy.user){const st=[];if(legacy.company)st.push(...await v6UpsertStatements(env,'companies',legacy.company));st.push(...await v6UpsertStatements(env,'users',legacy.user));if(st.length)await runD1Batches(env.GLOBAL_MARKET_D1,st,20);user=legacy.user;}}
+  const auth=user?await getAuth(env,user.id):null;if(!user||user.status!=='active'||!auth||Number(auth.version)!==Number(session.authVersion))throw new HttpError(401,'Session invalidée. Reconnectez-vous.','SESSION_INVALIDATED');return {sid,session,user,auth,db};
 }
 async function v6PrepareRecordMedia(env,key,row){
   const copy=cleanClone(row);
@@ -2722,13 +2832,14 @@ async function v6GetClientSession(request,env,requireCsrf=false){
 }
 
 async function handleV6Login(request,env){
-  assertSameOrigin(request); const body=await readJson(request,20000),identifier=normalizeIdentifier(body.identifier||body.email),password=String(body.password||''),requestedRole=String(body.role||''); if(!identifier||!password)throw new HttpError(400,'Identifiant et mot de passe obligatoires.','MISSING_CREDENTIALS');
-  const rate=await assertLoginRateAllowed(env,requestIp(request),identifier); const db=v6ReadDb(request,env,true); let indexedId=await env.GLOBAL_MARKET_KV.get(authIndexKey(identifier)); let user=await v6FindUser(db,indexedId||identifier);
-  if(identifier===configuredSuperAdminIdentifier(env)){ if(!user){const p={...SUPER_ADMIN_PROFILE,email:identifier};await runD1Batches(env.GLOBAL_MARKET_D1,await v6UpsertStatements(env,'users',p),20);user=p;} await ensureSuperAdminCredential(env,{users:[user]}); }
-  const auth=user?await getAuth(env,user.id):null,valid=user&&user.status==='active'&&await verifyCredential(auth,password); if(!valid){await recordLoginFailure(env,rate);throw new HttpError(401,'Identifiant ou mot de passe incorrect.','INVALID_CREDENTIALS');}
-  if(requestedRole==='caisse'&&user.role!=='caisse')throw new HttpError(403,'Profil incorrect : sélectionnez Administrateur.','ROLE_MISMATCH'); if(requestedRole==='admin'&&!['admin','superadmin'].includes(user.role))throw new HttpError(403,'Profil incorrect : sélectionnez La Caisse.','ROLE_MISMATCH');
-  if(user.companyId){const company=v6CompanyFromRow(await db.prepare('SELECT * FROM gm_companies WHERE id=?').bind(user.companyId).first());const status=companyStatus(company);if(['expired','blocked','suspended'].includes(status))throw new HttpError(403,`Accès entreprise ${status}.`,'COMPANY_ACCESS_BLOCKED');}
-  await clearLoginRate(env,rate); const created=await createEmployeeSession(env,user,auth); const data=await v6LoadState(env,user.role==='superadmin'?'*':user.companyId,request); return v6AttachBookmark(json({success:true,session:publicSessionView(created.session),mustChangePassword:Boolean(auth.mustChangePassword),data:scopeState(data,user)},{headers:{'Set-Cookie':setCookie(EMPLOYEE_SESSION_COOKIE,created.sid,created.ttl)}}),db);
+  assertSameOrigin(request);await ensureDB(env);const body=await readJson(request,20000),identifier=normalizeIdentifier(body.identifier||body.email),password=String(body.password||''),requestedRole=String(body.role||'');if(!identifier||!password)throw new HttpError(400,'Identifiant et mot de passe obligatoires.','MISSING_CREDENTIALS');
+  const rate=await assertLoginRateAllowed(env,requestIp(request),identifier),db=v6ReadDb(request,env,true);let indexedId=await env.GLOBAL_MARKET_KV.get(authIndexKey(identifier)),user=await v6FindUser(db,indexedId||identifier);
+  if(!user&&identifier!==configuredSuperAdminIdentifier(env)){const legacy=await v610FindLegacyUserFast(env,indexedId,identifier);if(legacy.user){const st=[];if(legacy.company)st.push(...await v6UpsertStatements(env,'companies',legacy.company));st.push(...await v6UpsertStatements(env,'users',legacy.user));if(st.length)await runD1Batches(env.GLOBAL_MARKET_D1,st,20);user=legacy.user;indexedId=user.id;}}
+  if(identifier===configuredSuperAdminIdentifier(env)){if(!user){const p={...SUPER_ADMIN_PROFILE,email:identifier};await runD1Batches(env.GLOBAL_MARKET_D1,await v6UpsertStatements(env,'users',p),20);user=p;}await ensureSuperAdminCredential(env,{users:[user]});}
+  const auth=user?await getAuth(env,user.id):null,valid=user&&user.status==='active'&&await verifyCredential(auth,password);if(!valid){await recordLoginFailure(env,rate);throw new HttpError(401,'Identifiant ou mot de passe incorrect.','INVALID_CREDENTIALS');}
+  if(requestedRole==='caisse'&&user.role!=='caisse')throw new HttpError(403,'Profil incorrect : sélectionnez Administrateur.','ROLE_MISMATCH');if(requestedRole==='admin'&&!['admin','superadmin'].includes(user.role))throw new HttpError(403,'Profil incorrect : sélectionnez La Caisse.','ROLE_MISMATCH');
+  if(user.companyId){const cr=await db.prepare(`SELECT id,name,email,phone,status,plan_code,subscription_end,shop_slug,business_type,city,CASE WHEN json_valid(payload_json) THEN COALESCE(json_extract(payload_json,'$.address'),city,'') ELSE COALESCE(city,'') END address,CASE WHEN json_valid(payload_json) THEN COALESCE(json_extract(payload_json,'$.activity'),'') ELSE '' END activity,CASE WHEN json_valid(payload_json) THEN COALESCE(json_extract(payload_json,'$.shopBanner'),'') ELSE '' END shop_banner,CASE WHEN json_valid(payload_json) THEN COALESCE(json_extract(payload_json,'$.shopColor'),'') ELSE '' END shop_color,CASE WHEN json_valid(payload_json) THEN COALESCE(json_extract(payload_json,'$.marketWaveBusinessLink'),'') ELSE '' END wave_link,CASE WHEN json_valid(payload_json) THEN COALESCE(json_extract(payload_json,'$.marketUsdtTrc20'),'') ELSE '' END usdt_trc20,CASE WHEN json_valid(payload_json) THEN COALESCE(json_extract(payload_json,'$.marketDeliveryConfig'),'{}') ELSE '{}' END market_delivery_config FROM gm_companies WHERE id=?`).bind(user.companyId).first();const company=cr?v610PublicCompanyFromRow(cr):null;const status=companyStatus(company);if(['expired','blocked','suspended'].includes(status))throw new HttpError(403,`Accès entreprise ${status}.`,'COMPANY_ACCESS_BLOCKED');}
+  await clearLoginRate(env,rate);const created=await createEmployeeSession(env,user,auth),data=await v610MinimalEmployeeData(db,user);return v6AttachBookmark(json({success:true,session:publicSessionView(created.session),mustChangePassword:Boolean(auth.mustChangePassword),data,progressiveLoad:true},{headers:{'Set-Cookie':setCookie(EMPLOYEE_SESSION_COOKIE,created.sid,created.ttl)}}),db);
 }
 async function handleV6RegisterCompany(request,env){
   assertSameOrigin(request);const body=await readJson(request,100000),name=String(body.name||'').trim(),email=normalizeIdentifier(body.email),password=validatePassword(body.password,'admin');if(!name||!email)throw new HttpError(400,'Raison sociale et e-mail obligatoires.','MISSING_FIELDS');const db=v6ReadDb(request,env,true);if(await db.prepare('SELECT id FROM gm_users WHERE email=? LIMIT 1').bind(email).first())throw new HttpError(409,'Cet e-mail est déjà utilisé.','EMAIL_EXISTS');
@@ -2737,7 +2848,11 @@ async function handleV6RegisterCompany(request,env){
   const user={id:uid,companyId:cid,name:company.owner||'Administrateur principal',email,role:'admin',status:'active',createdAt:now.toISOString(),mainAdmin:true};const stmts=[...await v6UpsertStatements(env,'companies',company),...await v6UpsertStatements(env,'users',user)];await env.GLOBAL_MARKET_D1.batch(stmts);await writeUserCredential(env,user,password);const auth=await getAuth(env,user.id),created=await createEmployeeSession(env,user,auth);return v6AttachBookmark(json({success:true,session:publicSessionView(created.session),data:await v6LoadState(env,cid,request)},{status:201,headers:{'Set-Cookie':setCookie(EMPLOYEE_SESSION_COOKIE,created.sid,created.ttl)}}),db);
 }
 async function handleV6ClientRegister(request,env){assertSameOrigin(request);const body=await readJson(request,50000),name=String(body.name||'').trim(),phone=normalizePhone(body.phone),email=normalizeIdentifier(body.email),password=validatePassword(body.password,'client');if(!name||!phone)throw new HttpError(400,'Nom et téléphone obligatoires.','MISSING_FIELDS');const db=v6ReadDb(request,env,true);if(await db.prepare('SELECT id FROM gm_market_clients WHERE phone=?').bind(phone).first())throw new HttpError(409,'Ce téléphone possède déjà un compte client GLOBAL MARKET.','PHONE_EXISTS');const client={id:`clt_${crypto.randomUUID()}`,companyId:GLOBAL_CLIENT_SCOPE,scope:'global',name,phone,email,createdAt:v6Now()};await env.GLOBAL_MARKET_D1.batch(await v6UpsertStatements(env,'marketClients',client));await writeClientCredential(env,client,password);await env.GLOBAL_MARKET_KV.put(globalClientIndexKey(phone),client.id);const created=await createClientSession(env,client,await getClientAuth(env,client.id));return v6AttachBookmark(json({success:true,client:cleanClone(client),session:publicClientSessionView(created.session)},{status:201,headers:{'Set-Cookie':setCookie(CLIENT_SESSION_COOKIE,created.sid,CLIENT_SESSION_TTL)}}),db);}
-async function handleV6ClientLogin(request,env){assertSameOrigin(request);const body=await readJson(request,30000),phone=normalizePhone(body.phone),password=String(body.password||''),rate=await assertLoginRateAllowed(env,requestIp(request),`client:global:${phone}`),db=v6ReadDb(request,env,true),client=await v6FindClientByPhone(db,phone),auth=client?await getClientAuth(env,client.id):null;if(!client||!(await verifyCredential(auth,password))){await recordLoginFailure(env,rate);throw new HttpError(401,'Téléphone ou mot de passe incorrect.','INVALID_CREDENTIALS');}await clearLoginRate(env,rate);const created=await createClientSession(env,client,auth);return v6AttachBookmark(json({success:true,client:cleanClone(client),session:publicClientSessionView(created.session)},{headers:{'Set-Cookie':setCookie(CLIENT_SESSION_COOKIE,created.sid,CLIENT_SESSION_TTL)}}),db);}
+async function handleV6ClientLogin(request,env){
+  assertSameOrigin(request);await ensureDB(env);const body=await readJson(request,30000),phone=normalizePhone(body.phone),password=String(body.password||''),rate=await assertLoginRateAllowed(env,requestIp(request),`client:global:${phone}`),db=v6ReadDb(request,env,true);let client=await v6FindClientByPhone(db,phone);
+  if(!client){const state=await v610FastLegacyState(env),id=await env.GLOBAL_MARKET_KV.get(globalClientIndexKey(phone));client=(state?.marketClients||[]).find(c=>String(c.id)===String(id||'')||normalizePhone(c.phone)===phone)||null;if(client)await runD1Batches(env.GLOBAL_MARKET_D1,await v6UpsertStatements(env,'marketClients',client),20);}
+  const auth=client?await getClientAuth(env,client.id):null;if(!client||!(await verifyCredential(auth,password))){await recordLoginFailure(env,rate);throw new HttpError(401,'Téléphone ou mot de passe incorrect.','INVALID_CREDENTIALS');}await clearLoginRate(env,rate);const created=await createClientSession(env,client,auth);return v6AttachBookmark(json({success:true,client:cleanClone(client),session:publicClientSessionView(created.session),progressiveLoad:true},{headers:{'Set-Cookie':setCookie(CLIENT_SESSION_COOKIE,created.sid,CLIENT_SESSION_TTL)}}),db);
+}
 
 function v6CatalogParams(url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(48,Math.max(4,Number(url.searchParams.get('pageSize')||16))),q=String(url.searchParams.get('q')||'').trim().toLowerCase().slice(0,120),category=String(url.searchParams.get('category')||'').trim().slice(0,120),type=String(url.searchParams.get('type')||'').trim().toLowerCase(),sort=String(url.searchParams.get('sort')||'recent'),companyId=String(url.searchParams.get('companyId')||'').trim();return{page,pageSize,q,category,type,sort,companyId};}
 const V6_PUBLIC_CATALOG_CACHE_SECONDS=15;
@@ -2801,39 +2916,36 @@ function v605CatalogLastGoodKey(p){return `v6:catalog:last-good:${p.page}:${p.pa
 async function v605ReadLastGoodCatalog(env,p){try{return await env.GLOBAL_MARKET_KV.get(v605CatalogLastGoodKey(p),'json')}catch{return null}}
 async function v605WriteLastGoodCatalog(env,p,data){if(!v605CatalogBaseRequest(p)||!Array.isArray(data?.items)||!data.items.length)return;try{await env.GLOBAL_MARKET_KV.put(v605CatalogLastGoodKey(p),JSON.stringify({...data,savedAt:v6Now()}),{expirationTtl:86400})}catch{}}
 async function v6CatalogQueryCached(request,env,executionCtx){
-  const url=new URL(request.url),p=v6CatalogParams(url),key=`https://cache.global-market.internal/catalog-v605?page=${p.page}&pageSize=${p.pageSize}&q=${encodeURIComponent(p.q)}&category=${encodeURIComponent(p.category)}&type=${encodeURIComponent(p.type)}&sort=${encodeURIComponent(p.sort)}&companyId=${encodeURIComponent(p.companyId)}`;
+  const url=new URL(request.url),p=v6CatalogParams(url),key=`https://cache.global-market.internal/catalog-v610?page=${p.page}&pageSize=${p.pageSize}&q=${encodeURIComponent(p.q)}&category=${encodeURIComponent(p.category)}&type=${encodeURIComponent(p.type)}&sort=${encodeURIComponent(p.sort)}&companyId=${encodeURIComponent(p.companyId)}`;
   const cached=await v6CacheJsonGet(key);if(cached&&Array.isArray(cached.items)&&cached.items.length)return {...cached,edgeCached:true,authoritativeEmpty:false};
-  let data=null,recovery=null,legacy=null;
-  try{data=await v6CatalogQuery(request,env)}catch(error){console.warn('[V6.0.5] Lecture D1 catalogue différée',error?.message||error)}
-  if(v605CatalogBaseRequest(p)&&(!Array.isArray(data?.items)||!data.items.length)){
-    recovery=await v605ForceCatalogReconcile(env);
-    if(recovery?.recovered){try{data=await v6CatalogQuery(request,env)}catch{}}
-  }
-  if(!Array.isArray(data?.items)||!data.items.length){
-    try{legacy=await v603LegacyCatalogData(request,env);if(Array.isArray(legacy.items)&&legacy.items.length)data={...legacy,recovery,source:'legacy-fallback-v605'};}catch(error){console.warn('[V6.0.5] Catalogue legacy de secours indisponible',error?.message||error)}
-  }
-  if(v605CatalogBaseRequest(p)&&(!Array.isArray(data?.items)||!data.items.length)){
-    const lastGood=await v605ReadLastGoodCatalog(env,p);
-    if(Array.isArray(lastGood?.items)&&lastGood.items.length)data={...lastGood,source:'kv-last-good-v605',staleFallback:true,recovery};
-  }
-  if(!data)data={items:[],companies:[],pagination:{page:p.page,pageSize:p.pageSize,total:0,pages:1},categories:[]};
-  const authoritativeEmpty=!Array.isArray(data.items)||!data.items.length;
-  data={...data,authoritativeEmpty};
-  if(Array.isArray(data.items)&&data.items.length){await v605WriteLastGoodCatalog(env,p,data);await v6CacheJsonPut(key,data,60,executionCtx)}
+  let data=null,d1Ok=false;try{data=await v6CatalogQuery(request,env);d1Ok=true}catch(error){console.warn('[V6.1] catalogue D1 léger différé',error?.message||error)}
+  if(!Array.isArray(data?.items)||!data.items.length){const fast=await v610LegacyCatalogFast(request,env);if(Array.isArray(fast.items)&&fast.items.length){data=fast;v610ScheduleCoreHydration(env,executionCtx);}}
+  if(v605CatalogBaseRequest(p)&&(!Array.isArray(data?.items)||!data.items.length)){const lastGood=await v605ReadLastGoodCatalog(env,p);if(Array.isArray(lastGood?.items)&&lastGood.items.length)data={...lastGood,source:'kv-last-good-v610',staleFallback:true};}
+  if(!data)data={items:[],companies:[],pagination:{page:p.page,pageSize:p.pageSize,total:0,pages:1},categories:[],source:'empty-v610'};
+  const ready=await v6IsReady(env);const authoritativeEmpty=Boolean(d1Ok&&ready&&Array.isArray(data.items)&&data.items.length===0);data={...data,authoritativeEmpty};
+  if(Array.isArray(data.items)&&data.items.length){await v605WriteLastGoodCatalog(env,p,data);await v6CacheJsonPut(key,data,90,executionCtx)}
+  if(!ready){v610ScheduleCoreHydration(env,executionCtx);v610ScheduleFullMigration(env,executionCtx)}
   return data;
 }
 async function v6PublicCompaniesCached(request,env,executionCtx){
-  const key='https://cache.global-market.internal/companies-public-v604',cached=await v6CacheJsonGet(key);if(cached?.companies)return cached.companies;
-  const db=v6ReadDb(request,env,false),companies=await v6ReadTable(db,`SELECT * FROM gm_companies WHERE lower(COALESCE(status,'')) NOT IN ('blocked','suspended') ORDER BY name COLLATE NOCASE ASC`,[],v6CompanyFromRow);
-  await v6CacheJsonPut(key,{companies},V6_PUBLIC_COMPANY_CACHE_SECONDS,executionCtx);return companies;
+  const key='https://cache.global-market.internal/companies-public-v610',cached=await v6CacheJsonGet(key);if(cached?.companies?.length)return cached.companies;
+  const db=v6ReadDb(request,env,false);let companies=[];try{companies=(await v610SelectPublicCompanies(db)).filter(c=>!['blocked','suspended'].includes(String(c.status||'').toLowerCase()))}catch{}
+  if(!companies.length){const fast=await v610FastPublicPayload(env);companies=(fast?.companies||[]).filter(c=>!['blocked','suspended'].includes(String(c.status||'').toLowerCase()))}
+  if(companies.length)await v6CacheJsonPut(key,{companies},60,executionCtx);return companies;
 }
 async function v6CatalogQuery(request,env){
-  const db=v6ReadDb(request,env,false),url=new URL(request.url),p=v6CatalogParams(url),where=[`COALESCE(i.marketplace_hidden,0)=0`,`lower(COALESCE(c.status,'')) NOT IN ('blocked','suspended')`],bind=[];
+  await ensureDB(env); const db=v6ReadDb(request,env,false),url=new URL(request.url),p=v6CatalogParams(url),where=[`COALESCE(i.marketplace_hidden,0)=0`,`lower(COALESCE(c.status,'')) NOT IN ('blocked','suspended')`],bind=[];
   if(p.q){where.push('i.search_text LIKE ?');bind.push(`%${p.q}%`)} if(p.category){where.push('i.category=?');bind.push(p.category)} if(p.type==='product'){where.push("lower(COALESCE(i.item_type,'')) NOT IN ('service','services','prestation')")} if(p.type==='service'){where.push("lower(COALESCE(i.item_type,'')) IN ('service','services','prestation')")} if(p.companyId){where.push('i.company_id=?');bind.push(p.companyId)}
-  const order=p.sort==='priceAsc'?'i.sell ASC':p.sort==='priceDesc'?'i.sell DESC':p.sort==='name'?'i.name COLLATE NOCASE ASC':'i.updated_at DESC'; const whereSql=where.join(' AND '); const offset=(p.page-1)*p.pageSize;
-  const [countRow,itemRows,cats]=await Promise.all([db.prepare(`SELECT COUNT(*) AS n FROM gm_items i JOIN gm_companies c ON c.id=i.company_id WHERE ${whereSql}`).bind(...bind).first(),db.prepare(`SELECT i.* FROM gm_items i JOIN gm_companies c ON c.id=i.company_id WHERE ${whereSql} ORDER BY ${order} LIMIT ? OFFSET ?`).bind(...bind,p.pageSize,offset).all(),db.prepare(`SELECT DISTINCT i.category FROM gm_items i JOIN gm_companies c ON c.id=i.company_id WHERE i.marketplace_hidden=0 AND i.category<>'' ORDER BY i.category LIMIT 100`).all()]);
-  const items=(itemRows.results||[]).map(v6ItemFromRow).map(publicItem); const companyIds=[...new Set(items.map(x=>x.companyId))]; let companies=[]; if(companyIds.length){const marks=companyIds.map(()=>'?').join(',');companies=await v6ReadTable(db,`SELECT * FROM gm_companies WHERE id IN (${marks})`,companyIds,v6CompanyFromRow);}
-  const total=Number(countRow?.n||0),pages=Math.max(1,Math.ceil(total/p.pageSize)); return {items,companies:companies.map(publicCompany),pagination:{page:Math.min(p.page,pages),pageSize:p.pageSize,total,pages},categories:(cats.results||[]).map(r=>r.category).filter(Boolean)};
+  const order=p.sort==='priceAsc'?'i.sell ASC':p.sort==='priceDesc'?'i.sell DESC':p.sort==='name'?'i.name COLLATE NOCASE ASC':'i.updated_at DESC',whereSql=where.join(' AND '),offset=(p.page-1)*p.pageSize;
+  const itemSql=`SELECT i.id,i.company_id,i.code,i.name,i.category,i.item_type,i.sell,i.stock,i.stock_type,i.marketplace_hidden,i.updated_at,
+    CASE WHEN json_valid(i.payload_json) THEN COALESCE(json_extract(i.payload_json,'$.detail'),'') ELSE '' END AS detail,
+    CASE WHEN json_valid(i.payload_json) THEN COALESCE(json_extract(i.payload_json,'$.marketplaceDesc'),'') ELSE '' END AS marketplace_desc,
+    CASE WHEN json_valid(i.payload_json) THEN COALESCE(json_extract(i.payload_json,'$.marketplacePromo'),'') ELSE '' END AS marketplace_promo,
+    CASE WHEN json_valid(i.payload_json) AND COALESCE(length(json_extract(i.payload_json,'$.photo')),0)>0 THEN '/api/v6/item-photo/'||i.id ELSE '' END AS photo
+    FROM gm_items i JOIN gm_companies c ON c.id=i.company_id WHERE ${whereSql} ORDER BY ${order} LIMIT ? OFFSET ?`;
+  const [countRow,itemRows,cats]=await Promise.all([db.prepare(`SELECT COUNT(*) AS n FROM gm_items i JOIN gm_companies c ON c.id=i.company_id WHERE ${whereSql}`).bind(...bind).first(),db.prepare(itemSql).bind(...bind,p.pageSize,offset).all(),db.prepare(`SELECT DISTINCT i.category FROM gm_items i JOIN gm_companies c ON c.id=i.company_id WHERE i.marketplace_hidden=0 AND i.category<>'' ORDER BY i.category LIMIT 100`).all()]);
+  const items=(itemRows.results||[]).map(v610CatalogItemFromRow),companyIds=[...new Set(items.map(x=>x.companyId))],companies=companyIds.length?await v610SelectPublicCompanies(db,companyIds):[],total=Number(countRow?.n||0),pages=Math.max(1,Math.ceil(total/p.pageSize));
+  return {items,companies,pagination:{page:Math.min(p.page,pages),pageSize:p.pageSize,total,pages},categories:(cats.results||[]).map(x=>x.category).filter(Boolean),source:'d1-v610-light'};
 }
 async function handleV6Bootstrap(request,env,executionCtx){
   const [catalog,companies]=await Promise.all([v6CatalogQueryCached(request,env,executionCtx),v6PublicCompaniesCached(request,env,executionCtx)]),db=v6ReadDb(request,env,false); let clientSession=null,marketClients=[],orders=[],marketMessages=[];
@@ -2894,6 +3006,13 @@ async function handleV6LegacyCatalogBridge(request,env){
   const response=await handleV6LegacyBootstrapBridge(request,env),data=await response.json();return json({items:data.items||[],pagination:data.catalogMeta?.pagination||{},categories:data.catalogMeta?.categories||[],migrationPending:true});
 }
 
+
+async function handleV610SessionGet(request,env){
+  try{const ctx=await v610GetEmployeeSessionLight(request,env,false),data=await v610MinimalEmployeeData(ctx.db,ctx.user);return v6AttachBookmark(json({session:publicSessionView(ctx.session),data,progressiveLoad:true}),ctx.db)}catch{return json({session:null})}
+}
+async function handleV610EmployeeLoad(request,env){
+  const ctx=await v610GetEmployeeSessionLight(request,env,false);let state=null;try{state=await v6LoadState(env,ctx.user.role==='superadmin'?'*':ctx.user.companyId,request)}catch(error){console.warn('[V6.1] chargement complet différé',error?.message||error);state=await v610MinimalEmployeeData(ctx.db,ctx.user)}return v6AttachBookmark(json(scopeState(state,ctx.user)),ctx.db);
+}
 async function handleApi(request, env, executionCtx) {
   needBindings(env);
   const url = new URL(request.url);
@@ -2901,11 +3020,13 @@ async function handleApi(request, env, executionCtx) {
     const v6Ready = await v6IsReady(env);
     if (url.pathname === '/api/v6/migration-status' && request.method === 'GET') return json({ready:v6Ready,version:await v6MetaGet(env,V6_MIGRATION_META_KEY),status:await v6MetaGet(env,'migration_status')||'not-started'});
     if (url.pathname === '/api/v6/migrate' && request.method === 'POST') { v6AuthorizeMigration(request,env); return json({success:true,...await v6MigrateLegacy(env)}); }
+    if (url.pathname.startsWith('/api/v6/media-kv/') && request.method === 'GET') { const parts=url.pathname.slice('/api/v6/media-kv/'.length).split('/').map(decodeURIComponent); return await handleV610KvMedia(request,env,parts[0]||'',parts[1]||'',parts[2]||''); }
+    if (url.pathname.startsWith('/api/v6/item-photo/') && request.method === 'GET') return await handleV610ItemPhoto(request,env,decodeURIComponent(url.pathname.slice('/api/v6/item-photo/'.length)));
     if (url.pathname.startsWith('/api/v6/media/') && request.method === 'GET') return await handleV6Media(request,env,decodeURIComponent(url.pathname.slice('/api/v6/media/'.length)));
     if (url.pathname === '/api/v6/realtime-status' && request.method === 'GET') return json({available:Boolean(env.REALTIME_HUB),mode:env.REALTIME_HUB?'websocket':'polling-fallback'});
     if (v6Ready && url.pathname === '/api/v6/realtime' && request.method === 'GET') return await handleV6Realtime(request,env);
-    if (url.pathname === '/api/v6/catalog' && request.method === 'GET') return v6Ready ? await handleV6Catalog(request,env,executionCtx) : await handleV6LegacyCatalogBridge(request,env);
-    if (url.pathname === '/api/v6/bootstrap' && request.method === 'GET') return v6Ready ? await handleV6Bootstrap(request,env,executionCtx) : await handleV6LegacyBootstrapBridge(request,env);
+    if (url.pathname === '/api/v6/catalog' && request.method === 'GET') return await handleV6Catalog(request,env,executionCtx);
+    if (url.pathname === '/api/v6/bootstrap' && request.method === 'GET') return await handleV6Bootstrap(request,env,executionCtx);
     if (v6Ready && url.pathname === '/api/v6/client/orders' && request.method === 'GET') return await handleV6ClientOrders(request,env);
     if (v6Ready && url.pathname === '/api/v6/client/messages' && request.method === 'GET') return await handleV6ClientMessages(request,env);
     if (v6Ready && url.pathname === '/api/v6/admin/orders' && request.method === 'GET') return await handleV6AdminOrders(request,env);
@@ -2933,19 +3054,12 @@ async function handleApi(request, env, executionCtx) {
       });
     }
 
-    if (url.pathname === '/api/login' && request.method === 'POST') return v6Ready ? await handleV6Login(request, env) : await handleLogin(request, env);
-    if (url.pathname === '/api/register-company' && request.method === 'POST') return v6Ready ? await handleV6RegisterCompany(request, env) : await handleRegisterCompany(request, env);
+    if (url.pathname === '/api/login' && request.method === 'POST') return await handleV6Login(request, env);
+    if (url.pathname === '/api/register-company' && request.method === 'POST') return await handleV6RegisterCompany(request, env);
     if (url.pathname === '/api/password/change' && request.method === 'POST') return await handlePasswordChange(request, env);
     if (url.pathname === '/api/password/request-reset' && request.method === 'POST') return await handlePasswordResetRequest(request, env);
 
-    if (url.pathname === '/api/session' && request.method === 'GET') {
-      try {
-        const ctx = await getEmployeeSession(request, env, false);
-        return json({ session: publicSessionView(ctx.session), data: scopeState(ctx.state, ctx.user) });
-      } catch {
-        return json({ session: null });
-      }
-    }
+    if (url.pathname === '/api/session' && request.method === 'GET') return await handleV610SessionGet(request,env);
     if (url.pathname === '/api/session' && request.method === 'POST') {
       throw new HttpError(405, 'La création directe de session est désactivée. Utilisez /api/login.', 'METHOD_NOT_ALLOWED');
     }
@@ -2958,15 +3072,12 @@ async function handleApi(request, env, executionCtx) {
       return json({ success: true }, { headers: { 'Set-Cookie': setCookie(EMPLOYEE_SESSION_COOKIE, '', 0) } });
     }
 
-    if (url.pathname === '/api/load' && request.method === 'GET') {
-      const ctx = await getEmployeeSession(request, env, false);
-      return json(scopeState(ctx.state, ctx.user));
-    }
+    if (url.pathname === '/api/load' && request.method === 'GET') return await handleV610EmployeeLoad(request,env);
     if (url.pathname === '/api/save-delta' && request.method === 'POST') {
       assertSameOrigin(request);
-      const ctx = await getEmployeeSessionLight(request, env);
+      const ctx = await v610GetEmployeeSessionLight(request, env, false);
       const body = await readJson(request, 2_500_000);
-      const result = await persistStateDelta(env, body.delta, ctx.user);
+      const result = await v6PersistStateDelta(env, body.delta, ctx.user);
       return json({ success: true, message: 'Enregistrement sécurisé effectué.', storage: result.storage, patchCount: result.patchCount });
     }
     if (url.pathname === '/api/save' && request.method === 'POST') {
@@ -2993,8 +3104,8 @@ async function handleApi(request, env, executionCtx) {
     if (url.pathname === '/api/users/reset-password' && request.method === 'POST') return await handleResetUserPassword(request, env);
 
     if (url.pathname === '/api/public/load' && request.method === 'GET') return v6Ready ? await handleV6Bootstrap(request, env, executionCtx) : json(await publicLoadPayload(request, env));
-    if (url.pathname === '/api/public/client/register' && request.method === 'POST') return v6Ready ? await handleV6ClientRegister(request, env) : await handlePublicClientRegister(request, env);
-    if (url.pathname === '/api/public/client/login' && request.method === 'POST') return v6Ready ? await handleV6ClientLogin(request, env) : await handlePublicClientLogin(request, env);
+    if (url.pathname === '/api/public/client/register' && request.method === 'POST') return await handleV6ClientRegister(request, env);
+    if (url.pathname === '/api/public/client/login' && request.method === 'POST') return await handleV6ClientLogin(request, env);
     if (url.pathname === '/api/public/client/profile' && request.method === 'POST') return v6Ready ? await handleV6ClientProfile(request, env) : await handlePublicClientProfileUpdate(request, env);
     if (url.pathname === '/api/public/client/request-reset' && request.method === 'POST') return v6Ready ? await handleV6ClientResetRequest(request, env) : await handlePublicClientResetRequest(request, env);
     if (url.pathname === '/api/client/reset-password' && request.method === 'POST') return await handleSuperResetClientPassword(request, env);
