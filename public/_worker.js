@@ -2772,6 +2772,140 @@ async function v611BackfillClientSlice(env,slice,clientId){
   for(const message of slice.messages||[]){const existing=await env.GLOBAL_MARKET_D1.prepare('SELECT id,client_id FROM gm_market_messages WHERE id=?').bind(message.id).first();if(existing){if(String(existing.client_id||'')!==String(clientId)){stmts.push(env.GLOBAL_MARKET_D1.prepare('UPDATE gm_market_messages SET client_id=?,updated_at=? WHERE id=?').bind(clientId,v6Now(),message.id));relinked++;}}else{stmts.push(...await v6UpsertStatements(env,'marketMessages',{...message,clientId}));inserted++;}if(stmts.length>=20){await runD1Batches(env.GLOBAL_MARKET_D1,stmts,20);stmts=[];}}
   if(stmts.length)await runD1Batches(env.GLOBAL_MARKET_D1,stmts,20);const result={inserted,relinked};await v611MarkClientHistory(env,clientId,result);return result;
 }
+
+
+/* ==========================================================================
+   GLOBAL MARKET V6.1.2 — pont historique robuste des commandes client
+   - ne fait plus confiance aux marqueurs V6.1.1 qui pouvaient être posés après
+     une restauration vide/incomplète ;
+   - retrouve une commande par clientId, téléphone ou e-mail ;
+   - inspecte d'abord les tables relationnelles et les patches historiques,
+     puis le snapshot V5 seulement si nécessaire ;
+   - rattache durablement les commandes retrouvées au compte client courant.
+   ========================================================================== */
+const V612_CLIENT_RECOVERY_PREFIX='v612:client-orders-recovery:';
+function v612ClientRecoveryKey(clientId){return `${V612_CLIENT_RECOVERY_PREFIX}${encodeURIComponent(String(clientId||''))}`;}
+function v612PhoneDigits(value){return String(value||'').replace(/\D+/g,'');}
+function v612PhonesEqual(a,b){
+  const x=v612PhoneDigits(a),y=v612PhoneDigits(b);if(!x||!y)return false;if(x===y)return true;
+  // Côte d'Ivoire / international : +225XXXXXXXXXX et 0XXXXXXXXX doivent se rattacher.
+  if(x.length>=10&&y.length>=10)return x.slice(-10)===y.slice(-10);
+  return false;
+}
+function v612OrderIdentity(order={}){
+  const nested=order.client&&typeof order.client==='object'?order.client:{};
+  return {
+    clientId:String(order.clientId||order.client_id||nested.id||''),
+    phones:[order.clientPhone,order.phone,order.contact,order.customerPhone,order.customer_phone,order.deliveryPhone,nested.phone].filter(Boolean),
+    emails:[order.clientEmail,order.email,order.customerEmail,order.customer_email,nested.email].filter(Boolean)
+  };
+}
+function v612OrderMatchesClient(order,client,aliases=new Set()){
+  if(!order||!client)return false;const ident=v612OrderIdentity(order),cid=String(client.id||'');
+  if(ident.clientId&&(ident.clientId===cid||aliases.has(ident.clientId)))return true;
+  const phone=client.phone||'',email=normalizeIdentifier(client.email||'');
+  if(phone&&ident.phones.some(v=>v612PhonesEqual(v,phone)))return true;
+  if(email&&ident.emails.some(v=>normalizeIdentifier(v)===email))return true;
+  return false;
+}
+function v612BuildAliases(clients,client){
+  const aliases=new Set([String(client?.id||'')].filter(Boolean));
+  for(const c of Array.isArray(clients)?clients:[]){
+    if(!c?.id)continue;
+    if(String(c.id)===String(client?.id||'')||v612PhonesEqual(c.phone,client?.phone)||(client?.email&&normalizeIdentifier(c.email)===normalizeIdentifier(client.email)))aliases.add(String(c.id));
+  }
+  return aliases;
+}
+function v612ClientDeletedOrderSet(state,aliases){
+  const out=new Set();const map=state?.clientDeletedOrders&&typeof state.clientDeletedOrders==='object'?state.clientDeletedOrders:{};
+  for(const id of aliases||[])for(const oid of Array.isArray(map[id])?map[id]:[])out.add(String(oid));
+  return out;
+}
+function v612OrderExplicitlyDeleted(order,aliases,deletedSet){
+  if(!order)return false;if(order.clientDeleted===true||v6Bool(order.clientDeleted)===1)return true;
+  if(deletedSet?.has(String(order.id||'')))return true;
+  const ids=Array.isArray(order.clientDeletedIds)?order.clientDeletedIds.map(String):[];
+  return ids.some(id=>aliases?.has(id));
+}
+async function v612ReadRecoveryMarker(env,clientId){try{return await env.GLOBAL_MARKET_KV.get(v612ClientRecoveryKey(clientId),'json')}catch{return null}}
+async function v612WriteRecoveryMarker(env,clientId,value){
+  if(!clientId)return;const ttl=Number(value?.matched||0)>0?7*24*3600:15*60;
+  try{await env.GLOBAL_MARKET_KV.put(v612ClientRecoveryKey(clientId),JSON.stringify({at:v6Now(),...(value||{})}),{expirationTtl:ttl})}catch{}
+}
+async function v612PatchClientSlice(env,client){
+  const result={orders:[],messages:[],companies:[],marketClients:[],aliases:new Set([String(client.id)]),complete:false,source:'patches'};
+  try{
+    // Les fiches client sont petites et permettent de retrouver les anciens IDs du même compte.
+    const cr=await env.GLOBAL_MARKET_D1.prepare("SELECT record_id,data FROM company_state_patches WHERE section='array:marketClients' AND deleted=0 ORDER BY updated_at DESC LIMIT 5000").all();
+    for(const row of cr.results||[]){try{const c=JSON.parse(row.data||'{}');if(c?.id&&v612BuildAliases([c],client).has(String(c.id))){result.marketClients.push(c);result.aliases.add(String(c.id));}}catch{}}
+    // Une ligne de patch = une commande : pas besoin de reconstruire tout l'état global.
+    const or=await env.GLOBAL_MARKET_D1.prepare("SELECT company_id,record_id,data FROM company_state_patches WHERE section='array:orders' AND deleted=0 ORDER BY updated_at DESC LIMIT 5000").all();
+    for(const row of or.results||[]){try{const o=JSON.parse(row.data||'{}');if(!o.id)o.id=row.record_id;if(!o.companyId)o.companyId=row.company_id;if(v612OrderMatchesClient(o,client,result.aliases))result.orders.push({...o,clientId:client.id});}catch{}}
+    result.complete=true;return result;
+  }catch(error){console.warn('[V6.1.2] lecture patches commandes différée',error?.message||error);return result;}
+}
+async function v612LegacyClientSlice(env,client){
+  const empty={orders:[],messages:[],companies:[],marketClients:[cleanClone(client)],aliases:new Set([String(client.id)]),complete:false,source:'legacy'};
+  try{
+    let legacy=await readStateFallback(env,'*');
+    // Le cache peut ne contenir que le catalogue. Si aucune identité/commande pertinente n'est trouvée,
+    // on relit la source historique complète.
+    let aliases=v612BuildAliases(legacy?.marketClients||[],client);
+    let hasMatch=(legacy?.orders||[]).some(o=>v612OrderMatchesClient(o,client,aliases));
+    if(!legacy||!hasMatch){legacy=await loadStateLegacy(env,'*');aliases=v612BuildAliases(legacy?.marketClients||[],client);}
+    const deleted=v612ClientDeletedOrderSet(legacy,aliases);
+    const orders=(legacy.orders||[]).filter(o=>v612OrderMatchesClient(o,client,aliases)&&!v612OrderExplicitlyDeleted(o,aliases,deleted)).map(o=>({...cleanClone(o),clientId:client.id}));
+    const messages=(legacy.marketMessages||[]).filter(m=>aliases.has(String(m.clientId||''))||v612OrderMatchesClient(m,client,aliases)).map(m=>({...cleanClone(m),clientId:client.id}));
+    const companyIds=new Set([...orders,...messages].map(x=>String(x.companyId||'')).filter(Boolean));
+    const companies=(legacy.companies||[]).filter(c=>companyIds.has(String(c.id||'')));
+    const marketClients=(legacy.marketClients||[]).filter(c=>aliases.has(String(c.id||'')));
+    if(!marketClients.some(c=>String(c.id)===String(client.id)))marketClients.push(cleanClone(client));
+    return {orders,messages,companies,marketClients,aliases,complete:true,source:'legacy-full'};
+  }catch(error){console.warn('[V6.1.2] historique client complet différé',error?.message||error);return empty;}
+}
+async function v612RelationalIdentityOrders(env,client,aliases=new Set()){
+  const out=[],toRelink=[];try{
+    const db=env.GLOBAL_MARKET_D1;
+    // Direct + anciens IDs connus.
+    const ids=[...new Set([String(client.id),...aliases].filter(Boolean))];
+    if(ids.length){const marks=ids.map(()=>'?').join(',');const r=await db.prepare(`SELECT * FROM gm_orders WHERE client_id IN (${marks}) AND deleted_by_client=0 ORDER BY order_date DESC LIMIT 1000`).bind(...ids).all();for(const row of r.results||[]){const o=v6OrderFromRow(row);if(o){out.push({...o,clientId:client.id});if(String(row.client_id)!==String(client.id))toRelink.push(String(row.id));}}}
+    // Recherche d'identité dans le payload pour les migrations ayant changé l'ID client.
+    // Cette lecture n'est exécutée que pendant la réparation V6.1.2, pas à chaque affichage normal.
+    const r2=await db.prepare("SELECT * FROM gm_orders WHERE client_id<>? AND deleted_by_client=0 ORDER BY order_date DESC LIMIT 2500").bind(String(client.id)).all();
+    for(const row of r2.results||[]){const o=v6OrderFromRow(row);if(o&&v612OrderMatchesClient(o,client,aliases)){out.push({...o,clientId:client.id});toRelink.push(String(row.id));}}
+    if(toRelink.length){const unique=[...new Set(toRelink)],stmts=[];for(const id of unique)stmts.push(db.prepare('UPDATE gm_orders SET client_id=?,updated_at=? WHERE id=?').bind(String(client.id),v6Now(),id));await runD1Batches(db,stmts,20);}
+    return {orders:v611MergeRows(out,[]),relinked:new Set(toRelink).size,complete:true};
+  }catch(error){console.warn('[V6.1.2] rattachement relationnel commandes différé',error?.message||error);return {orders:out,relinked:0,complete:false};}
+}
+async function v612BackfillRecoveredClient(env,client,slices=[]){
+  const merged={orders:[],messages:[],companies:[],marketClients:[cleanClone(client)]};
+  for(const slice of slices){merged.orders=v611MergeRows(merged.orders,slice?.orders||[]);merged.messages=v611MergeRows(merged.messages,slice?.messages||[]);merged.companies=v611MergeRows(merged.companies,slice?.companies||[]);merged.marketClients=v611MergeRows(merged.marketClients,slice?.marketClients||[]);}
+  if(!merged.orders.length&&!merged.messages.length)return {inserted:0,relinked:0};
+  return v611BackfillClientSlice(env,merged,client.id);
+}
+async function v612LoadClientOrders(env,ctx,executionCtx,{force=false,limit=1000}={}){
+  let direct=await v6ReadTable(ctx.db,'SELECT * FROM gm_orders WHERE client_id=? AND deleted_by_client=0 ORDER BY order_date DESC LIMIT ?',[ctx.client.id,limit],v6OrderFromRow);
+  const marker=await v612ReadRecoveryMarker(env,ctx.client.id);let recovery={ran:false,complete:Boolean(marker?.complete),matched:Number(marker?.matched||0),relinked:0,sources:marker?.sources||[]};
+  const markerAge=marker?.at?Math.max(0,Date.now()-Date.parse(marker.at)):Infinity;const shouldRecover=force||!marker||(marker?.complete===false&&markerAge>60000)||(Number(marker?.matched||0)>direct.length);
+  if(shouldRecover){
+    const patch=await v612PatchClientSlice(env,ctx.client);let aliases=new Set([String(ctx.client.id),...(patch.aliases||[])]);
+    const relational=await v612RelationalIdentityOrders(env,ctx.client,aliases);let legacy={orders:[],messages:[],companies:[],marketClients:[],complete:false,source:'legacy-skipped'};
+    // Toujours tenter la source complète à la première réparation de cette version, car les patches
+    // ne couvrent pas nécessairement les très anciennes commandes.
+    if(!marker||force||direct.length===0)legacy=await v612LegacyClientSlice(env,ctx.client);
+    aliases=new Set([...aliases,...(legacy.aliases||[])]);
+    // Une seconde passe relationnelle utilise les alias découverts dans le snapshot historique.
+    const relational2=await v612RelationalIdentityOrders(env,ctx.client,aliases);
+    const all=v611MergeRows(v611MergeRows(v611MergeRows(direct,relational.orders),patch.orders||[]),v611MergeRows(legacy.orders||[],relational2.orders||[]));
+    direct=all.map(o=>({...o,clientId:ctx.client.id}));
+    const task=v612BackfillRecoveredClient(env,ctx.client,[patch,legacy]).catch(e=>console.warn('[V6.1.2] backfill commandes client différé',e?.message||e));if(executionCtx?.waitUntil)executionCtx.waitUntil(task);else await task;
+    recovery={ran:true,complete:Boolean(patch.complete&&legacy.complete&&relational.complete&&relational2.complete),matched:direct.length,relinked:Number(relational.relinked||0)+Number(relational2.relinked||0),sources:['d1-client-id','d1-identity','legacy-patches','legacy-snapshot']};
+    await v612WriteRecoveryMarker(env,ctx.client.id,recovery);
+  }
+  direct=v611MergeRows(direct,[]).filter(o=>!o.clientDeleted).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  return {orders:direct,recovery,authoritative:Boolean(direct.length||recovery.complete||marker?.complete)};
+}
+
 async function v610GetEmployeeSessionLight(request,env,requireCsrf=false){
   const sid=getCookie(request,EMPLOYEE_SESSION_COOKIE);if(!sid)throw new HttpError(401,'Connexion requise.','UNAUTHENTICATED');const session=await env.GLOBAL_MARKET_KV.get(`session:${sid}`,'json');if(!session||Number(session.expiresAt||0)<=Date.now()){if(sid)await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);throw new HttpError(401,'Session expirée. Reconnectez-vous.','SESSION_EXPIRED');}
   if(requireCsrf){assertSameOrigin(request);const csrf=request.headers.get('X-CSRF-Token')||'';if(!csrf||!constantTimeEqual(csrf,session.csrfToken))throw new HttpError(403,'Jeton de sécurité invalide.','CSRF_REJECTED');}
@@ -3052,17 +3186,18 @@ async function handleV6Bootstrap(request,env,executionCtx){
   const [catalog,companies]=await Promise.all([v6CatalogQueryCached(request,env,executionCtx),v6PublicCompaniesCached(request,env,executionCtx)]),db=v6ReadDb(request,env,false); let clientSession=null,marketClients=[],orders=[],marketMessages=[],historyFallback=false;
   try{
     const ctx=await v6GetClientSession(request,env,false);clientSession=publicClientSessionView(ctx.session);marketClients=[cleanClone(ctx.client)];
-    [orders,marketMessages]=await Promise.all([v6ReadTable(db,'SELECT * FROM gm_orders WHERE client_id=? AND deleted_by_client=0 ORDER BY order_date DESC LIMIT 250',[ctx.client.id],v6OrderFromRow),v6ReadTable(db,'SELECT * FROM gm_market_messages WHERE client_id=? AND client_deleted=0 ORDER BY created_at DESC LIMIT 250',[ctx.client.id],v6MessageFromRow)]);
-    if(!(await v611ClientHistoryDone(env,ctx.client.id))){const legacy=await v611LegacyClientSlice(env,ctx.client);orders=v611MergeRows(orders,legacy.orders);marketMessages=v611MergeRows(marketMessages,legacy.messages);historyFallback=Boolean(legacy.orders.length||legacy.messages.length);const task=v611BackfillClientSlice(env,legacy,ctx.client.id).catch(e=>console.warn('[V6.1.1] backfill client différé',e?.message||e));if(executionCtx?.waitUntil)executionCtx.waitUntil(task);}
+    const recoveredOrders=await v612LoadClientOrders(env,ctx,executionCtx,{force:false,limit:1000});orders=recoveredOrders.orders;
+    marketMessages=await v6ReadTable(db,'SELECT * FROM gm_market_messages WHERE client_id=? AND client_deleted=0 ORDER BY created_at DESC LIMIT 250',[ctx.client.id],v6MessageFromRow);
+    if(!(await v611ClientHistoryDone(env,ctx.client.id))){const legacy=await v611LegacyClientSlice(env,ctx.client);marketMessages=v611MergeRows(marketMessages,legacy.messages);historyFallback=Boolean(recoveredOrders.recovery?.ran||legacy.messages.length);const task=v611BackfillClientSlice(env,{orders:[],messages:legacy.messages,companies:legacy.companies,marketClients:legacy.marketClients},ctx.client.id).catch(e=>console.warn('[V6.1.2] backfill messages client différé',e?.message||e));if(executionCtx?.waitUntil)executionCtx.waitUntil(task);}
   }catch(error){if(error?.code&&!['CLIENT_UNAUTHENTICATED','CLIENT_SESSION_EXPIRED'].includes(error.code))console.warn('[V6.1.1] session client bootstrap',error?.message||error);}
   const companyMap=new Map((companies||[]).map(c=>[c.id,c]));for(const c of catalog.companies||[])companyMap.set(c.id,c);
   return v6AttachBookmark(json({companies:[...companyMap.values()].map(publicCompany),items:catalog.items,marketClients,orders,marketMessages,clientDeletedOrders:{},clientSession,app:{name:APP_NAME,storageVersion:6},catalogMeta:{pagination:catalog.pagination,categories:catalog.categories,authoritativeEmpty:Boolean(catalog.authoritativeEmpty),source:catalog.source||'d1-v6'},historyFallback}),db);
 }
 async function handleV6Catalog(request,env,executionCtx){v611ScheduleHistoricalReconcile(env,executionCtx);const db=v6ReadDb(request,env,false),data=await v6CatalogQueryCached(request,env,executionCtx);return v6AttachBookmark(json(data,{headers:{'X-Global-Market-Edge-Cache':data.edgeCached?'HIT':'MISS'}}),db);}
 async function handleV6ClientOrders(request,env,executionCtx){
-  const ctx=await v6GetClientSession(request,env,false),url=new URL(request.url),page=Math.max(1,Number(url.searchParams.get('page')||1)),size=Math.min(100,Math.max(10,Number(url.searchParams.get('pageSize')||30)));let rows=(await ctx.db.prepare('SELECT * FROM gm_orders WHERE client_id=? AND deleted_by_client=0 ORDER BY order_date DESC LIMIT 500').bind(ctx.client.id).all()).results||[],orders=rows.map(v6OrderFromRow),historyFallback=false;
-  if(!(await v611ClientHistoryDone(env,ctx.client.id))){const legacy=await v611LegacyClientSlice(env,ctx.client);orders=v611MergeRows(orders,legacy.orders).filter(o=>!o.clientDeleted);historyFallback=Boolean(legacy.orders.length);const task=v611BackfillClientSlice(env,legacy,ctx.client.id).catch(()=>{});if(executionCtx?.waitUntil)executionCtx.waitUntil(task);}
-  orders.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));const total=orders.length,slice=orders.slice((page-1)*size,page*size);return v6AttachBookmark(json({orders:slice,pagination:{page,pageSize:size,total,pages:Math.max(1,Math.ceil(total/size))},historyFallback}),ctx.db);
+  const ctx=await v6GetClientSession(request,env,false),url=new URL(request.url),page=Math.max(1,Number(url.searchParams.get('page')||1)),size=Math.min(100,Math.max(10,Number(url.searchParams.get('pageSize')||30))),force=url.searchParams.get('recover')==='1';
+  const recovered=await v612LoadClientOrders(env,ctx,executionCtx,{force,limit:1000}),orders=recovered.orders,total=orders.length,slice=orders.slice((page-1)*size,page*size);
+  return v6AttachBookmark(json({orders:slice,pagination:{page,pageSize:size,total,pages:Math.max(1,Math.ceil(total/size))},historyFallback:Boolean(recovered.recovery?.ran),authoritative:Boolean(recovered.authoritative),recovery:recovered.recovery}),ctx.db);
 }
 async function handleV6ClientMessages(request,env,executionCtx){
   const ctx=await v6GetClientSession(request,env,false),url=new URL(request.url),page=Math.max(1,Number(url.searchParams.get('page')||1)),size=Math.min(100,Math.max(10,Number(url.searchParams.get('pageSize')||50)));let rows=(await ctx.db.prepare('SELECT * FROM gm_market_messages WHERE client_id=? AND client_deleted=0 ORDER BY created_at DESC LIMIT 500').bind(ctx.client.id).all()).results||[],messages=rows.map(v6MessageFromRow),historyFallback=false;
