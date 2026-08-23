@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "6.1.0",
+  "version": "6.1.1",
   "private": true,
-  "description": "GLOBAL MARKET V6.1.0 - connexion progressive non bloquante, catalogue D1 léger, cache public persistant et migration V5 vers V6 automatique.",
+  "description": "GLOBAL MARKET V6.1.1 - restauration des données historiques V5/V6, commandes client ciblées et backfill D1 sans écraser les données récentes.",
   "type": "module",
   "engines": {
     "node": ">=20"
