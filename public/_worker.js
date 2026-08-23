@@ -2906,6 +2906,133 @@ async function v612LoadClientOrders(env,ctx,executionCtx,{force=false,limit=1000
   return {orders:direct,recovery,authoritative:Boolean(direct.length||recovery.complete||marker?.complete)};
 }
 
+
+/* ==========================================================================
+   GLOBAL MARKET V6.1.3 — restauration forensique des commandes client
+   Cette passe ne dépend plus uniquement de l'état V5 reconstruit. Elle inspecte
+   les sources historiques durables qui ont réellement pu recevoir une commande :
+   D1 relationnel, patches, snapshots, anciens chunks/backups, caches client KV
+   et file d'écriture différée KV. Elle n'est lancée automatiquement qu'une fois
+   par client (ou à nouveau si l'historique relationnel est vide).
+   ========================================================================== */
+const V613_CLIENT_RECOVERY_PREFIX='v613:client-orders-forensic:';
+function v613RecoveryKey(clientId){return `${V613_CLIENT_RECOVERY_PREFIX}${encodeURIComponent(String(clientId||''))}`;}
+async function v613ReadMarker(env,clientId){try{return await env.GLOBAL_MARKET_KV.get(v613RecoveryKey(clientId),'json')}catch{return null}}
+async function v613WriteMarker(env,clientId,value){try{await env.GLOBAL_MARKET_KV.put(v613RecoveryKey(clientId),JSON.stringify({at:v6Now(),version:'6.1.3',...(value||{})}),{expirationTtl:30*24*3600})}catch{}}
+function v613LikeTerms(client,aliases){
+  const out=new Set();
+  for(const id of aliases||[])if(id)out.add(String(id));
+  if(client?.id)out.add(String(client.id));
+  if(client?.phone){out.add(String(client.phone));out.add(v612PhoneDigits(client.phone));}
+  if(client?.email)out.add(normalizeIdentifier(client.email));
+  return [...out].filter(x=>x&&x.length>=4).slice(0,20);
+}
+function v613MergeRecovered(target,source){return v611MergeRows(target||[],source||[]);}
+function v613ExtractState(state,client,aliases){
+  if(!state||typeof state!=='object')return {orders:[],aliases};
+  const next=v612BuildAliases(state.marketClients||[],client);for(const x of aliases||[])next.add(String(x));
+  const deleted=v612ClientDeletedOrderSet(state,next);
+  const orders=(state.orders||[]).filter(o=>v612OrderMatchesClient(o,client,next)&&!v612OrderExplicitlyDeleted(o,next,deleted)).map(o=>({...cleanClone(o),clientId:client.id}));
+  return {orders,aliases:next};
+}
+async function v613KvList(env,prefix,maxKeys=1500){
+  const keys=[];let cursor=undefined,complete=false;
+  for(let page=0;page<20&&keys.length<maxKeys;page++){
+    const r=await env.GLOBAL_MARKET_KV.list({prefix,limit:Math.min(1000,maxKeys-keys.length),...(cursor?{cursor}:{})});
+    for(const k of r.keys||[])keys.push(k.name);if(r.list_complete||!r.cursor){complete=true;break}cursor=r.cursor;
+  }
+  return {keys,complete};
+}
+async function v613DiscoverAliases(env,client,aliases){
+  const out=new Set([String(client.id||''),...(aliases||[])]);const phone=String(client.phone||''),email=normalizeIdentifier(client.email||'');
+  try{const idx=phone?await env.GLOBAL_MARKET_KV.get(globalClientIndexKey(normalizePhone(phone))):'';if(idx)out.add(String(idx));}catch{}
+  try{
+    const terms=[String(client.id||''),phone,email].filter(Boolean).slice(0,3);if(terms.length){const where=terms.map(()=>"data LIKE ?").join(' OR '),r=await env.GLOBAL_MARKET_D1.prepare(`SELECT record_id,data FROM company_state_patches WHERE section='array:marketClients' AND deleted=0 AND (${where}) ORDER BY updated_at DESC LIMIT 1000`).bind(...terms.map(x=>`%${x}%`)).all();for(const row of r.results||[]){try{const c=JSON.parse(row.data||'{}');if(c?.id&&(String(c.id)===String(client.id)||v612PhonesEqual(c.phone,phone)||(email&&normalizeIdentifier(c.email)===email)))out.add(String(c.id));}catch{}}}
+  }catch(e){console.warn('[V6.1.3] alias patches différés',e?.message||e)}
+  return out;
+}
+async function v613ScanOrderPatches(env,client,aliases){
+  const terms=v613LikeTerms(client,aliases),orders=[];if(!terms.length)return {orders,complete:true};
+  try{const where=terms.map(()=>"data LIKE ?").join(' OR '),r=await env.GLOBAL_MARKET_D1.prepare(`SELECT company_id,record_id,data FROM company_state_patches WHERE section='array:orders' AND deleted=0 AND (${where}) ORDER BY updated_at DESC LIMIT 10000`).bind(...terms.map(x=>`%${x}%`)).all();for(const row of r.results||[]){try{const o=JSON.parse(row.data||'{}');if(!o.id)o.id=row.record_id;if(!o.companyId)o.companyId=row.company_id;if(v612OrderMatchesClient(o,client,aliases)&&!v612OrderExplicitlyDeleted(o,aliases,new Set()))orders.push({...cleanClone(o),clientId:client.id});}catch{}}return {orders:v613MergeRecovered([],orders),complete:(r.results||[]).length<10000};}catch(e){console.warn('[V6.1.3] commandes patches différées',e?.message||e);return {orders,complete:false};}
+}
+async function v613ScanPendingOps(env,client,aliases){
+  const orders=[];let complete=true;try{const listed=await v613KvList(env,PENDING_OPS_PREFIX,1500);complete=listed.complete;for(const key of listed.keys){let entry=null;try{entry=await env.GLOBAL_MARKET_KV.get(key,'json')}catch{}for(const op of entry?.operations||[]){if(op?.deleted||op?.section!=='array:orders')continue;const o=op.value&&typeof op.value==='object'?op.value:null;if(o&&v612OrderMatchesClient(o,client,aliases)&&!v612OrderExplicitlyDeleted(o,aliases,new Set()))orders.push({...cleanClone(o),clientId:client.id});}}}catch(e){console.warn('[V6.1.3] file KV différée',e?.message||e);complete=false}return {orders:v613MergeRecovered([],orders),complete};
+}
+async function v613ScanClientPayloadCaches(env,client,aliases,scanAll=false){
+  let orders=[],complete=true;const seen=new Set();const consume=payload=>{if(!payload||typeof payload!=='object')return;const x=v613ExtractState(payload,client,aliases);for(const a of x.aliases)aliases.add(a);orders=v613MergeRecovered(orders,x.orders)};
+  for(const id of aliases){const key=`${CLIENT_PAYLOAD_CACHE_PREFIX}${id}`;if(seen.has(key))continue;seen.add(key);try{consume(await env.GLOBAL_MARKET_KV.get(key,'json'))}catch{}}
+  if(scanAll&&!orders.length){try{const listed=await v613KvList(env,CLIENT_PAYLOAD_CACHE_PREFIX,500);complete=listed.complete;for(const key of listed.keys){if(seen.has(key))continue;seen.add(key);let p=null;try{p=await env.GLOBAL_MARKET_KV.get(key,'json')}catch{}if(p){const candidates=p.marketClients||[];if(candidates.some(c=>String(c.id)===String(client.id)||v612PhonesEqual(c.phone,client.phone)||(client.email&&normalizeIdentifier(c.email)===normalizeIdentifier(client.email))))consume(p);else if((p.orders||[]).some(o=>v612OrderMatchesClient(o,client,aliases)))consume(p);}}}catch(e){console.warn('[V6.1.3] cache client KV différé',e?.message||e);complete=false}}
+  return {orders,complete};
+}
+async function v613ScanBackups(env,client,aliases){
+  let orders=[],complete=true;const terms=v613LikeTerms(client,aliases);if(!terms.length)return {orders,complete};
+  try{const where=terms.map(()=>"data LIKE ?").join(' OR '),r=await env.GLOBAL_MARKET_D1.prepare(`SELECT id,company_id,data FROM backups WHERE ${where} ORDER BY id DESC LIMIT 40`).bind(...terms.map(x=>`%${x}%`)).all();for(const row of r.results||[]){const st=parseState(row.data||'');if(!st)continue;const x=v613ExtractState(st,client,aliases);for(const a of x.aliases)aliases.add(a);orders=v613MergeRecovered(orders,x.orders)}if((r.results||[]).length>=40)complete=false;}catch(e){console.warn('[V6.1.3] backups historiques différés',e?.message||e);complete=false}return {orders,complete};
+}
+async function v613ScanSnapshots(env,client,aliases){
+  let orders=[],complete=true;const terms=v613LikeTerms(client,aliases);if(!terms.length)return {orders,complete};
+  try{const where=terms.map(()=>"c.data LIKE ?").join(' OR '),r=await env.GLOBAL_MARKET_D1.prepare(`SELECT DISTINCT c.company_id FROM company_state_chunks c INNER JOIN company_state_meta m ON m.company_id=c.company_id AND m.revision=c.revision WHERE ${where} LIMIT 50`).bind(...terms.map(x=>`%${x}%`)).all();for(const row of r.results||[]){const snaps=await readCompanySnapshots(env,row.company_id);for(const snap of snaps){const x=v613ExtractState(snap.state,client,aliases);for(const a of x.aliases)aliases.add(a);orders=v613MergeRecovered(orders,x.orders)}}if((r.results||[]).length>=50)complete=false;}catch(e){console.warn('[V6.1.3] snapshots historiques différés',e?.message||e);complete=false}return {orders,complete};
+}
+async function v613ScanLegacyChunks(env,client,aliases){
+  let orders=[],complete=true;const terms=v613LikeTerms(client,aliases);if(!terms.length)return {orders,complete};
+  try{const where=terms.map(()=>"data LIKE ?").join(' OR '),r=await env.GLOBAL_MARKET_D1.prepare(`SELECT DISTINCT company_id FROM state_chunks WHERE ${where} LIMIT 50`).bind(...terms.map(x=>`%${x}%`)).all();for(const row of r.results||[]){const st=await readD1State(env,row.company_id);const x=v613ExtractState(st,client,aliases);for(const a of x.aliases)aliases.add(a);orders=v613MergeRecovered(orders,x.orders)}if((r.results||[]).length>=50)complete=false;}catch(e){console.warn('[V6.1.3] anciens chunks différés',e?.message||e);complete=false}return {orders,complete};
+}
+async function v613BackfillOrders(env,client,orders){
+  let inserted=0,relinked=0,restored=0,stmts=[];for(const order of v613MergeRecovered([],orders)){
+    if(!order?.id)continue;const existing=await env.GLOBAL_MARKET_D1.prepare('SELECT id,client_id,deleted_by_client FROM gm_orders WHERE id=?').bind(order.id).first();
+    if(existing){if(String(existing.client_id||'')!==String(client.id)||Number(existing.deleted_by_client||0)!==0){stmts.push(env.GLOBAL_MARKET_D1.prepare('UPDATE gm_orders SET client_id=?,deleted_by_client=0,updated_at=? WHERE id=?').bind(client.id,v6Now(),order.id));if(String(existing.client_id||'')!==String(client.id))relinked++;if(Number(existing.deleted_by_client||0)!==0)restored++;}}
+    else{stmts.push(...await v6UpsertStatements(env,'orders',{...order,clientId:client.id,clientDeleted:false}));inserted++;}
+    if(stmts.length>=30){await runD1Batches(env.GLOBAL_MARKET_D1,stmts,30);stmts=[];}
+  }if(stmts.length)await runD1Batches(env.GLOBAL_MARKET_D1,stmts,30);return {inserted,relinked,restored};
+}
+async function v613RecoverClientOrders(env,ctx,executionCtx,{force=false}={}){
+  await ensureDB(env);let aliases=await v613DiscoverAliases(env,ctx.client,new Set([String(ctx.client.id)])),orders=[];const sources={},flags=[];
+  const take=(name,result)=>{sources[name]=Number(result?.orders?.length||0);orders=v613MergeRecovered(orders,result?.orders||[]);if(result?.complete===false)flags.push(name)};
+  // D1 relationnel par ID et par identité reste la source la plus rapide.
+  const rel=await v612RelationalIdentityOrders(env,ctx.client,aliases);take('d1',{orders:rel.orders,complete:rel.complete});
+  const patches=await v613ScanOrderPatches(env,ctx.client,aliases);take('patches',patches);
+  const pending=await v613ScanPendingOps(env,ctx.client,aliases);take('pending-kv',pending);
+  const clientCache=await v613ScanClientPayloadCaches(env,ctx.client,aliases,force||orders.length===0);take('client-cache-kv',clientCache);
+  // Le cache d'état global V5 peut encore contenir l'historique exact vu par le client avant V6.
+  try{const st=await readStateFallback(env,'*');const x=v613ExtractState(st,ctx.client,aliases);for(const a of x.aliases)aliases.add(a);take('state-cache-kv',{orders:x.orders,complete:true})}catch{flags.push('state-cache-kv')}
+  // Si l'historique reste incomplet, inspecter les sources D1 historiques ciblées par identité.
+  if(force||orders.length===0){take('backups',await v613ScanBackups(env,ctx.client,aliases));take('snapshots',await v613ScanSnapshots(env,ctx.client,aliases));take('legacy-chunks',await v613ScanLegacyChunks(env,ctx.client,aliases));}
+  // Dernier filet : reconstruction V5 complète, uniquement si les recherches ciblées n'ont rien trouvé.
+  if(force||orders.length===0){const legacy=await v612LegacyClientSlice(env,ctx.client);take('legacy-state',{orders:legacy.orders,complete:legacy.complete});for(const a of legacy.aliases||[])aliases.add(a);}
+  orders=v613MergeRecovered([],orders).map(o=>({...o,clientId:ctx.client.id})).filter(o=>!o.clientDeleted).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  const backfill=orders.length?await v613BackfillOrders(env,ctx.client,orders):{inserted:0,relinked:0,restored:0};
+  const result={ran:true,complete:flags.length===0,matched:orders.length,aliases:aliases.size,sources,backfill,incompleteSources:flags};await v613WriteMarker(env,ctx.client.id,result);return {orders,result};
+}
+async function v613QuickRecoverClientOrders(env,ctx){
+  let aliases=await v613DiscoverAliases(env,ctx.client,new Set([String(ctx.client.id)])),orders=[];const sources={},flags=[];
+  const take=(name,result)=>{sources[name]=Number(result?.orders?.length||0);orders=v613MergeRecovered(orders,result?.orders||[]);if(result?.complete===false)flags.push(name)};
+  const rel=await v612RelationalIdentityOrders(env,ctx.client,aliases);take('d1',{orders:rel.orders,complete:rel.complete});
+  take('patches',await v613ScanOrderPatches(env,ctx.client,aliases));
+  take('pending-kv',await v613ScanPendingOps(env,ctx.client,aliases));
+  take('client-cache-kv',await v613ScanClientPayloadCaches(env,ctx.client,aliases,false));
+  try{const st=await readStateFallback(env,'*');const x=v613ExtractState(st,ctx.client,aliases);for(const a of x.aliases)aliases.add(a);take('state-cache-kv',{orders:x.orders,complete:true})}catch{flags.push('state-cache-kv')}
+  orders=v613MergeRecovered([],orders).map(o=>({...o,clientId:ctx.client.id})).filter(o=>!o.clientDeleted).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  const backfill=orders.length?await v613BackfillOrders(env,ctx.client,orders):{inserted:0,relinked:0,restored:0};
+  return {orders,result:{ran:true,quick:true,complete:false,matched:orders.length,aliases:aliases.size,sources,backfill,incompleteSources:flags,pending:orders.length===0}};
+}
+async function v613LoadClientOrders(env,ctx,executionCtx,{force=false,limit=1000}={}){
+  let direct=await v6ReadTable(ctx.db,'SELECT * FROM gm_orders WHERE client_id=? AND deleted_by_client=0 ORDER BY order_date DESC LIMIT ?',[ctx.client.id,limit],v6OrderFromRow);const marker=await v613ReadMarker(env,ctx.client.id);
+  const shouldRecover=force||direct.length===0||!marker||Number(marker.matched||0)>direct.length;
+  let recovery={ran:false,complete:Boolean(marker?.complete),matched:Number(marker?.matched||direct.length),sources:marker?.sources||{},backfill:marker?.backfill||{},pending:false};
+  if(shouldRecover){
+    if(force){const r=await v613RecoverClientOrders(env,ctx,executionCtx,{force:true});direct=v613MergeRecovered(direct,r.orders);recovery=r.result;}
+    else{
+      const q=await v613QuickRecoverClientOrders(env,ctx);direct=v613MergeRecovered(direct,q.orders);recovery=q.result;
+      if(!direct.length){
+        const task=v613RecoverClientOrders(env,ctx,executionCtx,{force:false}).catch(e=>{console.warn('[V6.1.3] restauration forensique différée',e?.message||e);return null});
+        if(executionCtx?.waitUntil){executionCtx.waitUntil(task);recovery={...recovery,pending:true,complete:false};}
+        else{const r=await task;if(r){direct=v613MergeRecovered(direct,r.orders);recovery=r.result;}}
+      }else await v613WriteMarker(env,ctx.client.id,{...recovery,complete:false,pending:false});
+    }
+  }
+  direct=v613MergeRecovered([],direct).filter(o=>!o.clientDeleted).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  return {orders:direct,recovery,authoritative:Boolean(direct.length||recovery.complete)};
+}
+
 async function v610GetEmployeeSessionLight(request,env,requireCsrf=false){
   const sid=getCookie(request,EMPLOYEE_SESSION_COOKIE);if(!sid)throw new HttpError(401,'Connexion requise.','UNAUTHENTICATED');const session=await env.GLOBAL_MARKET_KV.get(`session:${sid}`,'json');if(!session||Number(session.expiresAt||0)<=Date.now()){if(sid)await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);throw new HttpError(401,'Session expirée. Reconnectez-vous.','SESSION_EXPIRED');}
   if(requireCsrf){assertSameOrigin(request);const csrf=request.headers.get('X-CSRF-Token')||'';if(!csrf||!constantTimeEqual(csrf,session.csrfToken))throw new HttpError(403,'Jeton de sécurité invalide.','CSRF_REJECTED');}
@@ -3186,7 +3313,7 @@ async function handleV6Bootstrap(request,env,executionCtx){
   const [catalog,companies]=await Promise.all([v6CatalogQueryCached(request,env,executionCtx),v6PublicCompaniesCached(request,env,executionCtx)]),db=v6ReadDb(request,env,false); let clientSession=null,marketClients=[],orders=[],marketMessages=[],historyFallback=false;
   try{
     const ctx=await v6GetClientSession(request,env,false);clientSession=publicClientSessionView(ctx.session);marketClients=[cleanClone(ctx.client)];
-    const recoveredOrders=await v612LoadClientOrders(env,ctx,executionCtx,{force:false,limit:1000});orders=recoveredOrders.orders;
+    const recoveredOrders=await v613LoadClientOrders(env,ctx,executionCtx,{force:false,limit:1000});orders=recoveredOrders.orders;
     marketMessages=await v6ReadTable(db,'SELECT * FROM gm_market_messages WHERE client_id=? AND client_deleted=0 ORDER BY created_at DESC LIMIT 250',[ctx.client.id],v6MessageFromRow);
     if(!(await v611ClientHistoryDone(env,ctx.client.id))){const legacy=await v611LegacyClientSlice(env,ctx.client);marketMessages=v611MergeRows(marketMessages,legacy.messages);historyFallback=Boolean(recoveredOrders.recovery?.ran||legacy.messages.length);const task=v611BackfillClientSlice(env,{orders:[],messages:legacy.messages,companies:legacy.companies,marketClients:legacy.marketClients},ctx.client.id).catch(e=>console.warn('[V6.1.2] backfill messages client différé',e?.message||e));if(executionCtx?.waitUntil)executionCtx.waitUntil(task);}
   }catch(error){if(error?.code&&!['CLIENT_UNAUTHENTICATED','CLIENT_SESSION_EXPIRED'].includes(error.code))console.warn('[V6.1.1] session client bootstrap',error?.message||error);}
@@ -3196,7 +3323,7 @@ async function handleV6Bootstrap(request,env,executionCtx){
 async function handleV6Catalog(request,env,executionCtx){v611ScheduleHistoricalReconcile(env,executionCtx);const db=v6ReadDb(request,env,false),data=await v6CatalogQueryCached(request,env,executionCtx);return v6AttachBookmark(json(data,{headers:{'X-Global-Market-Edge-Cache':data.edgeCached?'HIT':'MISS'}}),db);}
 async function handleV6ClientOrders(request,env,executionCtx){
   const ctx=await v6GetClientSession(request,env,false),url=new URL(request.url),page=Math.max(1,Number(url.searchParams.get('page')||1)),size=Math.min(100,Math.max(10,Number(url.searchParams.get('pageSize')||30))),force=url.searchParams.get('recover')==='1';
-  const recovered=await v612LoadClientOrders(env,ctx,executionCtx,{force,limit:1000}),orders=recovered.orders,total=orders.length,slice=orders.slice((page-1)*size,page*size);
+  const recovered=await v613LoadClientOrders(env,ctx,executionCtx,{force,limit:1000}),orders=recovered.orders,total=orders.length,slice=orders.slice((page-1)*size,page*size);
   return v6AttachBookmark(json({orders:slice,pagination:{page,pageSize:size,total,pages:Math.max(1,Math.ceil(total/size))},historyFallback:Boolean(recovered.recovery?.ran),authoritative:Boolean(recovered.authoritative),recovery:recovered.recovery}),ctx.db);
 }
 async function handleV6ClientMessages(request,env,executionCtx){
