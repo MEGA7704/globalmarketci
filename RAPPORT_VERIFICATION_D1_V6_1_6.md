@@ -52,3 +52,5 @@ production tant que cette version n'est pas déployée.
 - Index vérifiés : catalogue, recherche produit, commandes client/boutique, checkout et références de commandes.
 - Contraintes vérifiées : téléphone marketplace unique et blocage du stock négatif (`INSUFFICIENT_STOCK`).
 - Aucun déploiement ni écriture sur la base D1 distante n'a été effectué pendant ces contrôles.
+- Clé étrangère `gm_client_order_refs.order_id -> gm_orders.id` vérifiée : OK.
+- Simulation d'une ancienne table snapshot `gm_orders` : archivage sous `gm_legacy_snapshot_orders`, conservation de la ligne historique et recréation relationnelle : OK.

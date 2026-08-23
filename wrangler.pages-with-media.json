@@ -13,7 +13,8 @@
     {
       "binding": "GLOBAL_MARKET_D1",
       "database_name": "global_market_d1",
-      "database_id": "92ef9815-eb4e-4b49-9a03-41f8e4bc5c77"
+      "database_id": "92ef9815-eb4e-4b49-9a03-41f8e4bc5c77",
+      "migrations_dir": "cloudflare/migrations"
     }
   ],
   "vars": {

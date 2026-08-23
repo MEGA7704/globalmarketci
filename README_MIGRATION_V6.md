@@ -1,24 +1,65 @@
 # GLOBAL MARKET V6.0 — migration relationnelle sans saturation structurelle
 
+## Correctif V6.1.6 — compatibilité des anciens schémas D1
+
+Les anciennes migrations de stockage normalisé utilisaient certains noms de
+tables (`gm_orders`, `gm_sales`, `gm_payments`, `gm_company_settings`, etc.)
+avec une structure de snapshots JSON incompatible avec le schéma relationnel
+V6. Le Worker détecte désormais ces anciennes structures avant toute lecture,
+les renomme sous `gm_legacy_snapshot_*`, puis crée les tables relationnelles
+attendues. Aucune ancienne ligne n'est supprimée.
+
+Le marqueur `gm_meta.relational_schema_version = 6.1.6` évite de rejouer cette
+vérification complète après une initialisation réussie. La route `/api/health`
+peut être appelée après un déploiement pour déclencher et contrôler cette
+initialisation, mais cette archive n'effectue aucun changement de production.
+
+
+### Vérification locale des migrations D1
+
+Le projet déclare maintenant `migrations_dir = cloudflare/migrations` dans les
+configurations Wrangler. Sur une nouvelle base locale :
+
+```bash
+npm run db:migrations:local
+npm run db:v6:local
+npm run build
+```
+
+`db:v6` pointe volontairement vers **local** afin d'éviter une modification
+accidentelle de production. Pour une base distante, utilisez explicitement
+`db:migrations:remote` / `db:v6:remote` uniquement après sauvegarde.
+
+La migration historique `0006` crée désormais les anciennes tables JSON sous
+`gm_legacy_snapshot_*`. Une base déjà ancienne, où `0006` avait été appliquée
+avant ce correctif, reste prise en charge par la réparation `ensureDB()` du Worker.
+
 ## Ce qui change
 
 V6 ne reconstruit plus toute la marketplace pour chaque client. Les données sont séparées dans des tables D1 indexées (`gm_companies`, `gm_items`, `gm_orders`, `gm_order_items`, `gm_market_messages`, etc.). Le catalogue est lu avec `LIMIT/OFFSET`, les commandes et messages sont chargés par client/boutique, les images Base64 peuvent être externalisées vers R2 et les notifications utilisent un Durable Object WebSocket hibernable.
 
 Les anciennes tables JSON restent présentes uniquement comme source de migration et de retour arrière. Après `schema_version=6.0`, les sauvegardes courantes passent par les tables relationnelles.
 
-## Ordre de déploiement recommandé — V6.0.1
+## Ordre de déploiement recommandé — V6.1.6
 
-1. Sauvegarder D1 avant migration : `npx wrangler d1 export global_market_d1 --remote --output backup-before-v6.sql`.
-2. Installer/mettre à jour : `npm install`.
-3. Créer le bucket R2 une seule fois : `npm run media:create` (si le bucket existe déjà, continuer).
-4. Appliquer le schéma relationnel : `npm run db:v6`.
-5. Dans Cloudflare, ajouter les secrets du projet Pages `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_INITIAL_PASSWORD` et surtout `V6_MIGRATION_KEY` (clé aléatoire longue). Ne pas placer les secrets dans `wrangler.json`.
-6. Déployer Pages avec le `wrangler.json` principal. Ce premier déploiement ne dépend plus du Worker temps réel.
-7. Exécuter la migration UNE FOIS : `npm run migrate:v6 -- https://VOTRE-SITE.pages.dev VOTRE_CLE_MIGRATION`.
-8. Déployer le Worker temps réel : `npm run realtime:deploy`.
-9. Dans Pages, ajouter la liaison Durable Object `REALTIME_HUB` vers `RealtimeHub` du Worker `global-market-realtime`, puis redéployer.
-10. Vérifier `https://VOTRE-SITE.pages.dev/api/health` : `relationalV6: true`, `realtimeBound: true`, `mediaBound: true`.
-11. Activer **D1 Read Replication** dans Cloudflare. Le code V6 utilise la Sessions API (`withSession`) et propage `X-D1-Bookmark`, donc les lectures peuvent utiliser les réplicas tout en gardant la cohérence de session.
+### Base D1 existante (cas de production actuel)
+
+1. Exporter D1 intégralement : `npx wrangler d1 export global_market_d1 --remote --output backup-before-v6-1-6.sql`.
+2. Tester d'abord cette archive sur une copie D1 / préproduction.
+3. Déployer le code Pages V6.1.6 avec le `wrangler.json` principal. **Ne lancez pas `db:v6:remote` avant cette étape sur une ancienne base** : le Worker doit d'abord détecter et archiver les anciennes tables snapshot qui portent les noms relationnels.
+4. Appeler `/api/health` une première fois. `ensureDB()` inspecte les colonnes, archive/fusionne les anciens snapshots sous `gm_legacy_snapshot_*`, crée le schéma relationnel et écrit `gm_meta.relational_schema_version = 6.1.6`.
+5. Vérifier les nombres de produits, entreprises, clients et commandes, puis passer une commande de test.
+6. `npm run db:v6:remote` est ensuite **optionnel et idempotent** : il peut servir de contrôle supplémentaire une fois la réparation terminée.
+7. Configurer R2 et le Worker temps réel uniquement après validation du socle Pages + D1 + KV.
+
+### Nouvelle base D1 vide
+
+1. `npm run db:migrations:remote`
+2. `npm run db:v6:remote`
+3. Déployer Pages.
+4. Appeler `/api/health` et vérifier le marqueur `6.1.6`.
+
+Les secrets `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_INITIAL_PASSWORD` et `V6_MIGRATION_KEY` doivent rester dans les secrets Cloudflare et ne jamais être ajoutés au dépôt.
 
 ## Pourquoi cette version tient mieux la charge
 
