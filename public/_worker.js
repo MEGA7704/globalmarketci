@@ -101,22 +101,43 @@ function errorResponse(error) {
       headers: error.headers
     });
   }
-  console.error(error);
+  console.error('[GLOBAL MARKET storage error]', {name:error?.name||'', message:error?.message||String(error||''), cause:error?.cause?.message||''});
   const message = String(error?.message || error || '');
-  if (/overload|too many requests|rate.?limit|quota exceeded|temporar(?:y|ily)|network connection lost|SQLITE_BUSY|database is locked|\bbusy\b|\blocked\b/i.test(message)) {
-    return json({ success: false, error: 'Le stockage cloud est temporairement occupé. La requête sera réessayée après un court délai.', code: 'STORAGE_BUSY' }, { status: 503, headers: { 'Retry-After': '3' } });
+  if (/INSUFFICIENT_STOCK/i.test(message)) {
+    return json({ success: false, error: 'Stock insuffisant : les données ont changé depuis votre dernière actualisation. Rechargez les produits puis recommencez.', code: 'INSUFFICIENT_STOCK' }, { status: 409 });
   }
-  if (/too big|too large|SQLITE_TOOBIG|maximum.*size|memory/i.test(message)) {
+  if (/UNIQUE constraint failed:\s*gm_market_clients\.phone/i.test(message)) {
+    return json({ success: false, error: 'Ce numéro de téléphone est déjà associé à un autre compte client.', code: 'CLIENT_PHONE_ALREADY_USED' }, { status: 409 });
+  }
+  if (/UNIQUE constraint failed:\s*gm_users\.email/i.test(message)) {
+    return json({ success: false, error: 'Cette adresse e-mail est déjà utilisée par un autre utilisateur.', code: 'USER_EMAIL_ALREADY_USED' }, { status: 409 });
+  }
+  if (/FOREIGN KEY constraint failed/i.test(message)) {
+    return json({ success: false, error: 'Une donnée liée est manquante ou a été supprimée. Actualisez la page avant de recommencer.', code: 'DATA_REFERENCE_INVALID' }, { status: 409 });
+  }
+  if (/NOT NULL constraint failed/i.test(message)) {
+    return json({ success: false, error: 'Une donnée obligatoire est manquante dans l’enregistrement. Actualisez la page puis vérifiez les champs saisis.', code: 'DATA_REQUIRED_FIELD_MISSING' }, { status: 422 });
+  }
+  if (/D1_LEGACY_SCHEMA_CONFLICT/i.test(message)) {
+    return json({ success: false, error: 'Une ancienne table D1 entre en conflit avec le schéma actuel. La réparation de compatibilité doit être exécutée avant la sauvegarde.', code: 'D1_SCHEMA_CONFLICT' }, { status: 503, headers: { 'Retry-After': '10' } });
+  }
+  if (/no such table|no such column|has no column named|SQLITE_SCHEMA/i.test(message)) {
+    return json({ success: false, error: 'La base D1 n’est pas au même niveau que l’application. GLOBAL MARKET a tenté une réparation automatique, mais une migration reste nécessaire.', code: 'D1_SCHEMA_OUTDATED' }, { status: 503, headers: { 'Retry-After': '10' } });
+  }
+  if (/too many subrequests|subrequest limit|too many api requests|overload|too many requests|rate.?limit|quota exceeded|temporar(?:y|ily)|network connection lost|SQLITE_BUSY|database is locked|\bbusy\b|\blocked\b/i.test(message)) {
+    return json({ success: false, error: 'Le stockage cloud est temporairement occupé. GLOBAL MARKET conserve les modifications et les renverra automatiquement.', code: 'STORAGE_BUSY' }, { status: 503, headers: { 'Retry-After': '3' } });
+  }
+  if (/too big|too large|SQLITE_TOOBIG|maximum.*size|memory|statement too long/i.test(message)) {
     return json({ success: false, error: 'Les données à enregistrer sont trop volumineuses. Réduisez les images ou captures.', code: 'STORAGE_TOO_LARGE' }, { status: 413 });
   }
-  return json({ success: false, error: 'La sauvegarde n’a pas pu être terminée. Réessayez sans fermer la page.', code: 'STORAGE_WRITE_FAILED' }, { status: 500 });
+  return json({ success: false, error: 'Erreur de stockage non identifiée. Aucune confirmation de sauvegarde n’a été reçue.', code: 'STORAGE_WRITE_FAILED' }, { status: 500 });
 }
 
 function isTransientStorageError(error) {
   if (!error) return false;
   if (error instanceof HttpError && [408, 425, 429, 500, 502, 503, 504].includes(Number(error.status))) return true;
   const message = String(error?.message || error || '');
-  return /overload|too many requests|rate.?limit|quota exceeded|temporar(?:y|ily)|network connection lost|SQLITE_BUSY|database is locked|\bbusy\b|\blocked\b/i.test(message);
+  return /too many subrequests|subrequest limit|too many api requests|overload|too many requests|rate.?limit|quota exceeded|temporar(?:y|ily)|network connection lost|SQLITE_BUSY|database is locked|\bbusy\b|\blocked\b/i.test(message);
 }
 
 async function withStorageRetry(task, attempts = 4) {
@@ -522,7 +543,7 @@ async function ensureDB(env) {
   needBindings(env);
   if (dbSchemaReady) return true;
 
-  // V6.1.7 : chemin rapide. Sur une base déjà réparée, une seule lecture
+  // V6.1.8 : chemin rapide. Sur une base déjà réparée, une seule lecture
   // du marqueur suffit. Aucun objet Promise D1 en cours n'est partagé entre
   // requêtes : les isolates Workers peuvent être réutilisés entre utilisateurs.
   try {
@@ -2608,11 +2629,15 @@ async function v6ExternalizeMedia(env, ownerType, ownerId, field, value) {
   const match=v6DataUri(value); if(!match) return value;
   const mime=match[1].slice(0,100); const raw=String(value||'');
   if (env.GLOBAL_MARKET_MEDIA) {
-    const bin=atob(match[2].replace(/\s+/g,'')); const bytes=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
-    const ext=(mime.split('/')[1]||'bin').replace(/[^a-z0-9]/gi,'').slice(0,8)||'bin';
-    const key=`${ownerType}/${ownerId}/${field}-${crypto.randomUUID()}.${ext}`;
-    await env.GLOBAL_MARKET_MEDIA.put(key,bytes,{httpMetadata:{contentType:mime,cacheControl:'public, max-age=31536000'}});
-    return `/api/v6/media/${encodeURIComponent(key)}`;
+    try {
+      const bin=atob(match[2].replace(/\s+/g,'')); const bytes=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+      const ext=(mime.split('/')[1]||'bin').replace(/[^a-z0-9]/gi,'').slice(0,8)||'bin';
+      const key=`${ownerType}/${ownerId}/${field}-${crypto.randomUUID()}.${ext}`;
+      await env.GLOBAL_MARKET_MEDIA.put(key,bytes,{httpMetadata:{contentType:mime,cacheControl:'public, max-age=31536000'}});
+      return `/api/v6/media/${encodeURIComponent(key)}`;
+    } catch (error) {
+      console.warn('[V6.1.8] écriture R2 indisponible, repli KV',ownerType,ownerId,error?.message||error);
+    }
   }
   if (env.GLOBAL_MARKET_KV && raw.length <= 22_000_000) {
     const key=`v610:media:${encodeURIComponent(String(ownerType))}:${encodeURIComponent(String(ownerId))}:${encodeURIComponent(String(field))}`;
@@ -2621,6 +2646,7 @@ async function v6ExternalizeMedia(env, ownerType, ownerId, field, value) {
       return `/api/v6/media-kv/${encodeURIComponent(String(ownerType))}/${encodeURIComponent(String(ownerId))}/${encodeURIComponent(String(field))}`;
     } catch (error) { console.warn('[V6.1] média KV non externalisé',ownerType,ownerId,error?.message||error); }
   }
+  if (raw.length > 1_500_000) throw new HttpError(503, 'Le média est trop volumineux pour être enregistré sans stockage R2/KV disponible.', 'MEDIA_STORAGE_UNAVAILABLE', { 'Retry-After': '5' });
   return value;
 }
 
@@ -3092,6 +3118,45 @@ async function v6PrepareRecordMedia(env,key,row){
   return copy;
 }
 
+const V618_COLUMN_REPAIR = {
+  'gm_companies.name': "TEXT NOT NULL DEFAULT ''", 'gm_companies.email': 'TEXT', 'gm_companies.phone': 'TEXT', 'gm_companies.status': 'TEXT', 'gm_companies.plan_code': 'TEXT', 'gm_companies.subscription_end': 'TEXT', 'gm_companies.shop_slug': 'TEXT', 'gm_companies.business_type': 'TEXT', 'gm_companies.city': 'TEXT', 'gm_companies.created_at': "TEXT NOT NULL DEFAULT ''", 'gm_companies.updated_at': "TEXT NOT NULL DEFAULT ''", 'gm_companies.payload_json': "TEXT NOT NULL DEFAULT '{}'",
+  'gm_users.company_id': 'TEXT', 'gm_users.name': 'TEXT', 'gm_users.email': 'TEXT', 'gm_users.role': "TEXT NOT NULL DEFAULT 'caisse'", 'gm_users.status': "TEXT NOT NULL DEFAULT 'active'", 'gm_users.main_admin': 'INTEGER NOT NULL DEFAULT 0', 'gm_users.created_at': "TEXT NOT NULL DEFAULT ''", 'gm_users.updated_at': "TEXT NOT NULL DEFAULT ''", 'gm_users.payload_json': "TEXT NOT NULL DEFAULT '{}'",
+  'gm_items.company_id': "TEXT NOT NULL DEFAULT ''", 'gm_items.code': 'TEXT', 'gm_items.name': "TEXT NOT NULL DEFAULT ''", 'gm_items.category': 'TEXT', 'gm_items.item_type': 'TEXT', 'gm_items.sell': 'REAL NOT NULL DEFAULT 0', 'gm_items.stock': 'REAL NOT NULL DEFAULT 0', 'gm_items.stock_type': 'TEXT', 'gm_items.marketplace_hidden': 'INTEGER NOT NULL DEFAULT 0', 'gm_items.search_text': 'TEXT', 'gm_items.created_at': "TEXT NOT NULL DEFAULT ''", 'gm_items.updated_at': "TEXT NOT NULL DEFAULT ''", 'gm_items.payload_json': "TEXT NOT NULL DEFAULT '{}'",
+  'gm_sales.company_id': "TEXT NOT NULL DEFAULT ''", 'gm_sales.client_id': 'TEXT', 'gm_sales.sale_date': 'TEXT', 'gm_sales.total': 'REAL NOT NULL DEFAULT 0', 'gm_sales.status': 'TEXT', 'gm_sales.created_at': "TEXT NOT NULL DEFAULT ''", 'gm_sales.updated_at': "TEXT NOT NULL DEFAULT ''", 'gm_sales.payload_json': "TEXT NOT NULL DEFAULT '{}'",
+  'gm_payments.company_id': 'TEXT', 'gm_payments.order_id': 'TEXT', 'gm_payments.client_id': 'TEXT', 'gm_payments.method': 'TEXT', 'gm_payments.status': 'TEXT', 'gm_payments.amount': 'REAL NOT NULL DEFAULT 0', 'gm_payments.currency': 'TEXT', 'gm_payments.transaction_id': 'TEXT', 'gm_payments.created_at': "TEXT NOT NULL DEFAULT ''", 'gm_payments.updated_at': "TEXT NOT NULL DEFAULT ''", 'gm_payments.payload_json': "TEXT NOT NULL DEFAULT '{}'",
+  'gm_orders.checkout_id': 'TEXT', 'gm_orders.company_id': "TEXT NOT NULL DEFAULT ''", 'gm_orders.client_id': "TEXT NOT NULL DEFAULT ''", 'gm_orders.order_date': "TEXT NOT NULL DEFAULT ''", 'gm_orders.subtotal': 'REAL NOT NULL DEFAULT 0', 'gm_orders.delivery_fee': 'REAL NOT NULL DEFAULT 0', 'gm_orders.total': 'REAL NOT NULL DEFAULT 0', 'gm_orders.delivery_city': 'TEXT', 'gm_orders.delivery_neighborhood': 'TEXT', 'gm_orders.shipping_method': 'TEXT', 'gm_orders.payment_method': 'TEXT', 'gm_orders.payment_status': 'TEXT', 'gm_orders.validation_status': 'TEXT', 'gm_orders.delivery_status': 'TEXT', 'gm_orders.deleted_by_client': 'INTEGER NOT NULL DEFAULT 0', 'gm_orders.created_at': "TEXT NOT NULL DEFAULT ''", 'gm_orders.updated_at': "TEXT NOT NULL DEFAULT ''", 'gm_orders.payload_json': "TEXT NOT NULL DEFAULT '{}'",
+  'gm_order_items.order_id': "TEXT NOT NULL DEFAULT ''", 'gm_order_items.item_id': 'TEXT', 'gm_order_items.item_name': 'TEXT', 'gm_order_items.category': 'TEXT', 'gm_order_items.item_type': 'TEXT', 'gm_order_items.qty': 'REAL NOT NULL DEFAULT 0', 'gm_order_items.unit': 'REAL NOT NULL DEFAULT 0', 'gm_order_items.total': 'REAL NOT NULL DEFAULT 0',
+  'gm_clients.company_id': "TEXT NOT NULL DEFAULT ''", 'gm_clients.name': 'TEXT', 'gm_clients.phone': 'TEXT', 'gm_clients.email': 'TEXT', 'gm_clients.created_at': "TEXT NOT NULL DEFAULT ''", 'gm_clients.updated_at': "TEXT NOT NULL DEFAULT ''", 'gm_clients.payload_json': "TEXT NOT NULL DEFAULT '{}'",
+  'gm_market_clients.name': "TEXT NOT NULL DEFAULT ''", 'gm_market_clients.phone': "TEXT NOT NULL DEFAULT ''", 'gm_market_clients.email': 'TEXT', 'gm_market_clients.created_at': "TEXT NOT NULL DEFAULT ''", 'gm_market_clients.updated_at': "TEXT NOT NULL DEFAULT ''", 'gm_market_clients.payload_json': "TEXT NOT NULL DEFAULT '{}'",
+  'gm_market_messages.company_id': "TEXT NOT NULL DEFAULT ''", 'gm_market_messages.client_id': 'TEXT', 'gm_market_messages.sender_type': "TEXT NOT NULL DEFAULT 'client'", 'gm_market_messages.sender_name': 'TEXT', 'gm_market_messages.body': "TEXT NOT NULL DEFAULT ''", 'gm_market_messages.admin_deleted': 'INTEGER NOT NULL DEFAULT 0', 'gm_market_messages.client_deleted': 'INTEGER NOT NULL DEFAULT 0', 'gm_market_messages.read_by_admin': 'INTEGER NOT NULL DEFAULT 0', 'gm_market_messages.read_by_client': 'INTEGER NOT NULL DEFAULT 0', 'gm_market_messages.created_at': "TEXT NOT NULL DEFAULT ''", 'gm_market_messages.updated_at': "TEXT NOT NULL DEFAULT ''", 'gm_market_messages.payload_json': "TEXT NOT NULL DEFAULT '{}'",
+  'gm_password_reset_requests.company_id': 'TEXT', 'gm_password_reset_requests.user_id': 'TEXT', 'gm_password_reset_requests.role': 'TEXT', 'gm_password_reset_requests.status': 'TEXT', 'gm_password_reset_requests.created_at': "TEXT NOT NULL DEFAULT ''", 'gm_password_reset_requests.updated_at': "TEXT NOT NULL DEFAULT ''", 'gm_password_reset_requests.payload_json': "TEXT NOT NULL DEFAULT '{}'",
+  'gm_stock_entries.company_id': "TEXT NOT NULL DEFAULT ''", 'gm_stock_entries.created_at': "TEXT NOT NULL DEFAULT ''", 'gm_stock_entries.updated_at': "TEXT NOT NULL DEFAULT ''", 'gm_stock_entries.payload_json': "TEXT NOT NULL DEFAULT '{}'",
+  'gm_stock_outputs.company_id': "TEXT NOT NULL DEFAULT ''", 'gm_stock_outputs.created_at': "TEXT NOT NULL DEFAULT ''", 'gm_stock_outputs.updated_at': "TEXT NOT NULL DEFAULT ''", 'gm_stock_outputs.payload_json': "TEXT NOT NULL DEFAULT '{}'",
+  'gm_stock_movements.company_id': "TEXT NOT NULL DEFAULT ''", 'gm_stock_movements.created_at': "TEXT NOT NULL DEFAULT ''", 'gm_stock_movements.updated_at': "TEXT NOT NULL DEFAULT ''", 'gm_stock_movements.payload_json': "TEXT NOT NULL DEFAULT '{}'",
+  'gm_caisse_logs.company_id': "TEXT NOT NULL DEFAULT ''", 'gm_caisse_logs.created_at': "TEXT NOT NULL DEFAULT ''", 'gm_caisse_logs.updated_at': "TEXT NOT NULL DEFAULT ''", 'gm_caisse_logs.payload_json': "TEXT NOT NULL DEFAULT '{}'",
+  'gm_company_settings.company_id': "TEXT NOT NULL DEFAULT ''", 'gm_company_settings.section': "TEXT NOT NULL DEFAULT ''", 'gm_company_settings.payload_json': "TEXT NOT NULL DEFAULT 'null'", 'gm_company_settings.updated_at': "TEXT NOT NULL DEFAULT ''",
+  'gm_client_order_refs.client_id': "TEXT NOT NULL DEFAULT ''", 'gm_client_order_refs.order_id': "TEXT NOT NULL DEFAULT ''", 'gm_client_order_refs.created_at': "TEXT NOT NULL DEFAULT ''"
+};
+const V618_TABLE_REPAIR = {
+  gm_client_order_refs: `CREATE TABLE IF NOT EXISTS gm_client_order_refs (client_id TEXT NOT NULL, order_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(client_id,order_id), FOREIGN KEY(order_id) REFERENCES gm_orders(id) ON DELETE CASCADE)`,
+  gm_order_items: `CREATE TABLE IF NOT EXISTS gm_order_items (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id TEXT NOT NULL, item_id TEXT, item_name TEXT, category TEXT, item_type TEXT, qty REAL NOT NULL DEFAULT 0, unit REAL NOT NULL DEFAULT 0, total REAL NOT NULL DEFAULT 0, FOREIGN KEY(order_id) REFERENCES gm_orders(id) ON DELETE CASCADE)`
+};
+async function v618TrySchemaRepair(env,error){
+  const message=String(error?.message||error||'');
+  let m=/table\s+(gm_[a-z0-9_]+)\s+has no column named\s+([a-z0-9_]+)/i.exec(message);
+  if(!m)m=/no such column:\s*(?:([a-z0-9_]+)\.)?([a-z0-9_]+)/i.exec(message)?.slice(0,3)||null;
+  if(m){
+    const table=String(m[1]||'').toLowerCase(), column=String(m[2]||'').toLowerCase(), spec=V618_COLUMN_REPAIR[`${table}.${column}`];
+    if(table&&column&&spec){
+      try{await env.GLOBAL_MARKET_D1.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${spec}`).run();console.warn('[V6.1.8] colonne D1 réparée automatiquement',table,column);return true;}
+      catch(repairError){if(/duplicate column name/i.test(String(repairError?.message||repairError||'')))return true;console.warn('[V6.1.8] réparation colonne D1 impossible',table,column,repairError?.message||repairError);}
+    }
+  }
+  const t=/no such table:\s*(gm_[a-z0-9_]+)/i.exec(message)?.[1]?.toLowerCase();
+  if(t&&V618_TABLE_REPAIR[t]){try{await env.GLOBAL_MARKET_D1.prepare(V618_TABLE_REPAIR[t]).run();console.warn('[V6.1.8] table D1 recréée automatiquement',t);return true;}catch(repairError){console.warn('[V6.1.8] réparation table D1 impossible',t,repairError?.message||repairError);}}
+  return false;
+}
+
 async function v6UpsertStatements(env,key,source){
   const row=await v6PrepareRecordMedia(env,key,source); const now=v6Now(); const created=v6Created(row), updated=v6Updated(row); const raw=JSON.stringify(row);
   switch(key){
@@ -3103,7 +3168,12 @@ async function v6UpsertStatements(env,key,source){
     case 'orders': {
       const stmts=[env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_orders(id,checkout_id,company_id,client_id,order_date,subtotal,delivery_fee,total,delivery_city,delivery_neighborhood,shipping_method,payment_method,payment_status,validation_status,delivery_status,deleted_by_client,created_at,updated_at,payload_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET checkout_id=excluded.checkout_id,company_id=excluded.company_id,client_id=excluded.client_id,order_date=excluded.order_date,subtotal=excluded.subtotal,delivery_fee=excluded.delivery_fee,total=excluded.total,delivery_city=excluded.delivery_city,delivery_neighborhood=excluded.delivery_neighborhood,shipping_method=excluded.shipping_method,payment_method=excluded.payment_method,payment_status=excluded.payment_status,validation_status=excluded.validation_status,delivery_status=excluded.delivery_status,deleted_by_client=excluded.deleted_by_client,updated_at=excluded.updated_at,payload_json=excluded.payload_json`).bind(row.id,String(row.checkoutId||''),String(row.companyId||''),String(row.clientId||''),String(row.date||created),Number(row.subtotal||0),Number(row.deliveryFee||0),Number(row.total||0),String(row.deliveryCity||''),String(row.deliveryNeighborhood||''),String(row.shippingMethod||''),String(row.paymentMethod||''),String(row.paymentStatus||''),String(row.validationStatus||''),String(row.deliveryStatus||row.delivery||''),v6Bool(row.clientDeleted),created,updated,raw), env.GLOBAL_MARKET_D1.prepare('DELETE FROM gm_order_items WHERE order_id=?').bind(row.id)];
       if(String(row.clientId||'')) stmts.push(env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_client_order_refs(client_id,order_id,created_at) VALUES(?,?,?) ON CONFLICT(client_id,order_id) DO NOTHING`).bind(String(row.clientId),String(row.id),created));
-      for(const line of Array.isArray(row.items)?row.items:[]) stmts.push(env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_order_items(order_id,item_id,item_name,category,item_type,qty,unit,total) VALUES(?,?,?,?,?,?,?,?)`).bind(row.id,String(line.itemId||''),String(line.item||line.name||''),String(line.category||line.cat||''),String(line.type||''),Number(line.qty||0),Number(line.unit||0),Number(line.total||0)));
+      const lines=Array.isArray(row.items)?row.items:[];
+      for(let i=0;i<lines.length;i+=10){
+        const group=lines.slice(i,i+10), placeholders=group.map(()=>'(?,?,?,?,?,?,?,?)').join(','), bindings=[];
+        for(const line of group) bindings.push(row.id,String(line.itemId||''),String(line.item||line.name||''),String(line.category||line.cat||''),String(line.type||''),Number(line.qty||0),Number(line.unit||0),Number(line.total||0));
+        stmts.push(env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_order_items(order_id,item_id,item_name,category,item_type,qty,unit,total) VALUES ${placeholders}`).bind(...bindings));
+      }
       return stmts;
     }
     case 'clients': return [env.GLOBAL_MARKET_D1.prepare(`INSERT INTO gm_clients(id,company_id,name,phone,email,created_at,updated_at,payload_json) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET company_id=excluded.company_id,name=excluded.name,phone=excluded.phone,email=excluded.email,updated_at=excluded.updated_at,payload_json=excluded.payload_json`).bind(row.id,String(row.companyId||''),String(row.name||''),String(row.phone||''),normalizeIdentifier(row.email),created,updated,raw)];
@@ -3142,7 +3212,15 @@ async function v6PersistStateDelta(env,delta,actor){
       for(const deletion of Array.isArray(changes?.deletes)?changes.deletes:[]){ const companyId=isSuper?String(deletion?.companyId||deletion?.recordId||''):actorCompanyId; if(companyId)statements.push(env.GLOBAL_MARKET_D1.prepare('DELETE FROM gm_company_settings WHERE company_id=? AND section=?').bind(companyId,key)); }
     }
   }
-  if(statements.length) await runD1Batches(env.GLOBAL_MARKET_D1,statements,30);
+  if(statements.length>45) throw new HttpError(413, 'Le lot de sauvegarde contient trop de modifications pour une seule requête. Le navigateur doit le découper automatiquement.', 'SAVE_DELTA_TOO_LARGE');
+  if(statements.length){
+    let saved=false,lastError=null;
+    for(let repairAttempt=0;repairAttempt<12&&!saved;repairAttempt++){
+      try{await runD1Batches(env.GLOBAL_MARKET_D1,statements,45);saved=true;}
+      catch(error){lastError=error;const repaired=await v618TrySchemaRepair(env,error);if(!repaired)throw error;}
+    }
+    if(!saved)throw lastError||new Error('D1_SCHEMA_REPAIR_EXHAUSTED');
+  }
   await Promise.allSettled(realtime.map(x=>v6RealtimePublish(env,x.room,x.event)));
   return {storage:'d1-relational-v6',patchCount:statements.length};
 }
@@ -3362,7 +3440,7 @@ async function handleV6Bootstrap(request,env,executionCtx){
   const [catalog,companies]=await Promise.all([v6CatalogQueryCached(request,env,executionCtx),v6PublicCompaniesCached(request,env,executionCtx)]),db=v6ReadDb(request,env,false); let clientSession=null,marketClients=[];
   try{
     const ctx=await v6GetClientSession(request,env,false);clientSession=publicClientSessionView(ctx.session);marketClients=[cleanClone(ctx.client)];
-  }catch(error){if(error?.code&&!['CLIENT_UNAUTHENTICATED','CLIENT_SESSION_EXPIRED'].includes(error.code))console.warn('[V6.1.7] session client bootstrap',error?.message||error);}
+  }catch(error){if(error?.code&&!['CLIENT_UNAUTHENTICATED','CLIENT_SESSION_EXPIRED'].includes(error.code))console.warn('[V6.1.8] session client bootstrap',error?.message||error);}
   const companyMap=new Map((companies||[]).map(c=>[c.id,c]));for(const c of catalog.companies||[])companyMap.set(c.id,c);
   return v6AttachBookmark(json({companies:[...companyMap.values()].map(publicCompany),items:catalog.items,marketClients,orders:[],marketMessages:[],clientDeletedOrders:{},clientSession,app:{name:APP_NAME,storageVersion:6},catalogMeta:{pagination:catalog.pagination,categories:catalog.categories,authoritativeEmpty:Boolean(catalog.authoritativeEmpty),source:catalog.source||'d1-v6'},progressiveClientData:true,historyFallback:false}),db);
 }

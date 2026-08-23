@@ -1,8 +1,8 @@
 {
   "name": "global-market-cloudflare",
-  "version": "6.1.7",
+  "version": "6.1.8",
   "private": true,
-  "description": "GLOBAL MARKET V6.1.7 - réduction des délais D1 au démarrage, bootstrap public allégé et gestion fiable des délais réseau, avec schéma relationnel V6.1.6 préservé.",
+  "description": "GLOBAL MARKET V6.1.8 - sauvegarde D1 découpée en lots sûrs, diagnostics précis, réduction des écritures de commandes et repli média robuste.",
   "type": "module",
   "engines": {
     "node": ">=20"
