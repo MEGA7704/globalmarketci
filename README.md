@@ -2,7 +2,7 @@
 
 Projet complet prêt à être placé à la racine du dépôt GitHub puis déployé par Cloudflare Pages.
 
-## Configuration Cloudflare obligatoire
+## Configuration Cloudflare obligatoire  
 
 | Paramètre | Valeur |
 |---|---|
