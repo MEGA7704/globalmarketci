@@ -1087,6 +1087,33 @@ async function getClientSession(request, env, requireCsrf = false) {
   return { sid, session, state, client, auth };
 }
 
+// Session client légère pour les actions courantes : commandes, messages et notifications.
+// Elle reconstruit uniquement entreprises, produits sans Base64, commandes/messages du client.
+async function getClientSessionLight(request, env, requireCsrf = false) {
+  const sid = getCookie(request, CLIENT_SESSION_COOKIE);
+  if (!sid) throw new HttpError(401, 'Connexion client requise.', 'CLIENT_UNAUTHENTICATED');
+  const session = await readClientSessionToken(env, sid);
+  if (!session || Number(session.expiresAt || 0) <= Date.now()) {
+    if (sid) await deleteLegacyClientSession(env, sid);
+    throw new HttpError(401, 'Session client expirée.', 'CLIENT_SESSION_EXPIRED');
+  }
+  if (requireCsrf) {
+    assertSameOrigin(request);
+    const csrf = request.headers.get('X-CSRF-Token') || '';
+    if (!csrf || !constantTimeEqual(csrf, session.csrfToken)) throw new HttpError(403, 'Jeton de sécurité client invalide.', 'CSRF_REJECTED');
+  }
+  const clientId = String(session.clientId || '');
+  const state = await readPublicSnapshotSeeds(env, clientId);
+  await applyPublicPatchesLight(env, state, clientId);
+  const client = (state.marketClients || []).find(c => String(c?.id || '') === clientId);
+  const auth = client ? await getClientAuth(env, client.id) : null;
+  if (!client || !auth || Number(auth.version) !== Number(session.authVersion)) {
+    await deleteLegacyClientSession(env, sid);
+    throw new HttpError(401, 'Session client invalidée.', 'CLIENT_SESSION_INVALIDATED');
+  }
+  return { sid, session, state, client, auth };
+}
+
 function requireRole(user, roles) {
   if (!roles.includes(user?.role)) throw new HttpError(403, 'Action non autorisée pour ce profil.', 'FORBIDDEN');
 }
@@ -2002,7 +2029,7 @@ async function handleEmployeeNotifications(request, env) {
   if (ctx.user.role !== 'admin') return json({ success: true, identity: '', orders: [], messages: [] });
   const companyId = String(ctx.user.companyId || '');
   if (!companyId) return json({ success: true, identity: '', orders: [], messages: [] });
-  const state = await loadState(env, companyId);
+  const state = await loadEmployeeUiState(env, companyId);
   const orders = (state.orders || [])
     .filter(order => String(order?.companyId || '') === companyId && !order?.adminDeleted)
     .map(gmNotificationOrderView);
@@ -2013,7 +2040,7 @@ async function handleEmployeeNotifications(request, env) {
 }
 
 async function handleClientNotifications(request, env) {
-  const ctx = await getClientSession(request, env, false);
+  const ctx = await getClientSessionLight(request, env, false);
   const clientId = String(ctx.client.id || '');
   const orders = (ctx.state.orders || [])
     .filter(order => String(order?.clientId || '') === clientId)
@@ -2027,11 +2054,13 @@ async function handleClientNotifications(request, env) {
 async function handlePublicMessageCreate(request, env) {
   assertSameOrigin(request);
   const body = await readJson(request, 60_000);
-  const state = await loadState(env, '*');
   const requestedThreadId = String(body.threadId || '').trim();
   let clientAuth = null;
   const clientSid = getCookie(request, CLIENT_SESSION_COOKIE);
-  if (clientSid) clientAuth = await getClientSession(request, env, true);
+  if (clientSid) clientAuth = await getClientSessionLight(request, env, true);
+  const clientIdForState = String(clientAuth?.client?.id || '');
+  const state = clientAuth?.state || await readPublicSnapshotSeeds(env, clientIdForState);
+  if (!clientAuth) await applyPublicPatchesLight(env, state, clientIdForState);
 
   let companyId = String(body.companyId || '').trim();
   let clientId = clientAuth?.client?.id || '';
@@ -2074,7 +2103,7 @@ async function handlePublicMessageCreate(request, env) {
 
 async function handlePublicMessageDelete(request, env) {
   assertSameOrigin(request);
-  const ctx = await getClientSession(request, env, true);
+  const ctx = await getClientSessionLight(request, env, true);
   const body = await readJson(request, 50_000);
   const ids = new Set((Array.isArray(body.ids) ? body.ids : []).map(String).slice(0, 250));
   const removeAll = Boolean(body.all);
@@ -2550,7 +2579,7 @@ async function handlePublicClientLogin(request, env) {
 
 async function handlePublicOrder(request, env) {
   assertSameOrigin(request);
-  const ctx = await getClientSession(request, env, true);
+  const ctx = await getClientSessionLight(request, env, true);
   const body = await readJson(request, 8_000_000);
   const state = ctx.state;
   const client = ctx.client;
@@ -2710,7 +2739,7 @@ function restorePublicOrderStock(state, order) {
 
 async function handlePublicOrderAction(request, env) {
   assertSameOrigin(request);
-  const ctx = await getClientSession(request, env, true);
+  const ctx = await getClientSessionLight(request, env, true);
   const body = await readJson(request, 30_000);
   const order = ctx.state.orders.find(o => o.id === body.orderId && o.clientId === ctx.client.id);
   if (!order) throw new HttpError(404, 'Commande introuvable.', 'ORDER_NOT_FOUND');
@@ -2764,7 +2793,7 @@ async function handlePublicOrderAction(request, env) {
 
 async function handlePublicOrderDelete(request, env) {
   assertSameOrigin(request);
-  const ctx = await getClientSession(request, env, true);
+  const ctx = await getClientSessionLight(request, env, true);
   const body = await readJson(request, 20_000);
   const order = ctx.state.orders.find(o => o.id === body.orderId && o.clientId === ctx.client.id);
   if (!order) throw new HttpError(404, 'Commande introuvable.', 'ORDER_NOT_FOUND');
