@@ -1107,6 +1107,7 @@ async function persistStateDelta(env, delta, actor) {
         }
       } else {
         value.companyId = targetCompanyId;
+        if (key === 'items' && isLazyItemPhotoUrl(value.photo)) value.photo = await readStoredItemPhoto(env, targetCompanyId, source.id);
       }
       upsertPatch(targetCompanyId, section, source.id, value);
     }
@@ -1451,6 +1452,130 @@ function publicItemLight(item, hasPhoto = null) {
   return source;
 }
 
+function employeeLazyPhotoUrl(companyId, itemId) {
+  return `/api/item-photo?companyId=${encodeURIComponent(String(companyId || ''))}&itemId=${encodeURIComponent(String(itemId || ''))}`;
+}
+
+function employeeItemLight(item, hasPhoto = null) {
+  const source = item && typeof item === 'object' ? { ...item } : {};
+  const photoExists = hasPhoto === null ? Boolean(source.photo) : Boolean(hasPhoto);
+  delete source.photo;
+  source.photo = photoExists && source.companyId && source.id ? employeeLazyPhotoUrl(source.companyId, source.id) : '';
+  return source;
+}
+
+function isLazyItemPhotoUrl(value) {
+  const text = String(value || '');
+  return text.startsWith('/api/item-photo?') || text.startsWith('/api/public/item-photo?');
+}
+
+async function readStoredItemPhoto(env, companyId, itemId) {
+  await ensureDB(env);
+  const patch = await env.GLOBAL_MARKET_D1.prepare(`SELECT deleted, json_extract(data, '$.photo') AS photo
+    FROM company_state_patches WHERE company_id=? AND section='array:items' AND record_id=? LIMIT 1`)
+    .bind(companyId, itemId).first();
+  if (patch) return Number(patch.deleted || 0) === 1 ? '' : String(patch.photo || '');
+  const rows = await env.GLOBAL_MARKET_D1.prepare(`SELECT c.data, c.chunk_index, m.chunk_count
+    FROM company_state_chunks c
+    INNER JOIN company_state_meta m ON m.company_id=c.company_id AND m.revision=c.revision
+    WHERE c.company_id=? ORDER BY c.chunk_index ASC`).bind(companyId).all();
+  const chunks = rows.results || [];
+  if (!chunks.length || chunks.length !== Number(chunks[0]?.chunk_count || 0)) return '';
+  try {
+    const snapshot = JSON.parse(chunks.map(row => row.data || '').join(''));
+    const item = (Array.isArray(snapshot?.items) ? snapshot.items : []).find(row => String(row?.id || '') === String(itemId));
+    return String(item?.photo || '');
+  } catch { return ''; }
+}
+
+async function applyStoredStatePatchesEmployeeLight(env, state, companyId = '*') {
+  await ensureDB(env);
+  let stmt;
+  const select = `SELECT company_id, section, record_id, deleted, updated_at,
+      CASE WHEN section='array:items' THEN json_remove(data, '$.photo') ELSE data END AS data,
+      CASE WHEN section='array:items' AND LENGTH(COALESCE(json_extract(data, '$.photo'), '')) > 0 THEN 1 ELSE 0 END AS has_photo
+    FROM company_state_patches`;
+  if (companyId === '*') stmt = env.GLOBAL_MARKET_D1.prepare(`${select} ORDER BY updated_at ASC`);
+  else stmt = env.GLOBAL_MARKET_D1.prepare(`${select} WHERE company_id IN (?, ?) ORDER BY updated_at ASC`).bind(companyId, PATCH_GLOBAL_SCOPE);
+  const result = await stmt.all();
+  for (const row of result.results || []) {
+    const deleted = Number(row.deleted || 0) === 1;
+    let value = null;
+    if (!deleted && row.data) { try { value = JSON.parse(row.data); } catch { continue; } }
+    const section = String(row.section || '');
+    if (section.startsWith('array:')) {
+      const key = section.slice(6);
+      if (key === 'items' && !deleted) value = employeeItemLight(value, Number(row.has_photo || 0) === 1);
+      applyArrayPatch(state, key, row.record_id, deleted, value);
+    } else if (section.startsWith('object:')) {
+      applyObjectPatch(state, section.slice(7), row.record_id, deleted, value);
+    } else if (section.startsWith('value:')) {
+      const key = section.slice(6); if (deleted) delete state[key]; else state[key] = value;
+    }
+  }
+  return normalizeState(state);
+}
+
+async function loadEmployeeUiState(env, companyId = '*') {
+  await ensureDB(env);
+  let state = await readGlobalStateV2(env);
+  if (!state) {
+    const kvRaw = await env.GLOBAL_MARKET_KV.get(STATE_KEY);
+    const marker = parseStateStorageMarker(kvRaw);
+    state = marker ? null : parseState(kvRaw);
+    if (!state) state = await readD1State(env, STATE_ID);
+    if (!state) state = defaultState();
+  }
+  state = normalizeState(state);
+  const snapshots = await readCompanySnapshots(env, companyId === '*' ? null : companyId);
+  for (const entry of snapshots) state = applyCompanySnapshot(state, entry.companyId, entry.state);
+  // Même si un ancien snapshot contient encore des Base64, ils ne sortent jamais vers le navigateur.
+  state.items = (state.items || []).map(item => employeeItemLight(item));
+  state = await applyStoredStatePatchesEmployeeLight(env, state, companyId);
+  state = await applyDeletedCompanies(env, state, companyId);
+  return normalizeState(state);
+}
+
+async function loadLoginIdentityState(env) {
+  await ensureDB(env);
+  let state = await readGlobalStateV2(env);
+  if (!state) state = defaultState();
+  state = normalizeState(state);
+  // Les snapshots historiques sont petits et permettent de retrouver un compte ancien sans charger les patches produits lourds.
+  const snapshots = await readCompanySnapshots(env, null);
+  for (const entry of snapshots) {
+    const snap = entry.state || {};
+    for (const company of Array.isArray(snap.companies) ? snap.companies : []) applyArrayPatch(state, 'companies', company.id, false, company);
+    for (const user of Array.isArray(snap.users) ? snap.users : []) applyArrayPatch(state, 'users', user.id, false, user);
+  }
+  const result = await env.GLOBAL_MARKET_D1.prepare(`SELECT company_id, section, record_id, deleted, data
+    FROM company_state_patches WHERE section IN ('array:companies','array:users') ORDER BY updated_at ASC`).all();
+  for (const row of result.results || []) {
+    const deleted = Number(row.deleted || 0) === 1;
+    let value = null;
+    if (!deleted && row.data) { try { value = JSON.parse(row.data); } catch { continue; } }
+    applyArrayPatch(state, String(row.section || '').slice(6), row.record_id, deleted, value);
+  }
+  return applyDeletedCompanies(env, state, '*');
+}
+
+async function employeeItemPhotoResponse(request, env) {
+  const ctx = await getEmployeeSessionLight(request, env);
+  const url = new URL(request.url);
+  const companyId = String(url.searchParams.get('companyId') || '').trim();
+  const itemId = String(url.searchParams.get('itemId') || '').trim();
+  if (!companyId || !itemId) throw new HttpError(400, 'Photo produit invalide.', 'INVALID_ITEM_PHOTO');
+  if (ctx.user.role !== 'superadmin' && String(ctx.user.companyId || '') !== companyId) throw new HttpError(403, 'Photo non autorisée.', 'FORBIDDEN');
+  const photo = await readStoredItemPhoto(env, companyId, itemId);
+  if (/^https?:\/\//i.test(photo)) return Response.redirect(photo, 302);
+  const match = String(photo || '').match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/s);
+  if (!match) throw new HttpError(404, 'Photo introuvable.', 'ITEM_PHOTO_NOT_FOUND');
+  const binary = atob(match[2]);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new Response(bytes, { headers: { 'Content-Type': match[1], 'Cache-Control': 'private, max-age=300', 'X-Content-Type-Options': 'nosniff' } });
+}
+
 async function readPublicSnapshotSeeds(env, clientId = '') {
   await ensureDB(env);
   const result = await env.GLOBAL_MARKET_D1.prepare(`SELECT c.company_id, c.chunk_index, c.data, m.chunk_count
@@ -1782,7 +1907,7 @@ async function handleLogin(request, env) {
   if (!identifier || !password) throw new HttpError(400, 'Identifiant et mot de passe obligatoires.', 'MISSING_CREDENTIALS');
   const ip = requestIp(request);
   const rate = await assertLoginRateAllowed(env, ip, identifier);
-  const state = await loadState(env);
+  const state = await loadLoginIdentityState(env);
   const superIdentifier = configuredSuperAdminIdentifier(env);
   if (superIdentifier && identifier === superIdentifier) await ensureSuperAdminCredential(env, state);
   const indexedId = await env.GLOBAL_MARKET_KV.get(authIndexKey(identifier));
@@ -1806,11 +1931,13 @@ async function handleLogin(request, env) {
   await clearLoginRate(env, rate);
   const created = await createEmployeeSession(env, user, auth);
   await audit(env, 'LOGIN_SUCCESS', user.id, user.companyId, 'Connexion réussie', ip);
+  const uiState = await loadEmployeeUiState(env, user.role === 'superadmin' ? '*' : user.companyId);
+  const uiUser = uiState.users.find(row => row.id === user.id) || user;
   return json({
     success: true,
     session: publicSessionView(created.session),
     mustChangePassword: Boolean(auth.mustChangePassword),
-    data: scopeState(state, user)
+    data: scopeState(uiState, uiUser)
   }, {
     headers: { 'Set-Cookie': setCookie(EMPLOYEE_SESSION_COOKIE, created.sid, created.ttl) }
   });
@@ -2470,8 +2597,11 @@ async function handleApi(request, env, executionCtx) {
 
     if (url.pathname === '/api/session' && request.method === 'GET') {
       try {
-        const ctx = await getEmployeeSession(request, env, false);
-        return json({ session: publicSessionView(ctx.session), data: scopeState(ctx.state, ctx.user) });
+        const light = await getEmployeeSessionLight(request, env);
+        const state = await loadEmployeeUiState(env, light.user.role === 'superadmin' ? '*' : light.user.companyId);
+        const user = state.users.find(row => row.id === light.user.id);
+        if (!user || user.status !== 'active') throw new HttpError(401, 'Session invalidée.', 'SESSION_INVALIDATED');
+        return json({ session: publicSessionView(light.session), data: scopeState(state, user) });
       } catch {
         return json({ session: null });
       }
@@ -2489,8 +2619,11 @@ async function handleApi(request, env, executionCtx) {
     }
 
     if (url.pathname === '/api/load' && request.method === 'GET') {
-      const ctx = await getEmployeeSession(request, env, false);
-      return json(scopeState(ctx.state, ctx.user));
+      const light = await getEmployeeSessionLight(request, env);
+      const state = await loadEmployeeUiState(env, light.user.role === 'superadmin' ? '*' : light.user.companyId);
+      const user = state.users.find(row => row.id === light.user.id);
+      if (!user || user.status !== 'active') throw new HttpError(401, 'Session invalidée.', 'SESSION_INVALIDATED');
+      return json(scopeState(state, user));
     }
     if (url.pathname === '/api/notifications' && request.method === 'GET') return await handleEmployeeNotifications(request, env);
     if (url.pathname === '/api/save-delta' && request.method === 'POST') {
@@ -2524,6 +2657,7 @@ async function handleApi(request, env, executionCtx) {
     if (url.pathname === '/api/users/reset-password' && request.method === 'POST') return await handleResetUserPassword(request, env);
     if (url.pathname === '/api/admin/client/reset-password' && request.method === 'POST') return await handleResetClientPasswordBySuper(request, env);
 
+    if (url.pathname === '/api/item-photo' && request.method === 'GET') return await employeeItemPhotoResponse(request, env);
     if (url.pathname === '/api/public/item-photo' && request.method === 'GET') return await publicItemPhotoResponse(request, env);
     if (url.pathname === '/api/public/load' && request.method === 'GET') return json(await publicLoadPayload(request, env));
     if (url.pathname === '/api/public/notifications' && request.method === 'GET') return await handleClientNotifications(request, env);
