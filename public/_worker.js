@@ -356,6 +356,116 @@ async function ensureDB(env) {
   dbSchemaReady = true;
 }
 
+
+function defaultState() {
+  return {
+    companies: [],
+    users: [{ ...SUPER_ADMIN_PROFILE }],
+    items: [],
+    sales: [],
+    payments: [],
+    orders: [],
+    clients: [],
+    marketClients: [],
+    marketMessages: [],
+    stockEntries: [],
+    stockOutputs: [],
+    stockMovements: [],
+    caisseLogs: [],
+    passwordResetRequests: [],
+    app: { name: APP_NAME, storageVersion: 4, initializedAt: new Date().toISOString() }
+  };
+}
+
+function dateOnlyPlusDays(startValue, days) {
+  const base = /^\d{4}-\d{2}-\d{2}$/.test(String(startValue || '')) ? new Date(String(startValue) + 'T00:00:00Z') : new Date();
+  return new Date(base.getTime() + Number(days || 0) * 86400000).toISOString().slice(0, 10);
+}
+
+function normalizeState(value) {
+  const data = value && typeof value === 'object' ? value : {};
+  for (const key of [
+    'companies', 'users', 'items', 'sales', 'payments', 'orders', 'clients', 'marketClients',
+    'marketMessages', 'stockEntries', 'stockOutputs', 'stockMovements', 'caisseLogs', 'passwordResetRequests'
+  ]) {
+    if (!Array.isArray(data[key])) data[key] = [];
+  }
+  if (!data.app || typeof data.app !== 'object') data.app = {};
+  data.app.name = APP_NAME;
+  data.app.storageVersion = 4;
+  data.companies = data.companies.map(company => {
+    if (!company || typeof company !== 'object') return company;
+    const rawPlan = String(company.planCode || company.plan || company.status || 'FREE').toUpperCase();
+    const code = rawPlan.includes('BUSINESS') || rawPlan.includes('PLUS') ? 'BUSINESS' : 'FREE';
+    const duration = code === 'BUSINESS' ? 365 : 21;
+    const start = String(company.subscriptionStart || company.createdAt || new Date().toISOString()).slice(0, 10);
+    company.planCode = code;
+    company.plan = code === 'BUSINESS' ? 'Plan Business — 365 jours' : 'Plan Free — 21 jours';
+    if (['FREE', 'BUSINESS', 'BUSINESS_PLUS'].includes(String(company.status || '').toUpperCase())) company.status = code;
+    company.subscriptionStart = start;
+    company.subscriptionEnd = dateOnlyPlusDays(start, duration);
+    return company;
+  });
+  const index = data.users.findIndex(u => u && (u.id === SUPER_ADMIN_ID || u.role === 'superadmin'));
+  if (index < 0) data.users.unshift({ ...SUPER_ADMIN_PROFILE });
+  else data.users[index] = { ...data.users[index], ...SUPER_ADMIN_PROFILE };
+  delete data.loginAttempts;
+  return data;
+}
+
+function parseState(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return normalizeState(parsed?.data && typeof parsed.data === 'object' ? parsed.data : parsed);
+  } catch {
+    return null;
+  }
+}
+
+function parseStateStorageMarker(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.__globalMarketStorage === 'd1' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function makeStateStorageMarker(sizeBytes, updatedAt) {
+  return JSON.stringify({
+    __globalMarketStorage: 'd1',
+    sizeBytes,
+    updatedAt
+  });
+}
+
+function chunksOf(text, maxBytes = D1_CHUNK_MAX_BYTES) {
+  const encoder = new TextEncoder();
+  const chunks = [];
+  let offset = 0;
+  while (offset < text.length) {
+    let low = offset + 1;
+    let high = text.length;
+    let best = low;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      const size = encoder.encode(text.slice(offset, mid)).byteLength;
+      if (size <= maxBytes) {
+        best = mid;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    if (best <= offset) throw new HttpError(413, 'Une donnée individuelle dépasse la capacité de stockage.', 'STATE_CHUNK_TOO_LARGE');
+    chunks.push(text.slice(offset, best));
+    offset = best;
+  }
+  return chunks.length ? chunks : [''];
+}
+
 async function readD1State(env, companyId) {
   const meta = await env.GLOBAL_MARKET_D1.prepare('SELECT chunk_count FROM state_meta WHERE company_id = ?').bind(companyId).first();
   if (meta?.chunk_count) {
