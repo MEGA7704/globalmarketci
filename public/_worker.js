@@ -1422,8 +1422,150 @@ function publicItem(item) {
   return Object.fromEntries(allowed.map(k => [k, item[k]]));
 }
 
+function publicLazyPhotoUrl(companyId, itemId) {
+  return `/api/public/item-photo?companyId=${encodeURIComponent(String(companyId || ''))}&itemId=${encodeURIComponent(String(itemId || ''))}`;
+}
+
+function publicUpsertRecord(list, value, recordId = '') {
+  if (!Array.isArray(list)) return;
+  const id = String(value?.id || recordId || '');
+  if (!id) return;
+  const index = list.findIndex(row => String(row?.id || '') === id);
+  const normalized = value && typeof value === 'object' ? { ...value, id } : { id };
+  if (index >= 0) list[index] = normalized;
+  else list.push(normalized);
+}
+
+function publicDeleteRecord(list, recordId) {
+  if (!Array.isArray(list)) return;
+  const id = String(recordId || '');
+  const index = list.findIndex(row => String(row?.id || '') === id);
+  if (index >= 0) list.splice(index, 1);
+}
+
+function publicItemLight(item, hasPhoto = null) {
+  const source = item && typeof item === 'object' ? { ...item } : {};
+  const photoExists = hasPhoto === null ? Boolean(source.photo) : Boolean(hasPhoto);
+  delete source.photo;
+  source.photo = photoExists && source.companyId && source.id ? publicLazyPhotoUrl(source.companyId, source.id) : '';
+  return source;
+}
+
+async function readPublicSnapshotSeeds(env, clientId = '') {
+  await ensureDB(env);
+  const result = await env.GLOBAL_MARKET_D1.prepare(`SELECT c.company_id, c.chunk_index, c.data, m.chunk_count
+    FROM company_state_chunks c
+    INNER JOIN company_state_meta m ON m.company_id = c.company_id AND m.revision = c.revision
+    ORDER BY c.company_id ASC, c.chunk_index ASC`).all();
+  const groups = new Map();
+  for (const row of result.results || []) {
+    if (!groups.has(row.company_id)) groups.set(row.company_id, { count: Number(row.chunk_count || 0), chunks: [] });
+    groups.get(row.company_id).chunks.push(String(row.data || ''));
+  }
+  const state = { companies: [], items: [], marketClients: [], orders: [], marketMessages: [], clientDeletedOrders: {}, app: {} };
+  for (const [companyId, group] of groups) {
+    if (group.chunks.length !== group.count) continue;
+    let parsed = null;
+    try { parsed = JSON.parse(group.chunks.join('')); } catch { parsed = null; }
+    if (!parsed || typeof parsed !== 'object') continue;
+    for (const company of Array.isArray(parsed.companies) ? parsed.companies : []) {
+      if (String(company?.id || '') === String(companyId)) publicUpsertRecord(state.companies, company);
+    }
+    for (const item of Array.isArray(parsed.items) ? parsed.items : []) {
+      if (String(item?.companyId || '') === String(companyId)) publicUpsertRecord(state.items, publicItemLight(item));
+    }
+    if (clientId) {
+      for (const client of Array.isArray(parsed.marketClients) ? parsed.marketClients : []) if (String(client?.id || '') === clientId) publicUpsertRecord(state.marketClients, client);
+      for (const order of Array.isArray(parsed.orders) ? parsed.orders : []) if (String(order?.clientId || '') === clientId) publicUpsertRecord(state.orders, order);
+      for (const message of Array.isArray(parsed.marketMessages) ? parsed.marketMessages : []) if (String(message?.clientId || '') === clientId) publicUpsertRecord(state.marketMessages, message);
+      if (parsed.clientDeletedOrders && typeof parsed.clientDeletedOrders === 'object' && parsed.clientDeletedOrders[clientId]) {
+        state.clientDeletedOrders[clientId] = parsed.clientDeletedOrders[clientId];
+      }
+    }
+    if (parsed.app && typeof parsed.app === 'object') state.app = { ...state.app, ...parsed.app };
+  }
+  return state;
+}
+
+async function readPublicSessionHint(request, env) {
+  const sid = getCookie(request, CLIENT_SESSION_COOKIE);
+  if (!sid) return null;
+  const session = await env.GLOBAL_MARKET_KV.get(`client-session:${sid}`, 'json');
+  if (!session || Number(session.expiresAt || 0) <= Date.now() || !session.clientId) return null;
+  return { sid, session };
+}
+
+async function applyPublicPatchesLight(env, state, clientId = '') {
+  await ensureDB(env);
+  let sql = `SELECT company_id, section, record_id, deleted, updated_at,
+      CASE WHEN section='array:items' THEN json_remove(data, '$.photo') ELSE data END AS data,
+      CASE WHEN section='array:items' AND LENGTH(COALESCE(json_extract(data, '$.photo'), '')) > 0 THEN 1 ELSE 0 END AS has_photo
+    FROM company_state_patches
+    WHERE section IN ('array:companies','array:items')`;
+  const binds = [];
+  if (clientId) {
+    sql += ` OR (section='array:marketClients' AND record_id=?)
+      OR (section IN ('array:orders','array:marketMessages') AND json_extract(data, '$.clientId')=?)
+      OR (section='object:clientDeletedOrders' AND record_id=?)`;
+    binds.push(clientId, clientId, clientId);
+  }
+  sql += ' ORDER BY updated_at ASC';
+  let stmt = env.GLOBAL_MARKET_D1.prepare(sql);
+  if (binds.length) stmt = stmt.bind(...binds);
+  const result = await stmt.all();
+  for (const row of result.results || []) {
+    const section = String(row.section || '');
+    const deleted = Number(row.deleted || 0) === 1;
+    if (section === 'object:clientDeletedOrders') {
+      if (deleted) delete state.clientDeletedOrders[String(row.record_id || '')];
+      else {
+        try { state.clientDeletedOrders[String(row.record_id || '')] = JSON.parse(row.data || '[]'); } catch {}
+      }
+      continue;
+    }
+    let value = null;
+    if (!deleted && row.data) {
+      try { value = JSON.parse(row.data); } catch { continue; }
+    }
+    if (section === 'array:companies') {
+      if (deleted) publicDeleteRecord(state.companies, row.record_id);
+      else if (value?.__partialCompanyPatch) {
+        const id = String(row.record_id || '');
+        const index = state.companies.findIndex(c => String(c?.id || '') === id);
+        const partial = value.value && typeof value.value === 'object' ? value.value : {};
+        if (index >= 0) state.companies[index] = { ...state.companies[index], ...partial, id };
+        else state.companies.push({ ...partial, id });
+      } else publicUpsertRecord(state.companies, value, row.record_id);
+    } else if (section === 'array:items') {
+      if (deleted) publicDeleteRecord(state.items, row.record_id);
+      else publicUpsertRecord(state.items, publicItemLight(value, Number(row.has_photo || 0) === 1), row.record_id);
+    } else if (section === 'array:marketClients') {
+      if (deleted) publicDeleteRecord(state.marketClients, row.record_id);
+      else publicUpsertRecord(state.marketClients, value, row.record_id);
+    } else if (section === 'array:orders') {
+      if (deleted) publicDeleteRecord(state.orders, row.record_id);
+      else publicUpsertRecord(state.orders, value, row.record_id);
+    } else if (section === 'array:marketMessages') {
+      if (deleted) publicDeleteRecord(state.marketMessages, row.record_id);
+      else publicUpsertRecord(state.marketMessages, value, row.record_id);
+    }
+  }
+  const deletedCompanies = await env.GLOBAL_MARKET_D1.prepare('SELECT company_id FROM deleted_companies').all();
+  const deletedIds = new Set((deletedCompanies.results || []).map(row => String(row.company_id || '')));
+  if (deletedIds.size) {
+    state.companies = state.companies.filter(c => !deletedIds.has(String(c?.id || '')));
+    state.items = state.items.filter(i => !deletedIds.has(String(i?.companyId || '')));
+  }
+  return state;
+}
+
 async function publicLoadPayload(request, env) {
-  const state = await loadState(env, '*');
+  // Cette route publique est volontairement légère et en lecture seule : elle ne
+  // charge jamais les photos Base64 stockées dans les patches produit.
+  const hint = await readPublicSessionHint(request, env);
+  const clientId = String(hint?.session?.clientId || '');
+  const state = await readPublicSnapshotSeeds(env, clientId);
+  await applyPublicPatchesLight(env, state, clientId);
   const payload = {
     companies: state.companies.map(publicCompany),
     items: state.items.map(publicItem),
@@ -1433,17 +1575,60 @@ async function publicLoadPayload(request, env) {
     clientDeletedOrders: {},
     app: state.app || {}
   };
-  try {
-    const clientAuth = await getClientSession(request, env, false);
-    payload.marketClients = [cleanClone(clientAuth.client)];
-    payload.orders = state.orders.filter(o => o.clientId === clientAuth.client.id).map(cleanClone);
-    payload.marketMessages = (state.marketMessages || []).filter(m => m.clientId === clientAuth.client.id && !m.deletedByClient).map(cleanClone);
-    payload.clientDeletedOrders[clientAuth.client.id] = (state.clientDeletedOrders || {})[clientAuth.client.id] || [];
-    payload.clientSession = publicClientSessionView(clientAuth.session);
-  } catch {
-    payload.clientSession = null;
-  }
+  if (hint && clientId) {
+    const client = state.marketClients.find(c => String(c?.id || '') === clientId);
+    const auth = client ? await getClientAuth(env, client.id) : null;
+    if (client && auth && Number(auth.version) === Number(hint.session.authVersion)) {
+      payload.marketClients = [cleanClone(client)];
+      payload.orders = state.orders.filter(o => String(o?.clientId || '') === clientId).map(cleanClone);
+      payload.marketMessages = state.marketMessages.filter(m => String(m?.clientId || '') === clientId && !m.deletedByClient).map(cleanClone);
+      payload.clientDeletedOrders[clientId] = state.clientDeletedOrders[clientId] || [];
+      payload.clientSession = publicClientSessionView(hint.session);
+    } else payload.clientSession = null;
+  } else payload.clientSession = null;
   return payload;
+}
+
+async function publicItemPhotoResponse(request, env) {
+  await ensureDB(env);
+  const url = new URL(request.url);
+  const companyId = String(url.searchParams.get('companyId') || '').trim();
+  const itemId = String(url.searchParams.get('itemId') || '').trim();
+  if (!companyId || !itemId) throw new HttpError(400, 'Photo produit invalide.', 'INVALID_ITEM_PHOTO');
+
+  let item = null;
+  const patch = await env.GLOBAL_MARKET_D1.prepare(`SELECT deleted, data FROM company_state_patches
+    WHERE company_id=? AND section='array:items' AND record_id=? LIMIT 1`).bind(companyId, itemId).first();
+  if (patch) {
+    if (Number(patch.deleted || 0) === 1) throw new HttpError(404, 'Photo introuvable.', 'ITEM_PHOTO_NOT_FOUND');
+    try { item = JSON.parse(patch.data || 'null'); } catch { item = null; }
+  }
+  if (!item) {
+    const rows = await env.GLOBAL_MARKET_D1.prepare(`SELECT c.data, c.chunk_index, m.chunk_count
+      FROM company_state_chunks c
+      INNER JOIN company_state_meta m ON m.company_id=c.company_id AND m.revision=c.revision
+      WHERE c.company_id=? ORDER BY c.chunk_index ASC`).bind(companyId).all();
+    const chunks = rows.results || [];
+    if (chunks.length && chunks.length === Number(chunks[0]?.chunk_count || 0)) {
+      try {
+        const snapshot = JSON.parse(chunks.map(row => row.data || '').join(''));
+        item = (Array.isArray(snapshot?.items) ? snapshot.items : []).find(row => String(row?.id || '') === itemId && String(row?.companyId || '') === companyId) || null;
+      } catch { item = null; }
+    }
+  }
+  if (!item || item.marketplaceHidden) throw new HttpError(404, 'Photo introuvable.', 'ITEM_PHOTO_NOT_FOUND');
+  const photo = String(item.photo || '');
+  if (/^https?:\/\//i.test(photo)) return Response.redirect(photo, 302);
+  const match = photo.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/s);
+  if (!match) throw new HttpError(404, 'Photo introuvable.', 'ITEM_PHOTO_NOT_FOUND');
+  const binary = atob(match[2]);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new Response(bytes, { headers: {
+    'Content-Type': match[1],
+    'Cache-Control': 'public, max-age=300',
+    'X-Content-Type-Options': 'nosniff'
+  } });
 }
 
 
@@ -2339,6 +2524,7 @@ async function handleApi(request, env, executionCtx) {
     if (url.pathname === '/api/users/reset-password' && request.method === 'POST') return await handleResetUserPassword(request, env);
     if (url.pathname === '/api/admin/client/reset-password' && request.method === 'POST') return await handleResetClientPasswordBySuper(request, env);
 
+    if (url.pathname === '/api/public/item-photo' && request.method === 'GET') return await publicItemPhotoResponse(request, env);
     if (url.pathname === '/api/public/load' && request.method === 'GET') return json(await publicLoadPayload(request, env));
     if (url.pathname === '/api/public/notifications' && request.method === 'GET') return await handleClientNotifications(request, env);
     if (url.pathname === '/api/public/client/register' && request.method === 'POST') return await handlePublicClientRegister(request, env);
