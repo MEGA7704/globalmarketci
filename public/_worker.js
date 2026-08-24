@@ -85,8 +85,11 @@ function errorResponse(error) {
   }
   console.error(error);
   const message = String(error?.message || error || '');
+  if (/kv.*(limit|quota)|daily.*limit|exceeded.*kv|code.?10042|code.?10043/i.test(message)) {
+    return json({ success: false, error: 'La limite quotidienne Cloudflare KV est atteinte. Les connexions utilisent maintenant des sessions signées sans écriture KV ; rechargez la dernière version du site.', code: 'KV_DAILY_LIMIT' }, { status: 429 });
+  }
   if (/overload|too many|rate.?limit|quota|temporar|network connection lost/i.test(message)) {
-    return json({ success: false, error: 'Le stockage est momentanément occupé. La sauvegarde sera automatiquement réessayée.', code: 'STORAGE_BUSY' }, { status: 429 });
+    return json({ success: false, error: 'Le stockage est momentanément occupé. Réessayez dans quelques instants.', code: 'STORAGE_BUSY' }, { status: 429 });
   }
   if (/too big|too large|SQLITE_TOOBIG|maximum.*size|memory/i.test(message)) {
     return json({ success: false, error: 'Les données à enregistrer sont trop volumineuses. Réduisez les images ou captures.', code: 'STORAGE_TOO_LARGE' }, { status: 413 });
@@ -262,10 +265,19 @@ async function verifyCredential(record, password) {
 
 async function ensureDB(env) {
   needBindings(env);
-  // Ne jamais conserver en global une Promise qui contient des E/S D1.
-  // Les isolates Cloudflare sont réutilisés entre plusieurs requêtes et une
-  // Promise D1 créée par une requête ne doit pas être réutilisée par une autre.
+  // Chemin normal : vérification en lecture seule. Les tables existent déjà en production ;
+  // on évite donc de lancer des CREATE TABLE/INDEX à chaque nouvel isolate.
   if (dbSchemaReady) return;
+  const requiredTables = ['state_meta','state_chunks','global_state_meta_v2','global_state_chunks_v2','company_state_meta','company_state_chunks','company_state_patches','deleted_companies','backups','security_events'];
+  const probe = await env.GLOBAL_MARKET_D1.prepare(
+    `SELECT name FROM sqlite_schema WHERE type='table' AND name IN (${requiredTables.map(() => '?').join(',')})`
+  ).bind(...requiredTables).all();
+  const found = new Set((probe.results || []).map(row => String(row.name || '')));
+  if (requiredTables.every(name => found.has(name))) {
+    dbSchemaReady = true;
+    return;
+  }
+  // Compatibilité première installation uniquement : créer ce qui manque.
   await env.GLOBAL_MARKET_D1.batch([
       env.GLOBAL_MARKET_D1.prepare(`CREATE TABLE IF NOT EXISTS state_meta (
         company_id TEXT PRIMARY KEY,
@@ -645,7 +657,13 @@ async function loadState(env, companyId = '*') {
     if (!state) state = defaultState();
   }
   state = normalizeState(state);
-  await ensureLegacyCredentialsMigrated(env, state);
+  try {
+    await ensureLegacyCredentialsMigrated(env, state);
+  } catch (error) {
+    // Une limite d'écriture KV ne doit pas rendre les lectures ni les sessions existantes indisponibles.
+    // La migration historique sera retentée plus tard ; les comptes déjà migrés continuent de fonctionner.
+    console.warn('Migration historique des identifiants différée', error?.message || error);
+  }
 
   // Les modifications courantes sont lues depuis de petits documents par entreprise.
   // Un utilisateur normal ne charge que son entreprise, ce qui réduit fortement CPU et mémoire.
@@ -671,8 +689,12 @@ async function ensureSuperAdminCredential(env, state) {
       existing.updatedAt = new Date().toISOString();
       await env.GLOBAL_MARKET_KV.put(authKey(SUPER_ADMIN_ID), JSON.stringify(existing));
     }
-    await env.GLOBAL_MARKET_KV.put(authIndexKey(identifier), SUPER_ADMIN_ID);
-    if (!(await env.GLOBAL_MARKET_KV.get(AUTH_INIT_KEY))) await env.GLOBAL_MARKET_KV.put(AUTH_INIT_KEY, new Date().toISOString());
+    const indexedSuperAdmin = await env.GLOBAL_MARKET_KV.get(authIndexKey(identifier));
+    if (indexedSuperAdmin !== SUPER_ADMIN_ID) await env.GLOBAL_MARKET_KV.put(authIndexKey(identifier), SUPER_ADMIN_ID);
+    if (!(await env.GLOBAL_MARKET_KV.get(AUTH_INIT_KEY))) {
+      try { await env.GLOBAL_MARKET_KV.put(AUTH_INIT_KEY, new Date().toISOString()); }
+      catch (error) { console.warn('Marqueur d’initialisation Super Admin différé', error?.message || error); }
+    }
     return existing;
   }
 
@@ -744,14 +766,24 @@ async function recordLoginFailure(env, rate) {
   const ttl = 15 * 60;
   rate.ipRec.count += 1;
   rate.accountRec.count += 1;
-  await Promise.all([
-    env.GLOBAL_MARKET_KV.put(rate.ipKey, JSON.stringify(rate.ipRec), { expirationTtl: ttl }),
-    env.GLOBAL_MARKET_KV.put(rate.accountKey, JSON.stringify(rate.accountRec), { expirationTtl: ttl })
-  ]);
+  try {
+    await Promise.all([
+      env.GLOBAL_MARKET_KV.put(rate.ipKey, JSON.stringify(rate.ipRec), { expirationTtl: ttl }),
+      env.GLOBAL_MARKET_KV.put(rate.accountKey, JSON.stringify(rate.accountRec), { expirationTtl: ttl })
+    ]);
+  } catch (error) {
+    // Un quota KV saturé ne doit jamais transformer une erreur d'identifiants en erreur stockage 500.
+    console.warn('Rate-limit KV non enregistré', error?.message || error);
+  }
 }
 
 async function clearLoginRate(env, rate) {
-  await Promise.all([env.GLOBAL_MARKET_KV.delete(rate.ipKey), env.GLOBAL_MARKET_KV.delete(rate.accountKey)]);
+  try {
+    await Promise.all([env.GLOBAL_MARKET_KV.delete(rate.ipKey), env.GLOBAL_MARKET_KV.delete(rate.accountKey)]);
+  } catch (error) {
+    // Le nettoyage de rate-limit est secondaire : la connexion validée doit rester disponible.
+    console.warn('Nettoyage rate-limit KV différé', error?.message || error);
+  }
 }
 
 function companyStatus(company) {
@@ -795,8 +827,78 @@ function publicClientSessionView(session) {
   };
 }
 
+// V5.5.1 AUTH FIX — sessions signées sans écriture KV à chaque connexion.
+// Les anciennes sessions KV restent acceptées pendant leur durée de vie.
+const SIGNED_SESSION_PREFIX = 'v2';
+function bytesToBase64Url(bytes) {
+  let raw = '';
+  for (const byte of new Uint8Array(bytes)) raw += String.fromCharCode(byte);
+  return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+function base64UrlToBytes(value) {
+  const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+  const raw = atob(padded);
+  return Uint8Array.from(raw, ch => ch.charCodeAt(0));
+}
+function textToBase64Url(value) {
+  return bytesToBase64Url(new TextEncoder().encode(String(value || '')));
+}
+function base64UrlToText(value) {
+  return new TextDecoder().decode(base64UrlToBytes(value));
+}
+async function sessionSigningKey(env) {
+  const secret = String(env.SESSION_SIGNING_SECRET || env.SUPER_ADMIN_INITIAL_PASSWORD || '');
+  if (!secret) throw new HttpError(503, 'Secret de session Cloudflare non configuré.', 'SESSION_SECRET_MISSING');
+  return crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(`GLOBAL_MARKET|SESSION|${secret}`),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign', 'verify']
+  );
+}
+async function createSignedSessionToken(env, type, session) {
+  const body = textToBase64Url(JSON.stringify({ v: 2, type, ...session }));
+  const key = await sessionSigningKey(env);
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(body));
+  return `${SIGNED_SESSION_PREFIX}.${body}.${bytesToBase64Url(signature)}`;
+}
+async function readSignedSessionToken(env, token, expectedType) {
+  const parts = String(token || '').split('.');
+  if (parts.length !== 3 || parts[0] !== SIGNED_SESSION_PREFIX) return null;
+  try {
+    const key = await sessionSigningKey(env);
+    const valid = await crypto.subtle.verify(
+      'HMAC', key, base64UrlToBytes(parts[2]), new TextEncoder().encode(parts[1])
+    );
+    if (!valid) return null;
+    const payload = JSON.parse(base64UrlToText(parts[1]));
+    if (payload?.v !== 2 || payload?.type !== expectedType) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+function isSignedSessionToken(token) {
+  return String(token || '').startsWith(`${SIGNED_SESSION_PREFIX}.`);
+}
+async function readEmployeeSessionToken(env, token) {
+  if (isSignedSessionToken(token)) return readSignedSessionToken(env, token, 'employee');
+  return env.GLOBAL_MARKET_KV.get(`session:${token}`, 'json');
+}
+async function readClientSessionToken(env, token) {
+  if (isSignedSessionToken(token)) return readSignedSessionToken(env, token, 'client');
+  return env.GLOBAL_MARKET_KV.get(`client-session:${token}`, 'json');
+}
+async function deleteLegacyEmployeeSession(env, token) {
+  if (token && !isSignedSessionToken(token)) await env.GLOBAL_MARKET_KV.delete(`session:${token}`);
+}
+async function deleteLegacyClientSession(env, token) {
+  if (token && !isSignedSessionToken(token)) await env.GLOBAL_MARKET_KV.delete(`client-session:${token}`);
+}
+
 async function createEmployeeSession(env, user, auth) {
-  const sid = randomHex(32);
   const ttl = user.role === 'caisse' ? Math.max(5, Number(user.sessionMinutes || 60)) * 60 : EMPLOYEE_SESSION_TTL;
   const session = {
     userId: user.id,
@@ -807,16 +909,16 @@ async function createEmployeeSession(env, user, auth) {
     loginAt: Date.now(),
     expiresAt: Date.now() + ttl * 1000
   };
-  await env.GLOBAL_MARKET_KV.put(`session:${sid}`, JSON.stringify(session), { expirationTtl: ttl });
+  const sid = await createSignedSessionToken(env, 'employee', session);
   return { sid, ttl, session };
 }
 
 async function getEmployeeSession(request, env, requireCsrf = false) {
   const sid = getCookie(request, EMPLOYEE_SESSION_COOKIE);
   if (!sid) throw new HttpError(401, 'Connexion requise.', 'UNAUTHENTICATED');
-  const session = await env.GLOBAL_MARKET_KV.get(`session:${sid}`, 'json');
+  const session = await readEmployeeSessionToken(env, sid);
   if (!session || Number(session.expiresAt || 0) <= Date.now()) {
-    if (sid) await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);
+    if (sid) await deleteLegacyEmployeeSession(env, sid);
     throw new HttpError(401, 'Session expirée. Reconnectez-vous.', 'SESSION_EXPIRED');
   }
   if (requireCsrf) {
@@ -828,18 +930,17 @@ async function getEmployeeSession(request, env, requireCsrf = false) {
   const user = state.users.find(u => u.id === session.userId);
   const auth = user ? await getAuth(env, user.id) : null;
   if (!user || user.status !== 'active' || !auth || Number(auth.version) !== Number(session.authVersion)) {
-    await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);
+    await deleteLegacyEmployeeSession(env, sid);
     throw new HttpError(401, 'Session invalidée. Reconnectez-vous.', 'SESSION_INVALIDATED');
   }
   if (user.role !== session.role || (user.companyId || null) !== (session.companyId || null)) {
-    await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);
+    await deleteLegacyEmployeeSession(env, sid);
     throw new HttpError(401, 'Session incohérente.', 'SESSION_INVALIDATED');
   }
   return { sid, session, state, user, auth };
 }
 
 async function createClientSession(env, client, auth) {
-  const sid = randomHex(32);
   const session = {
     clientId: client.id,
     companyId: client.companyId,
@@ -847,16 +948,16 @@ async function createClientSession(env, client, auth) {
     csrfToken: randomHex(24),
     expiresAt: Date.now() + CLIENT_SESSION_TTL * 1000
   };
-  await env.GLOBAL_MARKET_KV.put(`client-session:${sid}`, JSON.stringify(session), { expirationTtl: CLIENT_SESSION_TTL });
+  const sid = await createSignedSessionToken(env, 'client', session);
   return { sid, session };
 }
 
 async function getClientSession(request, env, requireCsrf = false) {
   const sid = getCookie(request, CLIENT_SESSION_COOKIE);
   if (!sid) throw new HttpError(401, 'Connexion client requise.', 'CLIENT_UNAUTHENTICATED');
-  const session = await env.GLOBAL_MARKET_KV.get(`client-session:${sid}`, 'json');
+  const session = await readClientSessionToken(env, sid);
   if (!session || Number(session.expiresAt || 0) <= Date.now()) {
-    if (sid) await env.GLOBAL_MARKET_KV.delete(`client-session:${sid}`);
+    if (sid) await deleteLegacyClientSession(env, sid);
     throw new HttpError(401, 'Session client expirée.', 'CLIENT_SESSION_EXPIRED');
   }
   if (requireCsrf) {
@@ -870,7 +971,7 @@ async function getClientSession(request, env, requireCsrf = false) {
   const client = state.marketClients.find(c => c.id === session.clientId);
   const auth = client ? await getClientAuth(env, client.id) : null;
   if (!client || !auth || Number(auth.version) !== Number(session.authVersion)) {
-    await env.GLOBAL_MARKET_KV.delete(`client-session:${sid}`);
+    await deleteLegacyClientSession(env, sid);
     throw new HttpError(401, 'Session client invalidée.', 'CLIENT_SESSION_INVALIDATED');
   }
   return { sid, session, state, client, auth };
@@ -1190,14 +1291,14 @@ function buildStateDeltaForPersistence(before, after) {
 async function getEmployeeSessionLight(request, env) {
   const sid = getCookie(request, EMPLOYEE_SESSION_COOKIE);
   if (!sid) throw new HttpError(401, 'Connexion requise.', 'UNAUTHENTICATED');
-  const session = await env.GLOBAL_MARKET_KV.get(`session:${sid}`, 'json');
+  const session = await readEmployeeSessionToken(env, sid);
   if (!session || Number(session.expiresAt || 0) <= Date.now()) {
-    if (sid) await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);
+    if (sid) await deleteLegacyEmployeeSession(env, sid);
     throw new HttpError(401, 'Session expirée. Reconnectez-vous.', 'SESSION_EXPIRED');
   }
   const auth = await getAuth(env, session.userId);
   if (!auth || Number(auth.version || 0) !== Number(session.authVersion || 0)) {
-    await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);
+    await deleteLegacyEmployeeSession(env, sid);
     throw new HttpError(401, 'Session invalidée. Reconnectez-vous.', 'SESSION_INVALIDATED');
   }
   const user = { id: session.userId, companyId: session.companyId || null, role: session.role, status: 'active' };
@@ -1615,7 +1716,7 @@ async function readPublicSnapshotSeeds(env, clientId = '') {
 async function readPublicSessionHint(request, env) {
   const sid = getCookie(request, CLIENT_SESSION_COOKIE);
   if (!sid) return null;
-  const session = await env.GLOBAL_MARKET_KV.get(`client-session:${sid}`, 'json');
+  const session = await readClientSessionToken(env, sid);
   if (!session || Number(session.expiresAt || 0) <= Date.now() || !session.clientId) return null;
   return { sid, session };
 }
@@ -2003,7 +2104,7 @@ async function handlePasswordChange(request, env) {
   await writeUserCredential(env, ctx.user, newPassword, { mustChangePassword: false });
   ctx.user.mustChangePassword = false;
   await persistStateDelta(env, { arrays: { users: { upserts: [ctx.user], deletes: [] } } }, { role: 'system', companyId: ctx.user.companyId || PATCH_GLOBAL_SCOPE });
-  await env.GLOBAL_MARKET_KV.delete(`session:${ctx.sid}`);
+  await deleteLegacyEmployeeSession(env, ctx.sid);
   await audit(env, 'PASSWORD_CHANGED', ctx.user.id, ctx.user.companyId, 'Toutes les sessions ont été invalidées', requestIp(request));
   return json({ success: true, reloginRequired: true }, {
     headers: { 'Set-Cookie': setCookie(EMPLOYEE_SESSION_COOKIE, '', 0) }
@@ -2198,7 +2299,7 @@ async function handlePublicClientUpdate(request, env) {
   }
   await persistStateDelta(env, { arrays: { marketClients: { upserts: [client], deletes: [] } } }, { role: 'system', companyId: GLOBAL_CLIENT_SCOPE });
   if (phoneChanged || passwordChanged) {
-    await env.GLOBAL_MARKET_KV.delete(`client-session:${ctx.sid}`);
+    await deleteLegacyClientSession(env, ctx.sid);
     const created = await createClientSession(env, client, auth);
     return json({ success: true, client: cleanClone(client), session: publicClientSessionView(created.session) }, {
       headers: { 'Set-Cookie': setCookie(CLIENT_SESSION_COOKIE, created.sid, CLIENT_SESSION_TTL) }
@@ -2613,7 +2714,7 @@ async function handleApi(request, env, executionCtx) {
       const sid = getCookie(request, EMPLOYEE_SESSION_COOKIE);
       if (sid) {
         try { await getEmployeeSession(request, env, true); } catch (error) { if (!(error instanceof HttpError) || error.code !== 'SESSION_EXPIRED') throw error; }
-        await env.GLOBAL_MARKET_KV.delete(`session:${sid}`);
+        await deleteLegacyEmployeeSession(env, sid);
       }
       return json({ success: true }, { headers: { 'Set-Cookie': setCookie(EMPLOYEE_SESSION_COOKIE, '', 0) } });
     }
@@ -2667,7 +2768,7 @@ async function handleApi(request, env, executionCtx) {
     if (url.pathname === '/api/public/client/request-reset' && request.method === 'POST') return await handlePublicClientResetRequest(request, env);
     if (url.pathname === '/api/public/client/session' && request.method === 'DELETE') {
       const sid = getCookie(request, CLIENT_SESSION_COOKIE);
-      if (sid) await env.GLOBAL_MARKET_KV.delete(`client-session:${sid}`);
+      if (sid) await deleteLegacyClientSession(env, sid);
       return json({ success: true }, { headers: { 'Set-Cookie': setCookie(CLIENT_SESSION_COOKIE, '', 0) } });
     }
     if (url.pathname === '/api/public/order' && request.method === 'POST') return await handlePublicOrder(request, env);
