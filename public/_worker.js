@@ -397,13 +397,22 @@ function normalizeState(value) {
     if (!company || typeof company !== 'object') return company;
     const rawPlan = String(company.planCode || company.plan || company.status || 'FREE').toUpperCase();
     const code = rawPlan.includes('BUSINESS') || rawPlan.includes('PLUS') ? 'BUSINESS' : (rawPlan.includes('STANDARD') ? 'STANDARD' : 'FREE');
-    const duration = code === 'FREE' ? 10 : 30;
+    const duration = code === 'FREE' ? 10 : (code === 'BUSINESS' ? 365 : 30);
     const start = String(company.subscriptionStart || company.createdAt || new Date().toISOString()).slice(0, 10);
+    const previousEnd = /^\d{4}-\d{2}-\d{2}$/.test(String(company.subscriptionEnd || '')) ? String(company.subscriptionEnd) : '';
+    const todayIso = new Date().toISOString().slice(0, 10);
     company.planCode = code;
-    company.plan = code === 'BUSINESS' ? 'Plan Business — 30 jours' : (code === 'STANDARD' ? 'Plan Standard — 30 jours' : 'Plan Free — 10 jours');
+    company.plan = code === 'BUSINESS' ? 'Plan Business — 1 an' : (code === 'STANDARD' ? 'Plan Standard — 30 jours' : 'Plan Free — 10 jours');
     if (['FREE', 'STANDARD', 'BUSINESS', 'BUSINESS_PLUS'].includes(String(company.status || '').toUpperCase())) company.status = code;
     company.subscriptionStart = start;
-    company.subscriptionEnd = dateOnlyPlusDays(start, duration);
+    if (code === 'BUSINESS') {
+      const annualEnd = dateOnlyPlusDays(start, 365);
+      // Mise à niveau ciblée : seuls les Business encore en cours sont prolongés jusqu'à 1 an.
+      // Un ancien Business déjà expiré n'est pas réactivé automatiquement.
+      company.subscriptionEnd = !previousEnd ? annualEnd : (previousEnd >= todayIso && previousEnd < annualEnd ? annualEnd : previousEnd);
+    } else {
+      company.subscriptionEnd = dateOnlyPlusDays(start, duration);
+    }
     return company;
   });
   const index = data.users.findIndex(u => u && (u.id === SUPER_ADMIN_ID || u.role === 'superadmin'));

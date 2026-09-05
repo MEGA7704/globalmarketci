@@ -99,7 +99,7 @@ Tous les identifiants HTML, la validation, la création de l’entreprise et la 
 
 - **Free** : gratuit pendant 10 jours, 2 catégories maximum, 5 produits/services par catégorie (10 au total), sans accès Marketplace ni boutique publique.
 - **Standard** : 4 800 FCFA / mois (30 jours), 5 catégories maximum, 10 produits/services par catégorie (50 au total), Marketplace et boutique publique incluses.
-- **Business** : 46 100 FCFA / mois (30 jours), accès illimité au programme complet, Marketplace et boutique publique incluses.
+- **Business** : 46 100 FCFA / an (365 jours), accès illimité au programme complet, Marketplace et boutique publique incluses.
 
 Pour une entreprise Free, un rappel professionnel des formules payantes s’affiche au démarrage de la session puis automatiquement toutes les 15 minutes.
 

@@ -1,12 +1,11 @@
 GLOBAL MARKET V5.5.1 — VALIDATION CORRECTION CIBLÉE 3 FORMULES
-Date : 2026-09-05
+Date : 2026-09-06
 
 VALIDATION AUTOMATIQUE : OK
 - Syntaxe public/assets/app.js : OK
 - Worker Cloudflare : OK
 - Sécurité / KV / D1 / configuration Cloudflare : OK
 - Build Cloudflare Pages : OK
-- Build généré : 2026.09.05-5e58b3a4aded
 
 FORMULES
 FREE
@@ -27,10 +26,12 @@ STANDARD
 - Marketplace + boutique publique
 
 BUSINESS
-- 46 100 FCFA / mois
-- 30 jours par activation
+- 46 100 FCFA / an
+- 365 jours par activation
 - catalogue illimité
 - programme complet + Marketplace + boutique publique
+- mise à niveau automatique des Business encore en cours vers la durée annuelle
+- aucun Business déjà expiré n'est réactivé automatiquement
 
 PROTECTIONS
 - contrôle des limites lors de l'ajout de catégories
