@@ -396,12 +396,12 @@ function normalizeState(value) {
   data.companies = data.companies.map(company => {
     if (!company || typeof company !== 'object') return company;
     const rawPlan = String(company.planCode || company.plan || company.status || 'FREE').toUpperCase();
-    const code = rawPlan.includes('BUSINESS') || rawPlan.includes('PLUS') ? 'BUSINESS' : 'FREE';
-    const duration = code === 'BUSINESS' ? 365 : 21;
+    const code = rawPlan.includes('BUSINESS') || rawPlan.includes('PLUS') ? 'BUSINESS' : (rawPlan.includes('STANDARD') ? 'STANDARD' : 'FREE');
+    const duration = code === 'FREE' ? 10 : 30;
     const start = String(company.subscriptionStart || company.createdAt || new Date().toISOString()).slice(0, 10);
     company.planCode = code;
-    company.plan = code === 'BUSINESS' ? 'Plan Business — 365 jours' : 'Plan Free — 21 jours';
-    if (['FREE', 'BUSINESS', 'BUSINESS_PLUS'].includes(String(company.status || '').toUpperCase())) company.status = code;
+    company.plan = code === 'BUSINESS' ? 'Plan Business — 30 jours' : (code === 'STANDARD' ? 'Plan Standard — 30 jours' : 'Plan Free — 10 jours');
+    if (['FREE', 'STANDARD', 'BUSINESS', 'BUSINESS_PLUS'].includes(String(company.status || '').toUpperCase())) company.status = code;
     company.subscriptionStart = start;
     company.subscriptionEnd = dateOnlyPlusDays(start, duration);
     return company;
@@ -902,6 +902,19 @@ function companyStatus(company) {
   const today = new Date().toISOString().slice(0, 10);
   if (company.subscriptionEnd && company.subscriptionEnd < today) return 'expired';
   return company.status || company.planCode || 'FREE';
+}
+
+function companyPlanCode(company) {
+  const raw = String(company?.planCode || company?.plan || company?.status || 'FREE').toUpperCase();
+  if (raw.includes('BUSINESS') || raw.includes('PLUS')) return 'BUSINESS';
+  if (raw.includes('STANDARD')) return 'STANDARD';
+  return 'FREE';
+}
+
+function companyMarketplaceEnabled(company) {
+  if (!company || companyStatus(company) === 'expired') return false;
+  const code = companyPlanCode(company);
+  return code === 'STANDARD' || code === 'BUSINESS';
 }
 
 function isCashierInAllowedHours(user, now = new Date()) {
@@ -1929,9 +1942,11 @@ async function publicLoadPayload(request, env) {
   const clientId = String(hint?.session?.clientId || '');
   const state = await readPublicSnapshotSeeds(env, clientId);
   await applyPublicPatchesLight(env, state, clientId);
+  const marketplaceCompanies = state.companies.filter(companyMarketplaceEnabled);
+  const marketplaceCompanyIds = new Set(marketplaceCompanies.map(c => String(c?.id || '')));
   const payload = {
-    companies: state.companies.map(publicCompany),
-    items: state.items.map(publicItem),
+    companies: marketplaceCompanies.map(publicCompany),
+    items: state.items.filter(item => marketplaceCompanyIds.has(String(item?.companyId || '')) && !item?.marketplaceHidden).map(publicItem),
     marketClients: [],
     orders: [],
     marketMessages: [],
@@ -2078,6 +2093,7 @@ async function handlePublicMessageCreate(request, env) {
 
   const company = (state.companies || []).find(c => String(c.id) === companyId);
   if (!company) throw new HttpError(404, 'Boutique introuvable.', 'SHOP_NOT_FOUND');
+  if (!companyMarketplaceEnabled(company)) throw new HttpError(403, 'Cette boutique n’est pas disponible sur la Marketplace avec son abonnement actuel.', 'MARKETPLACE_PLAN_REQUIRED');
   const subject = String(body.subject || 'Demande client').trim().slice(0, 160) || 'Demande client';
   const messageText = String(body.message || body.body || '').trim().slice(0, 5000);
   if (!senderName || !senderPhone || !messageText) throw new HttpError(400, 'Nom, téléphone et message sont obligatoires.', 'MESSAGE_FIELDS_REQUIRED');
@@ -2201,14 +2217,14 @@ async function handleRegisterCompany(request, env) {
   const cid = `ent_${crypto.randomUUID()}`;
   const uid = `usr_${crypto.randomUUID()}`;
   const now = new Date();
-  const end = new Date(now.getTime() + 21 * 86400000).toISOString().slice(0, 10);
+  const end = new Date(now.getTime() + 10 * 86400000).toISOString().slice(0, 10);
   const slug = String(name).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || cid;
   const company = {
     id: cid, name, legalForm: String(body.legalForm || ''), rccm: String(body.rccm || ''),
     taxAccount: String(body.taxAccount || ''), activity: String(body.activity || ''),
     owner: String(body.owner || ''), address: String(body.address || ''), phone: String(body.phone || ''),
     email, businessType: String(body.businessType || 'boutique'), status: 'FREE', planCode: 'FREE',
-    plan: 'Plan Free — 21 jours', subscriptionStart: now.toISOString().slice(0, 10), subscriptionEnd: end,
+    plan: 'Plan Free — 10 jours', subscriptionStart: now.toISOString().slice(0, 10), subscriptionEnd: end,
     createdAt: now.toISOString(), notes: '', shopSlug: slug, shopBanner: 'Boutique officielle', shopColor: '#024644'
   };
   const user = { id: uid, companyId: cid, name: company.owner || 'Administrateur principal', email, role: 'admin', status: 'active', createdAt: now.toISOString(), mainAdmin: true };
@@ -2592,6 +2608,7 @@ async function handlePublicOrder(request, env) {
     if (!item) throw new HttpError(400, 'Un article du panier est introuvable.', 'ITEM_NOT_FOUND');
     const company = state.companies.find(c => c.id === item.companyId);
     if (!company) throw new HttpError(400, 'La boutique d’un article est introuvable.', 'COMPANY_NOT_FOUND');
+    if (!companyMarketplaceEnabled(company)) throw new HttpError(403, 'Cette boutique n’est pas disponible sur la Marketplace avec son abonnement actuel.', 'MARKETPLACE_PLAN_REQUIRED');
     const qty = Math.max(1, Math.min(10000, Number(line.qty || 1)));
     const isProduct = !['service', 'services', 'prestation'].includes(String(item.type || '').toLowerCase());
     if (isProduct && item.stockType !== 'unlimited' && Number(item.stock || 0) < qty) throw new HttpError(409, `Stock insuffisant pour : ${item.name}`, 'INSUFFICIENT_STOCK');

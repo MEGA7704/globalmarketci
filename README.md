@@ -97,12 +97,11 @@ Tous les identifiants HTML, la validation, la création de l’entreprise et la 
 
 ## Plans intégrés
 
-- Plan Free : accès complet pendant 21 jours.
-- Plan Business : accès complet pendant 365 jours.
-- Montant Business : 26 300 FCFA.
-- Paiement Wave : `https://pay.wave.com/m/M_ci_Enx-2JNAklk-/c/ci/?amount=26300`
+- **Free** : gratuit pendant 10 jours, 2 catégories maximum, 5 produits/services par catégorie (10 au total), sans accès Marketplace ni boutique publique.
+- **Standard** : 4 800 FCFA / mois (30 jours), 5 catégories maximum, 10 produits/services par catégorie (50 au total), Marketplace et boutique publique incluses.
+- **Business** : 46 100 FCFA / mois (30 jours), accès illimité au programme complet, Marketplace et boutique publique incluses.
 
-Pour une entreprise Free, le rappel professionnel s’affiche à l’ouverture des sections et toutes les 15 minutes.
+Pour une entreprise Free, un rappel professionnel des formules payantes s’affiche au démarrage de la session puis automatiquement toutes les 15 minutes.
 
 ## Mise en ligne sur GitHub
 

@@ -28,14 +28,11 @@ Utilisez des valeurs personnelles fortes dans Cloudflare et ne les ajoutez jamai
 
 | Plan | Accès | Durée | Prix |
 |---|---|---:|---:|
-| Free | Complet | 21 jours | 0 FCFA |
-| Business | Complet | 365 jours | 26 300 FCFA |
+| Free | Gestion hors Marketplace, 2 catégories, 5 éléments/catégorie | 10 jours | 0 FCFA |
+| Standard | Marketplace + boutique publique, 5 catégories, 10 éléments/catégorie | 30 jours | 4 800 FCFA / mois |
+| Business | Programme complet illimité + Marketplace | 30 jours | 46 100 FCFA / mois |
 
-Lien Wave :
-
-```text
-https://pay.wave.com/m/M_ci_Enx-2JNAklk-/c/ci/?amount=26300
-```
+Le montant Wave est généré automatiquement selon la formule choisie.
 
 ## Configuration Cloudflare Pages
 

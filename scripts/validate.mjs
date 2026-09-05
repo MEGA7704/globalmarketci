@@ -120,13 +120,17 @@ for (const [needle, label] of registrationChecks) {
 }
 
 const planChecks = [
-  ['const FREE_PLAN_DAYS=21;', 'Plan Free de 21 jours'],
-  ['const BUSINESS_PLAN_DAYS=365;', 'Plan Business de 365 jours'],
-  ['const BUSINESS_PLAN_AMOUNT=26300;', 'montant Business de 26 300 FCFA'],
-  ["https://pay.wave.com/m/M_ci_Enx-2JNAklk-/c/ci/?amount=26300", 'lien Wave Business'],
+  ['const FREE_PLAN_DAYS=10;', 'Plan Free de 10 jours'],
+  ['const PAID_PLAN_DAYS=30;', 'durée mensuelle Standard/Business de 30 jours'],
+  ['const STANDARD_PLAN_AMOUNT=4800;', 'montant Standard de 4 800 FCFA'],
+  ['const BUSINESS_PLAN_AMOUNT=46100;', 'montant Business de 46 100 FCFA'],
+  ["STANDARD:{code:'STANDARD'", 'formule Standard'],
+  ['maxCategories:2,maxItemsPerCategory:5', 'limites catalogue du Plan Free'],
+  ['maxCategories:5,maxItemsPerCategory:10', 'limites catalogue du Plan Standard'],
+  ['marketplace:false,publicShop:false', 'blocage Marketplace du Plan Free'],
   ['15*60*1000', 'rappel automatique toutes les 15 minutes'],
-  ['Acheter mon plan Business', 'bouton achat Business'],
-  ['Compris', 'bouton de fermeture du rappel Free']
+  ["openSubscriptionPayment('STANDARD')", 'bouton achat Standard'],
+  ["openSubscriptionPayment('BUSINESS')", 'bouton achat Business']
 ];
 for (const [needle, label] of planChecks) {
   if (!app.includes(needle)) {
