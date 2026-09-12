@@ -1,0 +1,9 @@
+VERIFICATION MODE MANUEL GLOBAL MARKET CI
+- Build: OK
+- JavaScript: OK
+- Worker Cloudflare: OK
+- Envoi automatique checkout: désactivé
+- Ouverture WhatsApp wa.me: active
+- Suivi par destinataire: actif
+- Confirmation manuelle serveur: active
+- Multi-numéros boutique: actif (max 5)

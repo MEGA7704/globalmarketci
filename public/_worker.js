@@ -926,6 +926,145 @@ function companyMarketplaceEnabled(company) {
   return code === 'STANDARD' || code === 'BUSINESS';
 }
 
+
+function normalizeMarketplaceWhatsappNumber(value) {
+  let raw = String(value || '').trim().replace(/[^0-9+]/g, '');
+  if (raw.startsWith('+')) raw = raw.slice(1);
+  if (raw.startsWith('00')) raw = raw.slice(2);
+  if (/^0\d{9}$/.test(raw)) raw = `225${raw.slice(1)}`;
+  return /^\d{8,15}$/.test(raw) ? raw : '';
+}
+
+function companyMarketplaceWhatsappNumbers(company) {
+  const source = Array.isArray(company?.marketWhatsappNumbers)
+    ? company.marketWhatsappNumbers
+    : (company?.marketWhatsapp ? String(company.marketWhatsapp).split(/[\n,;]+/) : []);
+  return [...new Set(source.map(normalizeMarketplaceWhatsappNumber).filter(Boolean))].slice(0, 5);
+}
+
+function marketplaceOrderWhatsappMessage(order, company) {
+  const lines = (Array.isArray(order?.items) ? order.items : []).slice(0, 20).map((line, index) =>
+    `${index + 1}. ${String(line?.item || 'Article')} x${Number(line?.qty || 1)} — ${Math.round(Number(line?.total || 0)).toLocaleString('fr-FR')} FCFA`
+  );
+  return [
+    'NOUVELLE COMMANDE — GLOBAL MARKET CI',
+    `Commande : #${String(order?.id || '')}`,
+    `Boutique : ${String(order?.shopName || company?.name || 'Boutique')}`,
+    `Client : ${String(order?.client || 'Client')} — ${String(order?.clientPhone || '')}`,
+    '',
+    ...lines,
+    '',
+    `Total : ${Math.round(Number(order?.total || 0)).toLocaleString('fr-FR')} FCFA`,
+    `Livraison : ${String(order?.deliveryCity || '-')} ${order?.deliveryNeighborhood ? '— ' + String(order.deliveryNeighborhood) : ''}`,
+    `Paiement : ${String(order?.paymentMethod || 'Non choisi')}`,
+    '',
+    'Connectez-vous à GLOBAL MARKET CI pour traiter la commande.'
+  ].join('\n');
+}
+
+async function sendMarketplaceWhatsappViaWebhook(env, recipients, order, company, message) {
+  const webhook = String(env.WHATSAPP_DISPATCH_WEBHOOK || '').trim();
+  if (!webhook) return null;
+  const headers = { 'Content-Type': 'application/json' };
+  const token = String(env.WHATSAPP_DISPATCH_WEBHOOK_TOKEN || '').trim();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(webhook, {
+    method: 'POST', headers,
+    body: JSON.stringify({
+      type: 'global_market_order', recipients, message,
+      order: {
+        id: order?.id, checkoutId: order?.checkoutId, companyId: order?.companyId, shopName: order?.shopName,
+        client: order?.client, clientPhone: order?.clientPhone, date: order?.date,
+        items: Array.isArray(order?.items) ? order.items : [], subtotal: order?.subtotal, deliveryFee: order?.deliveryFee, total: order?.total,
+        deliveryCity: order?.deliveryCity, deliveryNeighborhood: order?.deliveryNeighborhood, deliveryAddressDetail: order?.deliveryAddressDetail,
+        shippingMethod: order?.shippingMethod, paymentMethod: order?.paymentMethod
+      },
+      company: { id: company?.id, name: company?.name }
+    }),
+    signal: AbortSignal.timeout(12_000)
+  });
+  if (!response.ok) throw new Error(`Passerelle WhatsApp HTTP ${response.status}`);
+  return { sent: recipients, failed: [] };
+}
+
+async function sendMarketplaceWhatsappViaMeta(env, recipients, order, company) {
+  const token = String(env.WHATSAPP_ACCESS_TOKEN || '').trim();
+  const phoneNumberId = String(env.WHATSAPP_PHONE_NUMBER_ID || '').trim();
+  const templateName = String(env.WHATSAPP_ORDER_TEMPLATE || '').trim();
+  if (!token || !phoneNumberId || !templateName) return null;
+  const graphVersion = String(env.WHATSAPP_GRAPH_VERSION || 'v23.0').trim();
+  const languageCode = String(env.WHATSAPP_TEMPLATE_LANGUAGE || 'fr').trim();
+  const itemSummary = (Array.isArray(order?.items) ? order.items : []).slice(0, 8).map(line => `${String(line?.item || 'Article')} x${Number(line?.qty || 1)}`).join(', ').slice(0, 900);
+  const url = `https://graph.facebook.com/${encodeURIComponent(graphVersion)}/${encodeURIComponent(phoneNumberId)}/messages`;
+  const attempts = await Promise.allSettled(recipients.map(async to => {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp', to, type: 'template',
+        template: {
+          name: templateName,
+          language: { code: languageCode },
+          components: [{ type: 'body', parameters: [
+            { type: 'text', text: String(order?.id || '') },
+            { type: 'text', text: String(order?.shopName || company?.name || 'Boutique') },
+            { type: 'text', text: `${String(order?.client || 'Client')} ${String(order?.clientPhone || '')}`.trim() },
+            { type: 'text', text: `${Math.round(Number(order?.total || 0)).toLocaleString('fr-FR')} FCFA` },
+            { type: 'text', text: itemSummary || 'Commande client' }
+          ] }]
+        }
+      }),
+      signal: AbortSignal.timeout(12_000)
+    });
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 700);
+      throw new Error(`Meta WhatsApp ${response.status}: ${detail}`);
+    }
+    return to;
+  }));
+  const sent = [], failed = [], errors = [];
+  attempts.forEach((result, index) => {
+    if (result.status === 'fulfilled') sent.push(recipients[index]);
+    else { failed.push(recipients[index]); errors.push(String(result.reason?.message || result.reason || 'Échec WhatsApp')); }
+  });
+  return { sent, failed, error: errors.join(' | ').slice(0, 1500) };
+}
+
+async function dispatchMarketplaceOrderWhatsapp(env, order, company) {
+  const recipients = companyMarketplaceWhatsappNumbers(company);
+  order.whatsappRecipients = recipients;
+  order.whatsappLastAttemptAt = new Date().toISOString();
+  order.whatsappSentRecipients = [];
+  order.whatsappFailedRecipients = [];
+  order.whatsappLastError = '';
+  if (!recipients.length) {
+    order.whatsappDispatchStatus = 'Numéro non configuré';
+    order.whatsappLastError = 'La boutique doit enregistrer au moins un numéro dans Marketplace > WhatsApp commandes.';
+  } else {
+    try {
+      const message = marketplaceOrderWhatsappMessage(order, company);
+      let result = await sendMarketplaceWhatsappViaWebhook(env, recipients, order, company, message);
+      if (!result) result = await sendMarketplaceWhatsappViaMeta(env, recipients, order, company);
+      if (!result) {
+        order.whatsappDispatchStatus = 'Configuration requise';
+        order.whatsappLastError = 'Configurez WHATSAPP_DISPATCH_WEBHOOK ou les variables Meta WhatsApp Business dans Cloudflare.';
+      } else {
+        order.whatsappSentRecipients = result.sent || [];
+        order.whatsappFailedRecipients = result.failed || [];
+        order.whatsappLastError = result.error || '';
+        order.whatsappDispatchStatus = !order.whatsappFailedRecipients.length ? 'Envoyée' : (order.whatsappSentRecipients.length ? 'Partielle' : 'Échec');
+        if (order.whatsappDispatchStatus === 'Envoyée' && !order.globalProcessingStatus) order.globalProcessingStatus = 'Transmise à la boutique';
+      }
+    } catch (error) {
+      order.whatsappDispatchStatus = 'Échec';
+      order.whatsappFailedRecipients = recipients;
+      order.whatsappLastError = String(error?.message || error || 'Échec de transmission WhatsApp').slice(0, 1500);
+    }
+  }
+  await persistStateDelta(env, { arrays: { orders: { upserts: [order], deletes: [] } } }, { role: 'system', companyId: order.companyId });
+  return order;
+}
+
 function isCashierInAllowedHours(user, now = new Date()) {
   if (user?.role !== 'caisse') return true;
   const valid = v => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v || ''));
@@ -2602,7 +2741,58 @@ async function handlePublicClientLogin(request, env) {
   });
 }
 
-async function handlePublicOrder(request, env) {
+
+async function handleSuperOrderAction(request, env) {
+  const ctx = await getEmployeeSession(request, env, true);
+  requireRole(ctx.user, ['superadmin']);
+  const body = await readJson(request, 30_000);
+  const orderId = String(body.orderId || '').trim();
+  const order = (ctx.state.orders || []).find(row => String(row?.id || '') === orderId);
+  if (!order) throw new HttpError(404, 'Commande introuvable.', 'ORDER_NOT_FOUND');
+  const action = String(body.action || '').trim().toLowerCase();
+  if (action === 'dispatch_whatsapp') {
+    // Compatibilité future : l'envoi automatique reste disponible si une passerelle est configurée,
+    // mais le mode opérationnel par défaut de GLOBAL MARKET CI est désormais manuel.
+    const company = (ctx.state.companies || []).find(row => String(row?.id || '') === String(order.companyId || '')) || { id: order.companyId, name: order.shopName };
+    await dispatchMarketplaceOrderWhatsapp(env, order, company);
+    return json({ success: true, order: cleanClone(order) });
+  }
+  if (action === 'mark_whatsapp_manual_sent') {
+    const company = (ctx.state.companies || []).find(row => String(row?.id || '') === String(order.companyId || '')) || { id: order.companyId, name: order.shopName };
+    const recipients = companyMarketplaceWhatsappNumbers(company);
+    if (!recipients.length) throw new HttpError(400, 'Aucun numéro WhatsApp n’est configuré pour cette boutique.', 'WHATSAPP_NUMBER_REQUIRED');
+    const recipient = normalizeMarketplaceWhatsappNumber(body.recipient);
+    if (!recipient || !recipients.includes(recipient)) throw new HttpError(400, 'Numéro WhatsApp destinataire invalide.', 'INVALID_WHATSAPP_RECIPIENT');
+    const alreadySent = Array.isArray(order.whatsappSentRecipients) ? order.whatsappSentRecipients.map(normalizeMarketplaceWhatsappNumber).filter(Boolean) : [];
+    order.whatsappRecipients = recipients;
+    order.whatsappSentRecipients = [...new Set([...alreadySent, recipient])];
+    order.whatsappFailedRecipients = recipients.filter(value => !order.whatsappSentRecipients.includes(value));
+    order.whatsappManualMode = true;
+    order.whatsappLastAttemptAt = new Date().toISOString();
+    order.whatsappLastError = '';
+    if (!order.whatsappFailedRecipients.length) {
+      order.whatsappDispatchStatus = 'Envoyée manuellement';
+      order.globalProcessingStatus = 'Transmise à la boutique';
+    } else {
+      order.whatsappDispatchStatus = 'Partielle manuelle';
+    }
+    order.globalProcessingUpdatedAt = new Date().toISOString();
+    await persistStateDelta(env, { arrays: { orders: { upserts: [order], deletes: [] } } }, { role: 'superadmin', companyId: order.companyId });
+    return json({ success: true, order: cleanClone(order) });
+  }
+  if (action === 'set_processing_status') {
+    const allowed = new Set(['Nouvelle', 'En traitement', 'Transmise à la boutique', 'Incident', 'Clôturée']);
+    const status = String(body.status || '').trim();
+    if (!allowed.has(status)) throw new HttpError(400, 'Statut de traitement invalide.', 'INVALID_PROCESSING_STATUS');
+    order.globalProcessingStatus = status;
+    order.globalProcessingUpdatedAt = new Date().toISOString();
+    await persistStateDelta(env, { arrays: { orders: { upserts: [order], deletes: [] } } }, { role: 'superadmin', companyId: order.companyId });
+    return json({ success: true, order: cleanClone(order) });
+  }
+  throw new HttpError(400, 'Action de traitement invalide.', 'INVALID_ORDER_ACTION');
+}
+
+async function handlePublicOrder(request, env, executionCtx) {
   assertSameOrigin(request);
   const ctx = await getClientSessionLight(request, env, true);
   const body = await readJson(request, 8_000_000);
@@ -2726,7 +2916,14 @@ async function handlePublicOrder(request, env) {
       deliveryStatus: 'En attente de validation',
       afterSaleStatus: '',
       delivery: 'En attente de validation',
-      source: 'commande GLOBAL MARKET multi-boutiques client connecté'
+      source: 'commande GLOBAL MARKET multi-boutiques client connecté',
+      globalProcessingStatus: 'Nouvelle',
+      whatsappRecipients: companyMarketplaceWhatsappNumbers(group.company),
+      whatsappDispatchStatus: companyMarketplaceWhatsappNumbers(group.company).length ? 'À envoyer' : 'Numéro non configuré',
+      whatsappSentRecipients: [],
+      whatsappFailedRecipients: [],
+      whatsappLastAttemptAt: '',
+      whatsappLastError: companyMarketplaceWhatsappNumbers(group.company).length ? '' : 'La boutique doit enregistrer son numéro WhatsApp dans Marketplace.'
     };
     state.orders.push(order);
     createdOrders.push(order);
@@ -2735,6 +2932,8 @@ async function handlePublicOrder(request, env) {
       orders: { upserts: [order], deletes: [] }
     } }, { role: 'system', companyId });
   }
+  // Mode manuel opérationnel : aucune passerelle WhatsApp externe n'est nécessaire.
+  // La commande reste « À envoyer » jusqu'à l'action du Super Admin dans Traitement des commandes.
   return json({ success: true, checkoutId, orders: createdOrders.map(cleanClone), grandTotal }, { status: 201 });
 }
 
@@ -2922,6 +3121,7 @@ async function handleApi(request, env, executionCtx) {
     if (url.pathname === '/api/users/delete' && request.method === 'POST') return await handleDeleteUser(request, env);
     if (url.pathname === '/api/users/reset-password' && request.method === 'POST') return await handleResetUserPassword(request, env);
     if (url.pathname === '/api/admin/client/reset-password' && request.method === 'POST') return await handleResetClientPasswordBySuper(request, env);
+    if (url.pathname === '/api/super/orders/action' && request.method === 'POST') return await handleSuperOrderAction(request, env);
 
     if (url.pathname === '/api/item-photo' && request.method === 'GET') return await employeeItemPhotoResponse(request, env);
     if (url.pathname === '/api/public/item-photo' && request.method === 'GET') return await publicItemPhotoResponse(request, env);
@@ -2936,7 +3136,7 @@ async function handleApi(request, env, executionCtx) {
       if (sid) await deleteLegacyClientSession(env, sid);
       return json({ success: true }, { headers: { 'Set-Cookie': setCookie(CLIENT_SESSION_COOKIE, '', 0) } });
     }
-    if (url.pathname === '/api/public/order' && request.method === 'POST') return await handlePublicOrder(request, env);
+    if (url.pathname === '/api/public/order' && request.method === 'POST') return await handlePublicOrder(request, env, executionCtx);
     if (url.pathname === '/api/public/order/action' && request.method === 'POST') return await handlePublicOrderAction(request, env);
     if (url.pathname === '/api/public/order/delete' && request.method === 'POST') return await handlePublicOrderDelete(request, env);
     if (url.pathname === '/api/public/message' && request.method === 'POST') return await handlePublicMessageCreate(request, env);
