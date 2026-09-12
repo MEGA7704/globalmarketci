@@ -1,0 +1,11 @@
+GLOBAL MARKET CI — VALIDATION COMMANDES TABLEAU
+Build: 2026.09.12-bf73dc9904f4
+JS: OK
+Worker: OK
+Sécurité: OK
+KV: OK
+D1: OK
+Cloudflare: OK
+Liste commandes: lignes compactes de tableau
+Actions: en fin de ligne
+Popup détails: conservé
