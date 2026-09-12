@@ -1,0 +1,11 @@
+GLOBAL MARKET CI — VALIDATION JUSTIFICATION TABLEAU COMMANDES
+
+- Colonnes du tableau Mes commandes justifiées et alignées : OK
+- Référence commande alignée à gauche : OK
+- Date centrée : OK
+- Statut centré : OK
+- Total aligné à droite : OK
+- Actions en fin de ligne alignées à droite : OK
+- Séparateurs lignes/colonnes : OK
+- Responsive mobile conservé : OK
+- Build Cloudflare : 2026.09.12-77179a172a81
