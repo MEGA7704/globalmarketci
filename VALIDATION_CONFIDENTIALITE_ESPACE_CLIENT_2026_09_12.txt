@@ -1,0 +1,8 @@
+VALIDATION CONFIDENTIALITE ESPACE CLIENT — 12/09/2026
+
+[OK] Mes commandes : nom/téléphone/e-mail masqués dans l’en-tête.
+[OK] Barre principale client : identité nominative remplacée par « Compte client / Session sécurisée ».
+[OK] Historique client : paramètres de connexion masqués.
+[OK] Détails commande côté client : identité/téléphone/e-mail masqués.
+[OK] Détails commande côté administrateur : coordonnées conservées pour le traitement opérationnel.
+[OK] Mon compte : informations personnelles conservées pour modification volontaire par le client.
