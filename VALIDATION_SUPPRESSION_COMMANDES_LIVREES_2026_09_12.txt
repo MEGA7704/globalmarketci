@@ -1,0 +1,20 @@
+GLOBAL MARKET CI — CORRECTION CIBLÉE COMPTE CLIENT
+
+1. Texte supprimé :
+   « Vos commandes sont enregistrées et suivies dans un espace sécurisé. Aucune information de connexion n’est affichée ici. »
+
+2. Titre supprimé :
+   « Mes commandes par boutique »
+
+3. Commandes livrées :
+   - bouton « Supprimer » ajouté dans la colonne Actions ;
+   - suppression côté client = retrait de l’historique client ;
+   - la trace de la commande reste conservée pour la boutique et l’administration.
+
+4. Commandes non livrées : logique existante conservée.
+
+5. Validation technique :
+   - JavaScript valide ;
+   - Worker Cloudflare valide ;
+   - KV / D1 valides ;
+   - build : 2026.09.12-6eb488724b07.

@@ -2205,8 +2205,9 @@ async function handleEmployeeNotifications(request, env) {
 async function handleClientNotifications(request, env) {
   const ctx = await getClientSessionLight(request, env, false);
   const clientId = String(ctx.client.id || '');
+  const clientDeletedSet = new Set(((ctx.state.clientDeletedOrders || {})[clientId] || []).map(String));
   const orders = (ctx.state.orders || [])
-    .filter(order => String(order?.clientId || '') === clientId)
+    .filter(order => String(order?.clientId || '') === clientId && !clientDeletedSet.has(String(order?.id || '')))
     .map(gmNotificationOrderView);
   const messages = (ctx.state.marketMessages || [])
     .filter(message => String(message?.clientId || '') === clientId && message?.senderType === 'admin' && !message?.deletedByClient)
@@ -2940,6 +2941,10 @@ async function handlePublicOrder(request, env, executionCtx) {
 function publicOrderPaymentConfirmed(order) {
   return String(order?.paymentStatus || '').toLowerCase().includes('confirm');
 }
+function publicOrderDelivered(order) {
+  const value = String(order?.deliveryStatus || order?.delivery || '').toLowerCase();
+  return value.includes('livr') && !value.includes('cours');
+}
 function publicOrderCancelled(order) {
   const value = String(order?.validationStatus || order?.deliveryStatus || '').toLowerCase();
   return Boolean(order?.clientCancelled) || value.includes('annul');
@@ -3022,6 +3027,15 @@ async function handlePublicOrderDelete(request, env) {
   const body = await readJson(request, 20_000);
   const order = ctx.state.orders.find(o => o.id === body.orderId && o.clientId === ctx.client.id);
   if (!order) throw new HttpError(404, 'Commande introuvable.', 'ORDER_NOT_FOUND');
+  if (publicOrderDelivered(order)) {
+    ctx.state.clientDeletedOrders = ctx.state.clientDeletedOrders || {};
+    const hidden = new Set(Array.isArray(ctx.state.clientDeletedOrders[ctx.client.id]) ? ctx.state.clientDeletedOrders[ctx.client.id].map(String) : []);
+    hidden.add(String(order.id));
+    const value = [...hidden];
+    ctx.state.clientDeletedOrders[ctx.client.id] = value;
+    await persistStateDelta(env, { objects: { clientDeletedOrders: { upserts: [{ recordId: ctx.client.id, companyId: GLOBAL_CLIENT_SCOPE, value }], deletes: [] } } }, { role: 'system', companyId: GLOBAL_CLIENT_SCOPE });
+    return json({ success: true, hidden: true, orderId: order.id });
+  }
   if (publicOrderPaymentConfirmed(order)) throw new HttpError(409, 'Une commande déjà payée et confirmée ne peut plus être supprimée.', 'ORDER_PAYMENT_CONFIRMED');
   if (!publicOrderCancelled(order)) throw new HttpError(409, 'Annulez d’abord cette commande avant de la supprimer.', 'ORDER_MUST_BE_CANCELLED');
   const changedItems = restorePublicOrderStock(ctx.state, order);
