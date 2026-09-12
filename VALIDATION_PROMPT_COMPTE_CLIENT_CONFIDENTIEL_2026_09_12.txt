@@ -1,0 +1,10 @@
+VALIDATION — PROMPT COMPTE CLIENT CONFIDENTIEL — 12/09/2026
+
+[OK] Barre client : « Compte client / Session sécurisée » sans identité nominative.
+[OK] Mes commandes : aucune ligne Nom + Téléphone + Email.
+[OK] Détails de commande côté client : identité et coordonnées masquées.
+[OK] Détails côté administrateur : coordonnées conservées pour le traitement.
+[OK] Panier client : nom supprimé du badge décoratif.
+[OK] Paiement client : nom non répété inutilement.
+[OK] Mon compte : informations personnelles et identifiant conservés pour gestion volontaire.
+[OK] Données conservées en base ; aucune suppression métier.
