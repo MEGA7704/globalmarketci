@@ -3015,7 +3015,14 @@ async function handlePublicOrderAction(request, env) {
     order.deliveryStatus = 'En attente de confirmation du paiement';
     order.delivery = order.deliveryStatus;
     await persistStateDelta(env, { arrays: { orders: { upserts: [order], deletes: [] } } }, { role: 'system', companyId: order.companyId });
-    return json({ success: true, order: cleanClone(order) });
+
+    // Le numéro WhatsApp n'est pas publié dans /api/public/load. Il est communiqué
+    // uniquement au client authentifié qui vient de déclarer le paiement de SA commande.
+    // Le navigateur du client ouvre ensuite WhatsApp : le client est donc bien l'expéditeur.
+    const sellerCompany = (ctx.state.companies || []).find(c => String(c?.id || '') === String(order.companyId || '')) || null;
+    const storedRecipient = Array.isArray(order.whatsappRecipients) ? normalizeMarketplaceWhatsappNumber(order.whatsappRecipients[0]) : '';
+    const whatsappRecipient = companyMarketplaceWhatsappNumbers(sellerCompany)[0] || storedRecipient || '';
+    return json({ success: true, order: cleanClone(order), whatsappRecipient });
   }
 
   throw new HttpError(400, 'Action commande invalide.', 'INVALID_ORDER_ACTION');
