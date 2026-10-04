@@ -377,3 +377,21 @@ if (!wrangler.d1_databases?.some(item => item.binding === 'GLOBAL_MARKET_D1')) {
 }
 
 console.log('[validate] Worker, sécurité, KV, D1 et configuration Cloudflare : valides');
+
+// Régression Marketplace : les routes dédiées doivent aboutir au rendu Marketplace.
+{
+  const appJs = fs.readFileSync('public/assets/app.js', 'utf8');
+  const marketplaceChecks = [
+    "if(sec==='marketplace') return showMarketplacePage();",
+    "#gestion/marketplace/preview",
+    "#gestion/marketplace/stock",
+    "#gestion/marketplace/recent",
+    "#gestion/marketplace/orders",
+    "#gestion/marketplace/messages",
+    'mkSectionButtonsFive'
+  ];
+  for (const marker of marketplaceChecks) {
+    if (!appJs.includes(marker)) fail(`Marketplace incomplète : ${marker}`);
+  }
+  console.log('[validate] Marketplace : route + sous-menus OK');
+}
