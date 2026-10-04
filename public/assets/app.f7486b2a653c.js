@@ -1115,7 +1115,7 @@ async function legacyDup4_registerCompany(){
   await setObjectPassword(newUser,pass);d.users.push(newUser);save(d);await setSession({userId:uid});render();
 }
 function renderExpired(c,st){app.innerHTML=globalUniversalHeader('public',{restricted:true})+`<div class="wrap"><div class="card" style="max-width:720px;margin:80px auto;text-align:center"><div class="brand">GLOBAL MARKET</div><h1>Abonnement ${esc(st)}</h1><p class="sub">L’accès de l’entreprise <b>${esc(c?.name)}</b> est actuellement ${esc(st)}. Contactez MEGA SERVICES DIABO pour renouveler ou réactiver l’abonnement.</p><p><b>+225 0777041790</b><br>megaservicediabo@gmail.com</p><button onclick="logout()">Retour à l’accueil</button></div></div>`}
-function render(){const hash=location.hash||'#home';if(hash.startsWith('#boutique/'))return renderPublicShop(hash.split('/')[1]||'');if(hash==='#a-propos')return renderGlobalMarketAbout();if(hash==='#home'||hash==='#'||hash.startsWith('#boutique-global'))return renderGlobalShop();if(hash==='#client-commandes')return currentGlobalClient()?renderClientOrdersPage():(location.hash='#home',renderGlobalShop());if(hash==='#client-messages')return currentGlobalClient()?renderClientMessagesPage():(location.hash='#home',renderGlobalShop());if(hash==='#client-panier')return currentGlobalClient()?renderClientCartPage():(location.hash='#home',renderGlobalShop());if(hash==='#client-compte')return currentGlobalClient()?renderClientAccountPage():(location.hash='#home',renderGlobalShop());const {user,company}=current();if(!user){location.hash='#home';return renderGlobalShop()}if(user.role==='superadmin')return hash==='#super-commandes'?renderSuperOrderProcessing():renderSuper();const st=statusCompany(company);if(['expired','blocked','suspended'].includes(st))return renderExpired(company,st);if(hash.startsWith('#gestion/'))return renderDash(hash.split('/')[1]||'home');renderDash('home')}
+function render(){const hash=location.hash||'#home';if(hash.startsWith('#boutique/'))return renderPublicShop(hash.split('/')[1]||'');if(hash==='#a-propos')return renderGlobalMarketAbout();if(hash==='#home'||hash==='#'||hash.startsWith('#boutique-global'))return renderGlobalShop();if(hash==='#client-commandes')return currentGlobalClient()?renderClientOrdersPage():(location.hash='#home',renderGlobalShop());if(hash==='#client-messages')return currentGlobalClient()?renderClientMessagesPage():(location.hash='#home',renderGlobalShop());if(hash==='#client-panier')return currentGlobalClient()?renderClientCartPage():(location.hash='#home',renderGlobalShop());if(hash==='#client-compte')return currentGlobalClient()?renderClientAccountPage():(location.hash='#home',renderGlobalShop());const {user,company}=current();if(!user){location.hash='#home';return renderGlobalShop()}if(user.role==='superadmin')return hash==='#super-commandes'?renderSuperOrderProcessing():renderSuper();const st=statusCompany(company);if(['expired','blocked','suspended'].includes(st))return renderExpired(company,st);if(hash.startsWith('#gestion/')){const parts=hash.split('/');const section=parts[1]||'home';if(section==='marketplace'&&parts[2])window.marketplaceAdminSection=parts[2];return renderDash(section)}renderDash('home')}
 
 
 function normalizePrintDocumentTitle(value=''){
@@ -4078,14 +4078,14 @@ function showMarketplacePage(){if(isCaisse()) return alert('Accès interdit : la
     </div>`;
   }else if(active==='recent'){
     pageHtml=`<div class="mkPanel mkAdminSinglePage">
-      <div class="mkPanelHead"><h2>Produits récents</h2><a onclick="showMarketplaceAdminPage('stock')">Voir le stock général</a></div>
+      <div class="mkPanelHead"><h2>Produits récents</h2><a onclick="showMarketplaceAdminPage('stock')" data-route="#gestion/marketplace/stock">Voir le stock général</a></div>
       <div class="mkRecentList mkRecentPageList">${recentItems.map(i=>marketRecentRow(i)).join('')||'<p class="notice">Aucun article visible. Rendez visibles les éléments du stock général.</p>'}</div>
     </div>`;
   }else if(active==='messages'){
     pageHtml=marketplaceAdminMessagesHtml(marketMessages,cid);
   }else{
     pageHtml=`<div class="mkPanel mkAdminSinglePage mkOrdersPanel">
-      <div class="mkPanelHead"><h2>Commandes récentes</h2><a onclick="showMarketplaceAdminPage('stock')">Retour stock</a></div>
+      <div class="mkPanelHead"><h2>Commandes récentes</h2><a onclick="showMarketplaceAdminPage('stock')" data-route="#gestion/marketplace/stock">Retour stock</a></div>
       <table class="mkOrdersTable"><tr><th>N° COMMANDE</th><th>CLIENT</th><th>ARTICLES</th><th>MONTANT</th><th>STATUT</th><th>DATE</th><th>ACTION</th></tr>${orders.map(o=>`<tr><td><button class="orderLinkBtn" onclick="openMarketplaceOrderPopup('${esc(o.id||'CMD')}',true)">#${esc(o.id||'CMD')}</button></td><td><b>${esc(o.client||'Client')}</b><br><small>${esc(o.clientPhone||'')}${o.clientEmail?' · '+esc(o.clientEmail):''}</small></td><td>${orderItemsCount(o)} article(s)</td><td>${money(orderTotal(o))}</td><td><span class="mkStatus">${esc(orderMainStatus(o))}</span></td><td>${new Date(o.date).toLocaleDateString('fr-FR')}</td><td><button class="danger smallDeleteOrder" onclick="deleteMarketplaceOrder('${esc(o.id||'CMD')}',true)">Supprimer</button></td></tr>`).join('')||'<tr><td colspan="7">Aucune commande récente.</td></tr>'}</table>
     </div>`;
   }
@@ -4095,7 +4095,7 @@ function showMarketplacePage(){if(isCaisse()) return alert('Accès interdit : la
         <div class="mkLogoRound">GG</div>
         <div><h1>Marketplace</h1></div>
       </div>
-      <div class="mkHeroBtns mkHeroBtnsHorizontal"><button onclick="openPublicShop()">Voir boutique publique</button><button class="marketWhatsappConfigBtn" onclick="openMarketplaceWhatsappConfig()">💬 WhatsApp commandes</button><button class="payConfigBtn" onclick="openMarketplacePaymentConfig()">Configurer paiement</button><button class="deliveryConfigBtn" onclick="openMarketplaceDeliveryConfig()">Livraison & expédition</button><button class="clientReportBtn" onclick="openMarketplaceClientsReport()">Mes clients enregistrés</button><button class="marketMessagesTopBtn" onclick="showMarketplaceAdminPage('messages')">💬 Messages <span>${marketMessages.filter(m=>m.senderType==='client').length}</span></button><button class="darkBtn" onclick="shareText('${marketplaceUrl(company)}')">Partager le lien</button></div>
+      <div class="mkHeroBtns mkHeroBtnsHorizontal"><button onclick="openPublicShop()">Voir boutique publique</button><button class="marketWhatsappConfigBtn" onclick="openMarketplaceWhatsappConfig()">💬 WhatsApp commandes</button><button class="payConfigBtn" onclick="openMarketplacePaymentConfig()">Configurer paiement</button><button class="deliveryConfigBtn" onclick="openMarketplaceDeliveryConfig()">Livraison & expédition</button><button class="clientReportBtn" onclick="openMarketplaceClientsReport()">Mes clients enregistrés</button><button class="marketMessagesTopBtn" onclick="showMarketplaceAdminPage('messages')" data-route="#gestion/marketplace/messages">💬 Messages <span>${marketMessages.filter(m=>m.senderType==='client').length}</span></button><button class="darkBtn" onclick="shareText('${marketplaceUrl(company)}')">Partager le lien</button></div>
     </div>
 
     <div class="mkStatsRow">
@@ -4108,18 +4108,18 @@ function showMarketplacePage(){if(isCaisse()) return alert('Accès interdit : la
     </div>
 
     <div class="mkSectionButtons mkSectionButtonsFive">
-      <button class="${active==='preview'?'active':''}" onclick="showMarketplaceAdminPage('preview')">Aperçu boutique client</button>
-      <button class="${active==='stock'?'active':''}" onclick="showMarketplaceAdminPage('stock')">Produits / services du stock général</button>
-      <button class="${active==='recent'?'active':''}" onclick="showMarketplaceAdminPage('recent')">Produits récents</button>
-      <button class="${active==='orders'?'active':''}" onclick="showMarketplaceAdminPage('orders')">Commandes récentes</button>
-      <button class="${active==='messages'?'active':''}" onclick="showMarketplaceAdminPage('messages')">Messages clients</button>
+      <button class="${active==='preview'?'active':''}" onclick="showMarketplaceAdminPage('preview')" data-route="#gestion/marketplace/preview">Aperçu boutique client</button>
+      <button class="${active==='stock'?'active':''}" onclick="showMarketplaceAdminPage('stock')" data-route="#gestion/marketplace/stock">Produits / services du stock général</button>
+      <button class="${active==='recent'?'active':''}" onclick="showMarketplaceAdminPage('recent')" data-route="#gestion/marketplace/recent">Produits récents</button>
+      <button class="${active==='orders'?'active':''}" onclick="showMarketplaceAdminPage('orders')" data-route="#gestion/marketplace/orders">Commandes récentes</button>
+      <button class="${active==='messages'?'active':''}" onclick="showMarketplaceAdminPage('messages')" data-route="#gestion/marketplace/messages">Messages clients</button>
     </div>
 
     <div class="mkPageTitle"><h2>${pageTitle}</h2></div>
     <div class="mkSinglePageWrap">${pageHtml}</div>
   </section>`,'marketplace');
 }
-function showMarketplaceAdminPage(type){window.marketplaceAdminSection=type||'stock'; showMarketplacePage();}
+function showMarketplaceAdminPage(type){const section=type||'stock';window.marketplaceAdminSection=section;const target='#gestion/marketplace/'+section;if(location.hash!==target){location.hash=target;return;}showMarketplacePage();}
 function mkProductVisual(i){if(i&&i.photo){return `<img src="${esc(i.photo)}" alt="${esc(i.name||'Article')}" class="mkProductPhoto">`;} const n=(i.name||'').toLowerCase(); if(n.includes('imprim')) return '🖨️'; if(n.includes('souris')) return '🖱️'; if(n.includes('clé')||n.includes('usb')) return '💾'; if(n.includes('casque')||n.includes('audio')) return '🎧'; if(n.includes('montre')) return '⌚'; if(n.includes('phone')||n.includes('portable')||n.includes('laptop')||n.includes('ordinateur')) return '💻'; if(!isBoutiqueItem(i)) return '🛠️'; return '📦'}
 function itemMarketPrice(i){return Number(i.sell||i.price||0)}
 function marketStockLabel(i){return isBoutiqueItem(i)?(i.stockType==='unlimited'?'Stock illimité':'Stock : '+Number(i.stock||0)):'Service disponible'}
