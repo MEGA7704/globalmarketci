@@ -2799,11 +2799,50 @@ function contractClientInvoiceRows(c,allSales){
   const remise=Number(c?.remise||0);
   return Object.values(rows).sort((a,b)=>String(b.key).localeCompare(String(a.key))).map(r=>Object.assign(r,{net:r.total-(r.total*remise/100)}));
 }
+// Suivi documentaire des règlements : stocké exclusivement sur la fiche client,
+// hors ventes, caisse, paiements comptables et rapports généraux.
+function contractInvoiceSettlementState(c,row){
+  const entries=(Array.isArray(c.invoiceSettlements)?c.invoiceSettlements:[]).filter(x=>x.period===row.key);
+  const total=entries.reduce((sum,x)=>sum+Number(x.amount||0),0);
+  const due=Math.max(0,Math.round((Number(row.net||0)-total)*100)/100);
+  return {entries,total,due,status:due<=0?'Réglée':total>0?'Partiellement réglée':'Non réglée'};
+}
+function closeContractInvoiceSettlement(){document.querySelector('#contractInvoiceSettlementModal')?.remove()}
+function openContractInvoiceSettlement(cid,key){
+  const {d,company}=current();if(!company)return;
+  const c=(d.clients||[]).find(x=>x.id===cid&&x.companyId===company.id);
+  const row=c&&contractClientInvoiceRows(c,getCompanyValidatedSales()).find(r=>r.key===key);
+  if(!row)return g3Alert('Facture introuvable.','Règlement','danger');
+  const state=contractInvoiceSettlementState(c,row);
+  closeContractInvoiceSettlement();
+  const modal=document.createElement('div');modal.id='contractInvoiceSettlementModal';modal.className='modal contractClientModal';
+  modal.innerHTML=`<div class="modalOverlay" onclick="closeContractInvoiceSettlement()"></div><div class="modalCard contractModalCard" style="max-width:530px"><button class="modalClose" onclick="closeContractInvoiceSettlement()">×</button><h2>Régler une facture sous contrat</h2><p><b>${esc(c.name)}</b> — ${esc(contractInvoicePeriodLabel(key))}</p><div class="contractGoldForm"><div>Montant facture : <b>${money(row.net)}</b></div><div>Déjà réglé : <b>${money(state.total)}</b></div><div>Reste à régler : <b>${money(state.due)}</b></div><div>Statut : <b>${state.status}</b></div><label>Type de règlement<select id="contractSettlementType" onchange="contractSettlementTypeChanged()"><option value="total">Total du solde</option><option value="partiel">Partiel</option></select></label><label>Montant à enregistrer (FCFA)<input id="contractSettlementAmount" type="number" min="0.01" step="0.01" max="${state.due}" value="${state.due}" ${state.due<=0?'disabled':''}></label><label class="fullRow">Observation (facultative)<textarea id="contractSettlementNote" rows="2" placeholder="Référence ou commentaire"></textarea></label></div><p class="notice">Suivi informatif uniquement : aucun mouvement de caisse et aucun impact sur le rapport général.</p>${state.entries.length?`<h3>Historique des règlements</h3><div style="max-height:140px;overflow:auto">${state.entries.map(x=>`<div>${esc(new Date(x.date).toLocaleString('fr-FR'))} — ${money(x.amount)}${x.note?' — '+esc(x.note):''}</div>`).join('')}</div>`:''}<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:15px"><button type="button" onclick="closeContractInvoiceSettlement()">Annuler</button><button type="button" class="contractSaveBtn" ${state.due<=0?'disabled':''} onclick="saveContractInvoiceSettlement('${cid}','${key}')">Enregistrer le règlement</button></div></div>`;
+  document.body.appendChild(modal);
+}
+function contractSettlementTypeChanged(){
+  const type=document.querySelector('#contractSettlementType')?.value;
+  const inp=document.querySelector('#contractSettlementAmount');if(!inp)return;
+  if(type==='total'){inp.value=inp.max;inp.readOnly=true}else{inp.value='';inp.readOnly=false;inp.focus()}
+}
+function saveContractInvoiceSettlement(cid,key){
+  if(!ensureActiveExerciseEditable())return;
+  const {d,company}=current();if(!company)return;
+  const c=(d.clients||[]).find(x=>x.id===cid&&x.companyId===company.id);
+  const row=c&&contractClientInvoiceRows(c,getCompanyValidatedSales()).find(r=>r.key===key);
+  if(!row)return g3Alert('Facture introuvable.','Règlement','danger');
+  const state=contractInvoiceSettlementState(c,row),field=document.querySelector('#contractSettlementAmount');
+  const amount=Number(field?.value);
+  if(!Number.isFinite(amount)||amount<=0||Math.round(amount*100)>Math.round(state.due*100))return g3Alert('Montant invalide : il doit être positif et ne pas dépasser le solde restant.','Règlement','danger');
+  c.invoiceSettlements=Array.isArray(c.invoiceSettlements)?c.invoiceSettlements:[];
+  c.invoiceSettlements.push({id:id('reginfo'),period:key,amount:Math.round(amount*100)/100,date:new Date().toISOString(),note:document.querySelector('#contractSettlementNote')?.value.trim()||''});
+  save(d);closeContractInvoiceSettlement();openContractClientInvoicePage(cid);
+  g3Success('Règlement informatif enregistré sans incidence sur le rapport général.','Règlement enregistré');
+}
 function openContractClientInvoicePage(cid){
   const {d,company}=current(); const c=(d.clients||[]).find(x=>x.id===cid&&x.companyId===company.id); if(!c) return g3Alert('Client introuvable','Client introuvable','danger');
   const rows=contractClientInvoiceRows(c,getCompanyValidatedSales());
   if(!rows.length) g3Alert('Aucune consommation trouvée pour ce client sous contrat.','Aucune consommation','info');
-  shell(`<div class="g2panel printable contractInvoicePage"><div class="reportActions no-print"><button onclick="renderDash('contrats')">Retour clients sous contrat</button><button onclick="window.print()">Imprimer la page</button></div><div class="contractInvoiceHead"><h1>FACTURES DU CLIENT SOUS CONTRAT</h1><h2>${esc(c.name)}</h2><p>${esc(c.phone||'')} — ${esc(c.mode||'Mensuelle')} — Remise ${Number(c.remise||0)}%</p></div><div class="contractInvoiceTableWrap"><table class="g2table contractInvoiceTable"><thead><tr><th>Type de facturation</th><th>Période facturée</th><th>Montant</th><th class="no-print">Action</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(c.mode||'Mensuelle')}</td><td>${esc(contractInvoicePeriodLabel(r.key))}</td><td>${money(r.net)}</td><td class="no-print"><button class="contractInvoiceBtn" onclick="printContractClientInvoicePeriod('${c.id}','${r.key}')">Imprimer</button></td></tr>`).join('')||'<tr><td colspan="4">Aucune facture disponible pour ce client.</td></tr>'}</tbody></table></div></div>`,'contrats',{printTitle:'LISTE DES FACTURES DU CLIENT SOUS CONTRAT'});
+  shell(`<div class="g2panel printable contractInvoicePage"><div class="reportActions no-print"><button onclick="renderDash('contrats')">Retour clients sous contrat</button><button onclick="window.print()">Imprimer la page</button></div><div class="contractInvoiceHead"><h1>FACTURES DU CLIENT SOUS CONTRAT</h1><h2>${esc(c.name)}</h2><p>${esc(c.phone||'')} — ${esc(c.mode||'Mensuelle')} — Remise ${Number(c.remise||0)}%</p></div><div class="contractInvoiceTableWrap"><table class="g2table contractInvoiceTable"><thead><tr><th>Type de facturation</th><th>Période facturée</th><th>Montant</th><th>Réglé (informatif)</th><th>Reste</th><th>Statut</th><th class="no-print">Actions</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(c.mode||'Mensuelle')}</td><td>${esc(contractInvoicePeriodLabel(r.key))}</td><td>${money(r.net)}</td><td>${money(contractInvoiceSettlementState(c,r).total)}</td><td>${money(contractInvoiceSettlementState(c,r).due)}</td><td>${contractInvoiceSettlementState(c,r).status}</td><td class="no-print"><button class="contractInvoiceBtn" onclick="printContractClientInvoicePeriod('${c.id}','${r.key}')">Imprimer</button> <button class="contractInvoiceBtn" onclick="openContractInvoiceSettlement('${c.id}','${r.key}')">Régler</button></td></tr>`).join('')||'<tr><td colspan="7">Aucune facture disponible pour ce client.</td></tr>'}</tbody></table></div></div>`,'contrats',{printTitle:'LISTE DES FACTURES DU CLIENT SOUS CONTRAT'});
 }
 function printContractClientInvoicePeriod(cid,key){
   const {d,company}=current(); const c=(d.clients||[]).find(x=>x.id===cid&&x.companyId===company.id); if(!c) return g3Alert('Client introuvable','Client introuvable','danger');
