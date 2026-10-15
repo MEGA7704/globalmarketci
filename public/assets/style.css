@@ -5613,3 +5613,29 @@ body.gmForgotOpen .gmHomeFilters{display:none!important}
  .officialProductsGrid .officialProductImage {height:145px!important;padding:6px!important;}
  .officialProductsGrid .officialProductCard {min-width:0!important;padding:8px!important;}
 }
+
+/* 2026-10-15 — Quatre formules sur une ligne et obligations compactes */
+@media screen {
+ .subscriptionPlansBox .subscriptionPlansGrid {display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:clamp(3px,1vw,12px)!important;width:100%!important;min-width:0!important;overflow:visible!important;}
+ .subscriptionPlansBox .subscriptionPlanCard {min-width:0!important;max-width:100%!important;padding:clamp(4px,1.15vw,16px)!important;gap:clamp(4px,.8vw,10px)!important;border-radius:clamp(8px,1.5vw,20px)!important;}
+ .subscriptionPlansBox .subscriptionPlanCard h2 {font-size:clamp(8px,1.55vw,19px)!important;overflow-wrap:anywhere!important;}
+ .subscriptionPlansBox .planPrice {font-size:clamp(9px,1.8vw,24px)!important;overflow-wrap:anywhere!important;}
+ .subscriptionPlansBox .planPrice small {font-size:clamp(7px,1vw,12px)!important;}
+ .subscriptionPlansBox .subscriptionPlanCard li {font-size:clamp(8px,1vw,12px)!important;overflow-wrap:anywhere!important;}
+ .subscriptionPlansBox .planTopLine {flex-wrap:wrap!important;gap:3px!important;}
+ .subscriptionPlansBox .planTopLine span,.subscriptionPlansBox .planTopLine b {font-size:clamp(7px,.9vw,11px)!important;padding:4px 5px!important;white-space:normal!important;}
+ .subscriptionPlansBox .buyPlanBtn,.subscriptionPlansBox .freePlanBtn {font-size:clamp(8px,.95vw,12px)!important;padding:clamp(4px,.8vw,11px)!important;overflow-wrap:anywhere!important;white-space:normal!important;}
+ .settingsWorkspace .settingsCard .reportBox.slim.obligationsReport {width:100%!important;min-width:0!important;max-width:100%!important;overflow-x:hidden!important;box-sizing:border-box!important;}
+ .settingsWorkspace .settingsCard .reportBox.slim.obligationsReport .obligationsTable {width:100%!important;max-width:100%!important;min-width:0!important;table-layout:fixed!important;border-collapse:collapse!important;}
+ .settingsWorkspace .settingsCard .reportBox.slim.obligationsReport .obligationsTable th,.settingsWorkspace .settingsCard .reportBox.slim.obligationsReport .obligationsTable td {min-width:0!important;max-width:none!important;padding:clamp(2px,.45vw,6px)!important;font-size:clamp(7px,.82vw,11px)!important;line-height:1.2!important;white-space:normal!important;overflow-wrap:anywhere!important;word-break:break-word!important;}
+ .settingsWorkspace .obligationsTable .calcBadge{font-size:inherit!important;padding:2px!important;white-space:normal!important;overflow-wrap:anywhere!important;}
+ .settingsWorkspace .obligationsTable .rowActions{display:flex!important;flex-direction:column!important;gap:2px!important;}
+ .settingsWorkspace .obligationsTable .rowActions button{width:100%!important;min-width:0!important;padding:3px 1px!important;font-size:clamp(7px,.75vw,10px)!important;white-space:normal!important;}
+}
+@media screen and (max-width:480px){
+ .subscriptionPlansBox{padding:6px!important;}
+ .subscriptionPlansBox .subscriptionPlansGrid{gap:3px!important;}
+ .subscriptionPlansBox .subscriptionPlanCard{padding:4px!important;}
+ .subscriptionPlansBox .subscriptionPlanCard ul{gap:3px!important;}
+ .settingsWorkspace .settingsCard .reportBox.slim.obligationsReport .obligationsTable th,.settingsWorkspace .settingsCard .reportBox.slim.obligationsReport .obligationsTable td{font-size:7px!important;padding:2px 1px!important;}
+}
