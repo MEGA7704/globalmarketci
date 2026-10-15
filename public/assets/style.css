@@ -5598,3 +5598,18 @@ body.gmForgotOpen .gmHomeFilters{display:none!important}
 .settingsCard .reportBox.slim td br{display:none!important}
 .gmUniversalLogout.gmLogoutIcon{width:40px!important;min-width:40px!important;padding:0!important;font-size:23px!important;line-height:1!important;display:inline-grid!important;place-items:center!important;border-radius:50%!important}
 @media(max-width:620px){.settingsCard .subscriptionGrid{grid-template-columns:repeat(4,minmax(92px,1fr))!important;gap:6px!important;overflow-x:auto!important;padding-bottom:3px!important}.settingsCard .subscriptionGrid .subCard{padding:8px!important}.settingsCard .subscriptionGrid .subCard b{font-size:11px!important}}
+
+/* Corrections 2026-10-15 : obligations sans défilement horizontal et boutique 2 colonnes */
+@media screen {
+ .settingsWorkspace .obligationsReport {width:100%!important;max-width:100%!important;overflow-x:visible!important;min-width:0!important;}
+ .settingsWorkspace .obligationsTable {width:100%!important;max-width:100%!important;min-width:0!important;table-layout:fixed!important;border-collapse:collapse!important;}
+ .settingsWorkspace .obligationsTable th,.settingsWorkspace .obligationsTable td {white-space:normal!important;overflow-wrap:anywhere!important;word-break:break-word!important;padding:6px 4px!important;font-size:clamp(9px,1.1vw,12px)!important;}
+ .settingsWorkspace .obligationsTable .rowActions {display:flex!important;flex-wrap:wrap!important;gap:3px!important;}
+ .settingsWorkspace .obligationsTable .rowActions button {min-width:0!important;padding:5px 4px!important;font-size:10px!important;}
+}
+@media screen and (max-width:760px) {
+ .publicShop .officialProductsGrid,.officialShopPage .officialProductsGrid,.officialProductsGrid {display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important;}
+ .officialProductsGrid>* {min-width:0!important;}
+ .officialProductsGrid .officialProductImage {height:145px!important;padding:6px!important;}
+ .officialProductsGrid .officialProductCard {min-width:0!important;padding:8px!important;}
+}

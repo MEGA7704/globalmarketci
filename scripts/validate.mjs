@@ -123,8 +123,8 @@ const planChecks = [
   ['const FREE_PLAN_DAYS=10;', 'Plan Free de 10 jours'],
   ['const STANDARD_PLAN_DAYS=30;', 'durée mensuelle Standard de 30 jours'],
   ['const BUSINESS_PLAN_DAYS=365;', 'durée annuelle Business de 365 jours'],
-  ['const STANDARD_PLAN_AMOUNT=4800;', 'montant Standard de 4 800 FCFA'],
-  ['const BUSINESS_PLAN_AMOUNT=46100;', 'montant Business annuel de 46 100 FCFA'],
+  ['const STANDARD_PLAN_AMOUNT=6900;', 'montant Standard de 6 900 FCFA'],
+  ['const BUSINESS_PLAN_AMOUNT=89900;', 'montant Business annuel de 89 900 FCFA'],
   ["label:'Plan Business — 1 an'", 'libellé annuel Business'],
   ["STANDARD:{code:'STANDARD'", 'formule Standard'],
   ['maxCategories:2,maxItemsPerCategory:5', 'limites catalogue du Plan Free'],
@@ -140,7 +140,7 @@ for (const [needle, label] of planChecks) {
     process.exit(1);
   }
 }
-if (!worker.includes("code === 'BUSINESS' ? 365 : 30") || !worker.includes("Plan Business — 1 an") || !worker.includes("previousEnd >= todayIso && previousEnd < annualEnd")) {
+if (!worker.includes("code === 'BUSINESS' ? 365 : 30") || !worker.includes("Plan Business — 365 jours") || !worker.includes("previousEnd >= todayIso && previousEnd < annualEnd")) {
   console.error('[validate] Mise à niveau annuelle des abonnements Business en cours absente ou incomplète.');
   process.exit(1);
 }

@@ -396,22 +396,24 @@ function normalizeState(value) {
   data.companies = data.companies.map(company => {
     if (!company || typeof company !== 'object') return company;
     const rawPlan = String(company.planCode || company.plan || company.status || 'FREE').toUpperCase();
-    const code = rawPlan.includes('BUSINESS') || rawPlan.includes('PLUS') ? 'BUSINESS' : (rawPlan.includes('STANDARD') ? 'STANDARD' : 'FREE');
+    const code = rawPlan.includes('ULTIMATE') ? 'ULTIMATE' : (rawPlan.includes('BUSINESS') || rawPlan.includes('PLUS') ? 'BUSINESS' : (rawPlan.includes('STANDARD') ? 'STANDARD' : 'FREE'));
     const duration = code === 'FREE' ? 10 : (code === 'BUSINESS' ? 365 : 30);
     const start = String(company.subscriptionStart || company.createdAt || new Date().toISOString()).slice(0, 10);
     const previousEnd = /^\d{4}-\d{2}-\d{2}$/.test(String(company.subscriptionEnd || '')) ? String(company.subscriptionEnd) : '';
     const todayIso = new Date().toISOString().slice(0, 10);
     company.planCode = code;
-    company.plan = code === 'BUSINESS' ? 'Plan Business — 1 an' : (code === 'STANDARD' ? 'Plan Standard — 30 jours' : 'Plan Free — 10 jours');
-    if (['FREE', 'STANDARD', 'BUSINESS', 'BUSINESS_PLUS'].includes(String(company.status || '').toUpperCase())) company.status = code;
+    company.plan = code === 'ULTIMATE' ? 'Plan Ultimate — durée illimitée' : (code === 'BUSINESS' ? 'Plan Business — 365 jours' : (code === 'STANDARD' ? 'Plan Standard — 30 jours' : 'Plan Free — 10 jours'));
+    if (['FREE', 'STANDARD', 'BUSINESS', 'BUSINESS_PLUS', 'ULTIMATE'].includes(String(company.status || '').toUpperCase())) company.status = code;
     company.subscriptionStart = start;
-    if (code === 'BUSINESS') {
+    if (code === 'ULTIMATE') {
+      company.subscriptionEnd = null;
+    } else if (code === 'BUSINESS') {
       const annualEnd = dateOnlyPlusDays(start, 365);
       // Mise à niveau ciblée : seuls les Business encore en cours sont prolongés jusqu'à 1 an.
       // Un ancien Business déjà expiré n'est pas réactivé automatiquement.
       company.subscriptionEnd = !previousEnd ? annualEnd : (previousEnd >= todayIso && previousEnd < annualEnd ? annualEnd : previousEnd);
     } else {
-      company.subscriptionEnd = dateOnlyPlusDays(start, duration);
+      company.subscriptionEnd = previousEnd || dateOnlyPlusDays(start, duration);
     }
     return company;
   });
@@ -909,12 +911,18 @@ function companyStatus(company) {
   if (!company) return 'blocked';
   if (['blocked', 'suspended'].includes(company.status)) return company.status;
   const today = new Date().toISOString().slice(0, 10);
-  if (company.subscriptionEnd && company.subscriptionEnd < today) return 'expired';
+  if (company.subscriptionEnd && company.subscriptionEnd < today) {
+    const plan = companyPlanCode(company);
+    if (plan === 'ULTIMATE') return 'ULTIMATE';
+    if (plan !== 'FREE' && today <= dateOnlyPlusDays(company.subscriptionEnd, 3)) return 'FREE';
+    return 'expired';
+  }
   return company.status || company.planCode || 'FREE';
 }
 
 function companyPlanCode(company) {
   const raw = String(company?.planCode || company?.plan || company?.status || 'FREE').toUpperCase();
+  if (raw.includes('ULTIMATE')) return 'ULTIMATE';
   if (raw.includes('BUSINESS') || raw.includes('PLUS')) return 'BUSINESS';
   if (raw.includes('STANDARD')) return 'STANDARD';
   return 'FREE';
@@ -923,7 +931,7 @@ function companyPlanCode(company) {
 function companyMarketplaceEnabled(company) {
   if (!company || companyStatus(company) === 'expired') return false;
   const code = companyPlanCode(company);
-  return code === 'STANDARD' || code === 'BUSINESS';
+  return companyStatus(company) !== 'FREE' && (code === 'STANDARD' || code === 'BUSINESS' || code === 'ULTIMATE');
 }
 
 

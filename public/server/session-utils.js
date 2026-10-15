@@ -9,7 +9,15 @@ export function companyStatus(company) {
   if (!company) return 'blocked';
   if (['blocked', 'suspended'].includes(company.status)) return company.status;
   const today = new Date().toISOString().slice(0, 10);
-  if (company.subscriptionEnd && company.subscriptionEnd < today) return 'expired';
+  if (company.subscriptionEnd && company.subscriptionEnd < today) {
+    const plan = String(company.planCode || company.plan || company.status || '').toUpperCase();
+    if (plan.includes('ULTIMATE')) return 'ULTIMATE';
+    if (!plan.includes('FREE')) {
+      const graceEnd = dateOnlyPlusDays(company.subscriptionEnd, 3);
+      return today <= graceEnd ? 'FREE' : 'expired';
+    }
+    return 'expired';
+  }
   return company.status || company.planCode || 'FREE';
 }
 
